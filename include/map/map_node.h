@@ -21,7 +21,7 @@ class MapNode : public Resource {
 public:
   enum Type { NOT_ASSIGNED, ENEMY, LOOT, SHELTER, WENNY, BOSS };
 
-  String _to_debug_string() const;
+  String _to_string() const;
 
 private:
   Type type = NOT_ASSIGNED;

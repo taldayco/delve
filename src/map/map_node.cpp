@@ -67,7 +67,7 @@ void MapNode::set_selected(bool p_selected) { selected = p_selected; }
 bool MapNode::is_selected() const { return selected; }
 
 // for debugging
-String MapNode::_to_debug_string() const {
+String MapNode::_to_string() const {
 
   // create an array of strings
   static const char *TYPE_NAMES[] = {"NOT_ASSIGNED", "ENEMY", "LOOT",

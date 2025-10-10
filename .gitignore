@@ -1,61 +1,79 @@
+# ==========================
+# Godot & GDExtension Project
+# ==========================
+
+# Godot project files
+.import/
+export.cfg
+export_presets.cfg
+.project_metadata/
+.godot/
+
 # Build artifacts
-bin/
 *.o
+*.a
 *.so
 *.dll
 *.dylib
-*.a
+*.exe
 
-# godot-cpp build artifacts
+# Compiled GDExtension binaries
+*.gdextension
+*.gdnlib
+*.gdns
+
+# ==========================
+# Godot C++ Bindings
+# ==========================
 godot-cpp/bin/
 godot-cpp/gen/
+godot-cpp/lib/
 godot-cpp/.sconsign.dblite
-godot-cpp/.scons_node_count
-godot-cpp/__pycache__/
-godot-cpp/.cache/
+godot-cpp/build/
+godot-cpp/.vscode/
 
-# Compilation database (regenerate with bear)
-compile_commands.json
-
-# Editor/IDE specific
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-.cache/
-.clangd/
-
-# Optional: .clangd config (some teams commit this, some don't)
-# .clangd
-
-# Godot project files (if you have a Godot project in the same directory)
-.godot/
-.import/
-*.import
-export_presets.cfg
-
-# OS specific
+# ==========================
+# System / Editor
+# ==========================
 .DS_Store
 Thumbs.db
-Desktop.ini
-._*
-
-# Logs
 *.log
-
-# Python (if using SCons or other Python tools)
-__pycache__/
-*.py[cod]
-*$py.class
-.Python
-*.egg-info/
-
-# Backup files
+*.swp
+*.swo
+*.tmp
 *.bak
-*.backup
-*~
+*.old
 
-# Test files (if you add tests later)
-test/bin/
-test/*.o
+# ==========================
+# C++ / Build System
+# ==========================
+build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile~
+*.make
+*.cmake
+compile_commands.json
+
+# ==========================
+# IDE / Editor
+# ==========================
+.vscode/
+.idea/
+.clangd/
+.clang-tidy
+.clang-format
+
+# ==========================
+# NinjaTrader / Custom Artifacts
+# ==========================
+# (none yet, but include below if needed)
+# e.g., /bin/ /dist/ /artifacts/
+
+# ==========================
+# Misc
+# ==========================
+*.out
+*.err
+*.cache

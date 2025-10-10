@@ -1,0 +1,54 @@
+#ifndef MAP_NODE_H
+#define MAP_NODE_H
+
+#include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/core/class_db.hpp>
+#include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/godot.hpp>
+#include <godot_cpp/variant/array.hpp>
+#include <godot_cpp/variant/typed_array.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+
+using namespace godot;
+
+class MapNode : public Resource {
+  GDCLASS(MapNode, Resource);
+
+public:
+  enum Type { NOT_ASSIGNED, ENEMY, LOOT, SHELTER, WENNY, BOSS };
+
+private:
+  Type type = NOT_ASSIGNED;
+  int row = 0;
+  int column = 0;
+  Vector2 position;
+  Array next_nodes;
+  bool selected = false;
+
+protected:
+  static void _bind_methods();
+
+public:
+  // getters and setters
+  void set_type(Type p_type);
+  Type get_type() const;
+
+  void set_row(int p_row);
+  int get_row() const;
+
+  void set_column(int p_column);
+  int get_column() const;
+
+  void set_position(Vector2 p_position);
+  Vector2 get_position() const;
+
+  void set_next_nodes(const Array &p_next_nodes);
+  Array get_next_nodes() const;
+
+  void set_selected(bool p_selected);
+  bool is_selected() const;
+};
+
+VARIANT_ENUM_CAST(MapNode::Type);
+
+#endif // MAP_NODE_H

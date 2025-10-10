@@ -1,9 +1,13 @@
 #ifndef MAP_NODE_H
 #define MAP_NODE_H
 
+#include "godot_cpp/variant/string.hpp"
+#include "godot_cpp/variant/variant.hpp"
 #include <godot_cpp/classes/resource.hpp>
+#include <godot_cpp/core/binder_common.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/core/gdvirtual.gen.inc>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/typed_array.hpp>
@@ -16,6 +20,8 @@ class MapNode : public Resource {
 
 public:
   enum Type { NOT_ASSIGNED, ENEMY, LOOT, SHELTER, WENNY, BOSS };
+
+  String _to_debug_string() const;
 
 private:
   Type type = NOT_ASSIGNED;

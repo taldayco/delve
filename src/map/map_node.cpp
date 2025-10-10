@@ -1,9 +1,12 @@
 #include "map/map_node.h"
+#include "godot_cpp/variant/dictionary.hpp"
+#include "godot_cpp/variant/variant.hpp"
 #include <godot_cpp/core/class_db.hpp>
 
 using namespace godot;
 
 void MapNode::_bind_methods() {
+
   ClassDB::bind_method(D_METHOD("set_type", "type"), &MapNode::set_type);
   ClassDB::bind_method(D_METHOD("get_type"), &MapNode::get_type);
 
@@ -62,3 +65,17 @@ Array MapNode::get_next_nodes() const { return next_nodes; }
 
 void MapNode::set_selected(bool p_selected) { selected = p_selected; }
 bool MapNode::is_selected() const { return selected; }
+
+// for debugging
+String MapNode::_to_debug_string() const {
+
+  // create an array of strings
+  static const char *TYPE_NAMES[] = {"NOT_ASSIGNED", "ENEMY", "LOOT",
+                                     "SHELTER",      "WENNY", "BOSS"};
+
+  // use the index from TYPE enum to get the corresponding string from our array
+  String type_name = TYPE_NAMES[type];        // e.g. "WENNY:
+  String first_char = type_name.substr(0, 1); //"W"
+
+  return vformat("%s (%s)", column, first_char);
+}

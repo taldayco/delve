@@ -32,6 +32,16 @@ protected:
 public:
   MapGenerator();
   ~MapGenerator();
+
+  // override placehoder godot  vitual methods
+  // that are called when a node is added to the scene tree.
+  void _enter_tree() override;
+  void _ready() override;
+  void _exit_tree() override;
+
+  // methods required to generate map
+  Array _generate_initial_grid();
+  Array generate_map();
 };
 
 #endif

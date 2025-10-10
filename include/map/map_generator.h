@@ -30,8 +30,8 @@ protected:
   static void _bind_methods();
 
 public:
-  MapGenerator();
-  ~MapGenerator();
+  MapGenerator() = default;
+  ~MapGenerator() = default;
 
   // override placehoder godot  vitual methods
   // that are called when a node is added to the scene tree.

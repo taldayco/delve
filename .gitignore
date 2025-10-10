@@ -1,0 +1,61 @@
+# Build artifacts
+bin/
+*.o
+*.so
+*.dll
+*.dylib
+*.a
+
+# godot-cpp build artifacts
+godot-cpp/bin/
+godot-cpp/gen/
+godot-cpp/.sconsign.dblite
+godot-cpp/.scons_node_count
+godot-cpp/__pycache__/
+godot-cpp/.cache/
+
+# Compilation database (regenerate with bear)
+compile_commands.json
+
+# Editor/IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cache/
+.clangd/
+
+# Optional: .clangd config (some teams commit this, some don't)
+# .clangd
+
+# Godot project files (if you have a Godot project in the same directory)
+.godot/
+.import/
+*.import
+export_presets.cfg
+
+# OS specific
+.DS_Store
+Thumbs.db
+Desktop.ini
+._*
+
+# Logs
+*.log
+
+# Python (if using SCons or other Python tools)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.egg-info/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Test files (if you add tests later)
+test/bin/
+test/*.o

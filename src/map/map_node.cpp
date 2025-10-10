@@ -38,6 +38,8 @@ void MapNode::_bind_methods() {
   ADD_PROPERTY(PropertyInfo(Variant::BOOL, "selected"), "set_selected",
                "is_selected");
 
+  ClassDB::bind_method(D_METHOD("_to_string"), &MapNode::_to_string);
+
   BIND_ENUM_CONSTANT(NOT_ASSIGNED);
   BIND_ENUM_CONSTANT(ENEMY);
   BIND_ENUM_CONSTANT(LOOT);
@@ -72,6 +74,8 @@ String MapNode::_to_string() const {
   // create an array of strings
   static const char *TYPE_NAMES[] = {"NOT_ASSIGNED", "ENEMY", "LOOT",
                                      "SHELTER",      "WENNY", "BOSS"};
+  // show if p_selected
+  String selected_node = selected ? "*" : "";
 
   // use the index from TYPE enum to get the corresponding string from our array
   String type_name = TYPE_NAMES[type];        // e.g. "WENNY:

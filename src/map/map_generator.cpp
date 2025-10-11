@@ -48,6 +48,8 @@ Array MapGenerator::_generate_initial_grid() {
   return result;
 }
 
+// Array MapGenerator::generate_map() {};
+
 void MapGenerator::_ready() {
   map_data = _generate_initial_grid();
   UtilityFunctions::print("Grid Rows: ", map_data.size());

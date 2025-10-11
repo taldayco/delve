@@ -1,0 +1,90 @@
+[
+  {
+    "arguments": [
+      "/usr/sbin/x86_64-w64-mingw32-g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Wno-unknown-pragmas",
+      "-Wno-unused-parameter",
+      "-I./include",
+      "-I./godot-cpp",
+      "-I./godot-cpp/include",
+      "-I./godot-cpp/gen/include",
+      "-I./godot-cpp/gdextension",
+      "-c",
+      "-o",
+      "src/register_types.o",
+      "src/register_types.cpp"
+    ],
+    "directory": "/home/neto/delve",
+    "file": "/home/neto/delve/src/register_types.cpp",
+    "output": "/home/neto/delve/src/register_types.o"
+  },
+  {
+    "arguments": [
+      "/usr/sbin/x86_64-w64-mingw32-g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Wno-unknown-pragmas",
+      "-Wno-unused-parameter",
+      "-I./include",
+      "-I./godot-cpp",
+      "-I./godot-cpp/include",
+      "-I./godot-cpp/gen/include",
+      "-I./godot-cpp/gdextension",
+      "-c",
+      "-o",
+      "src/rng_manager.o",
+      "src/rng_manager.cpp"
+    ],
+    "directory": "/home/neto/delve",
+    "file": "/home/neto/delve/src/rng_manager.cpp",
+    "output": "/home/neto/delve/src/rng_manager.o"
+  },
+  {
+    "arguments": [
+      "/usr/sbin/x86_64-w64-mingw32-g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Wno-unknown-pragmas",
+      "-Wno-unused-parameter",
+      "-I./include",
+      "-I./godot-cpp",
+      "-I./godot-cpp/include",
+      "-I./godot-cpp/gen/include",
+      "-I./godot-cpp/gdextension",
+      "-c",
+      "-o",
+      "src/map/map_generator.o",
+      "src/map/map_generator.cpp"
+    ],
+    "directory": "/home/neto/delve",
+    "file": "/home/neto/delve/src/map/map_generator.cpp",
+    "output": "/home/neto/delve/src/map/map_generator.o"
+  },
+  {
+    "arguments": [
+      "/usr/sbin/x86_64-w64-mingw32-g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Wno-unknown-pragmas",
+      "-Wno-unused-parameter",
+      "-I./include",
+      "-I./godot-cpp",
+      "-I./godot-cpp/include",
+      "-I./godot-cpp/gen/include",
+      "-I./godot-cpp/gdextension",
+      "-c",
+      "-o",
+      "src/map/map_node.o",
+      "src/map/map_node.cpp"
+    ],
+    "directory": "/home/neto/delve",
+    "file": "/home/neto/delve/src/map/map_node.cpp",
+    "output": "/home/neto/delve/src/map/map_node.o"
+  }
+]

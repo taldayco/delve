@@ -1,30 +1,34 @@
 # ===============================
 # Makefile for Windows (MinGW)
 # ===============================
+
 TARGET         := delve
 OUTPUT_DIR     := bin
 BUILD_TYPE     := debug
 
-CXX            := g++
-CXXFLAGS       := -std=c++17 -fPIC -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter
-LDFLAGS        := -shared
+# Use the MinGW cross-compiler
+CXX            := x86_64-w64-mingw32-g++
+AR             := x86_64-w64-mingw32-ar
 
-INCLUDES := \
-	-I./include \
-	-I./godot-cpp \
-	-I./godot-cpp/include \
-	-I./godot-cpp/gen/include \
-	-I./godot-cpp/gdextension
+CXXFLAGS       := -std=c++17 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter \
+				  -I./include \
+				  -I./godot-cpp \
+				  -I./godot-cpp/include \
+				  -I./godot-cpp/gen/include \
+				  -I./godot-cpp/gdextension
 
-# Windows uses .a for static libs
-GODOT_CPP_LIB := ./godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a
+#  Linker flags for Windows DLL
+LDFLAGS        := -shared -static-libgcc -static-libstdc++
 
-SRC_DIRS := ./src ./src/map
-SRCS     := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
-OBJS     := $(SRCS:.cpp=.o)
+#  Windows static library from godot-cpp
+GODOT_CPP_LIB  := ./godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a
 
-# Windows output is .dll
-TARGET_LIB := $(OUTPUT_DIR)/$(TARGET).windows.$(BUILD_TYPE).dll
+SRC_DIRS       := ./src ./src/map
+SRCS           := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
+OBJS           := $(SRCS:.cpp=.o)
+
+#  Windows output is .dll
+TARGET_LIB     := $(OUTPUT_DIR)/$(TARGET).windows.$(BUILD_TYPE).dll
 
 all: $(TARGET_LIB)
 	@echo "Build complete: $(TARGET_LIB)"
@@ -34,7 +38,7 @@ $(TARGET_LIB): $(OBJS)
 	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(GODOT_CPP_LIB)
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
 	rm -rf $(OBJS) $(TARGET_LIB)

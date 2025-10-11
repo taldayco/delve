@@ -81,3 +81,4 @@ compile_commands.json
 *.out
 *.err
 *.cache
+bin/

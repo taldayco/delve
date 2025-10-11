@@ -3,5 +3,14 @@ entry_symbol = "map_library_init"
 compatibility_minimum = 4.1
 
 [libraries]
-linux.debug.x86_64 = "res://bin/delve.so"
-linux.release.x86_64 = "res://bin/delve.so"
+# Linux builds (.so)
+linux.debug.x86_64 = "res://bin/delve.linux.debug.so"
+linux.release.x86_64 = "res://bin/delve.linux.release.so"
+
+# Windows builds (.dll)
+windows.debug.x86_64 = "res://bin/delve.windows.debug.dll"
+windows.release.x86_64 = "res://bin/delve.windows.release.dll"
+
+# macOS builds (.dylib) - for future
+# macos.debug = "res://bin/delve.macos.debug.dylib"
+# macos.release = "res://bin/delve.macos.release.dylib"

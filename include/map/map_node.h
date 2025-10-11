@@ -38,20 +38,20 @@ public:
   void set_type(Type p_type);
   Type get_type() const;
 
-  void set_row(int p_row);
-  int get_row() const;
+  void set_row(int p_row) { row = p_row; }
+  int get_row() const { return row; }
 
-  void set_column(int p_column);
-  int get_column() const;
+  void set_column(int p_column) { column = p_column; }
+  int get_column() const { return column; }
 
-  void set_position(Vector2 p_position);
-  Vector2 get_position() const;
+  void set_position(Vector2 p_position) { position = p_position; }
+  Vector2 get_position() const { return position; }
 
-  void set_next_nodes(const Array &p_next_nodes);
-  Array get_next_nodes() const;
+  void set_next_nodes(const Array &p_next_nodes) { next_nodes = p_next_nodes; }
+  Array get_next_nodes() const { return next_nodes; }
 
-  void set_selected(bool p_selected);
-  bool is_selected() const;
+  void set_selected(bool p_selected) { selected = p_selected; }
+  bool is_selected() const { return selected; }
 };
 
 VARIANT_ENUM_CAST(MapNode::Type);

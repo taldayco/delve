@@ -12,23 +12,6 @@ using namespace godot;
 class MapGenerator : public Node {
   GDCLASS(MapGenerator, Node);
 
-private:
-  int MAP_HEIGT = 15; // number of "Floors"
-  int MAP_WIDTH = 7;
-  int PATHS = 6;
-  float ENEMY_NODE_WEIGHT = 10.0f;
-  float WENNY_NODE_WEIGHT = 2.5f;
-  float SHELTER_NODE_WEIGHT = 4.0f;
-
-  Dictionary weightDict;
-
-  float random_node_type_total_weight = 0.0f;
-
-  PackedInt32Array map_data;
-
-protected:
-  static void _bind_methods();
-
 public:
   MapGenerator() = default;
   ~MapGenerator() = default;
@@ -42,6 +25,26 @@ public:
   // methods required to generate map
   Array _generate_initial_grid();
   Array generate_map();
+
+private:
+  int MAP_HEIGHT = 15; // number of "Floors"
+  int MAP_WIDTH = 7;
+  int PATHS = 6;
+  int X_DIST = 30;
+  int Y_DIST = 25;
+  int PLACEMEN_RANDOMNESS = 30;
+  float ENEMY_NODE_WEIGHT = 10.0f;
+  float WENNY_NODE_WEIGHT = 2.5f;
+  float SHELTER_NODE_WEIGHT = 4.0f;
+
+  Dictionary weightDict;
+
+  float random_node_type_total_weight = 0.0f;
+
+  Array map_data;
+
+protected:
+  static void _bind_methods();
 };
 
 #endif

@@ -49,12 +49,11 @@ Array MapGenerator::_generate_initial_grid() {
 }
 
 void MapGenerator::_ready() {
-  Array grid = _generate_initial_grid();
+  map_data = _generate_initial_grid();
+  UtilityFunctions::print("Grid Rows: ", map_data.size());
 
-  UtilityFunctions::print("Grid Rows: ", grid.size());
-
-  if (grid.size() > 0) {
-    Array first_row = grid[0];
+  if (map_data.size() > 0) {
+    Array first_row = map_data[0];
     UtilityFunctions::print("First Row columns: ", first_row.size());
 
     Ref<MapNode> first_node = first_row[0];

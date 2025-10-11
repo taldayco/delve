@@ -51,23 +51,6 @@ void MapNode::_bind_methods() {
 void MapNode::set_type(Type p_type) { type = p_type; }
 MapNode::Type MapNode::get_type() const { return type; }
 
-void MapNode::set_row(int p_row) { row = p_row; }
-int MapNode::get_row() const { return row; }
-
-void MapNode::set_column(int p_column) { column = p_column; }
-int MapNode::get_column() const { return column; }
-
-void MapNode::set_position(Vector2 p_position) { position = p_position; }
-Vector2 MapNode::get_position() const { return position; }
-
-void MapNode::set_next_nodes(const Array &p_next_nodes) {
-  next_nodes = p_next_nodes;
-}
-Array MapNode::get_next_nodes() const { return next_nodes; }
-
-void MapNode::set_selected(bool p_selected) { selected = p_selected; }
-bool MapNode::is_selected() const { return selected; }
-
 // for debugging
 String MapNode::_to_string() const {
 

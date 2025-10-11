@@ -1,7 +1,6 @@
 # ==========================
 # Godot & GDExtension Project
 # ==========================
-
 # Godot project files
 .import/
 export.cfg
@@ -9,18 +8,13 @@ export_presets.cfg
 .project_metadata/
 .godot/
 
-# Build artifacts
+# Build artifacts - COMPILED BINARIES ONLY
 *.o
 *.a
-*.so
-*.dll
-*.dylib
+*.so        # Linux compiled libraries
+*.dll       # Windows compiled libraries
+*.dylib     # macOS compiled libraries
 *.exe
-
-# Compiled GDExtension binaries
-*.gdextension
-*.gdnlib
-*.gdns
 
 # ==========================
 # Godot C++ Bindings
@@ -31,6 +25,13 @@ godot-cpp/lib/
 godot-cpp/.sconsign.dblite
 godot-cpp/build/
 godot-cpp/.vscode/
+
+# ==========================
+# Build directories
+# ==========================
+build/
+bin/*.o           # Keep bin/ folder but ignore object files
+bin/*.a           # Keep bin/ folder but ignore static libs
 
 # ==========================
 # System / Editor
@@ -47,7 +48,6 @@ Thumbs.db
 # ==========================
 # C++ / Build System
 # ==========================
-build/
 cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
@@ -64,12 +64,6 @@ compile_commands.json
 .clangd/
 .clang-tidy
 .clang-format
-
-# ==========================
-# NinjaTrader / Custom Artifacts
-# ==========================
-# (none yet, but include below if needed)
-# e.g., /bin/ /dist/ /artifacts/
 
 # ==========================
 # Misc

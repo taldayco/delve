@@ -32,7 +32,7 @@ private:
   int PATHS = 6;
   int X_DIST = 30;
   int Y_DIST = 25;
-  int PLACEMEN_RANDOMNESS = 30;
+  int PLACEMENT_RANDOMNESS = 30;
   float ENEMY_NODE_WEIGHT = 10.0f;
   float WENNY_NODE_WEIGHT = 2.5f;
   float SHELTER_NODE_WEIGHT = 4.0f;

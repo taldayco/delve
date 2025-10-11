@@ -9,11 +9,49 @@
 
 using namespace godot;
 
+// bind methods first always
 void MapGenerator::_bind_methods() {
   ClassDB::bind_method(D_METHOD("generate_map"), &MapGenerator::generate_map);
   ClassDB::bind_method(D_METHOD("_generate_initial_grid"),
                        &MapGenerator::_generate_initial_grid);
 }
+
+// lifecycle 1
+void MapGenerator::_enter_tree() {
+
+  weightDict["enemy"] = ENEMY_NODE_WEIGHT;
+  weightDict["wenny"] = WENNY_NODE_WEIGHT;
+  weightDict["shelter"] = SHELTER_NODE_WEIGHT;
+
+  random_node_type_total_weight =
+      ENEMY_NODE_WEIGHT + WENNY_NODE_WEIGHT + SHELTER_NODE_WEIGHT;
+
+  UtilityFunctions::print("MapGenerator Initialized Weights");
+}
+
+// lifecycle 2
+void MapGenerator::_ready() {
+  map_data = _generate_initial_grid();
+  UtilityFunctions::print("Grid Rows: ", map_data.size());
+
+  if (map_data.size() > 0) {
+    Array first_row = map_data[0];
+    UtilityFunctions::print("First Row columns: ", first_row.size());
+
+    Ref<MapNode> first_node = first_row[0];
+    UtilityFunctions::print("First Node: ", first_node->_to_string());
+    UtilityFunctions::print("Position: ", first_node->get_position());
+  }
+}
+
+// lifecycle 3
+void MapGenerator::_exit_tree() {
+  map_data.clear();
+  weightDict.clear();
+
+  UtilityFunctions::print("Cleaned up map data");
+}
+
 Array MapGenerator::_generate_initial_grid() {
   Array result;
 
@@ -48,18 +86,4 @@ Array MapGenerator::_generate_initial_grid() {
   return result;
 }
 
-// Array MapGenerator::generate_map() {};
-
-void MapGenerator::_ready() {
-  map_data = _generate_initial_grid();
-  UtilityFunctions::print("Grid Rows: ", map_data.size());
-
-  if (map_data.size() > 0) {
-    Array first_row = map_data[0];
-    UtilityFunctions::print("First Row columns: ", first_row.size());
-
-    Ref<MapNode> first_node = first_row[0];
-    UtilityFunctions::print("First Node: ", first_node->_to_string());
-    UtilityFunctions::print("Position: ", first_node->get_position());
-  }
-}
+Array MapGenerator::generate_map() { return _generate_initial_grid(); };

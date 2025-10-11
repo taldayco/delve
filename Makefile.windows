@@ -11,6 +11,7 @@ CXX            := x86_64-w64-mingw32-g++
 AR             := x86_64-w64-mingw32-ar
 
 CXXFLAGS       := -std=c++17 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter \
+				  -DWIN32_LEAN_AND_MEAN \
 				  -I./include \
 				  -I./godot-cpp \
 				  -I./godot-cpp/include \
@@ -18,7 +19,7 @@ CXXFLAGS       := -std=c++17 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-para
 				  -I./godot-cpp/gdextension
 
 #  Linker flags for Windows DLL
-LDFLAGS        := -shared -static-libgcc -static-libstdc++
+LDFLAGS        := -shared -static-libgcc -static-libstdc++ -Wl,--no-undefined
 
 #  Windows static library from godot-cpp
 GODOT_CPP_LIB  := ./godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a

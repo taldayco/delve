@@ -1,6 +1,16 @@
 # ==========================
 # Godot & GDExtension Project
 # ==========================
+
+# ==========================
+# WORKFLOW NOTES
+# ==========================
+# - Develop on WSL2 Linux
+# - Build artifacts are platform-specific and NOT committed
+# - Only godot-cpp source (submodule) is tracked
+# - Each platform builds its own binaries
+# ==========================
+
 # Godot project files
 .import/
 export.cfg

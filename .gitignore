@@ -1,83 +1,26 @@
-# ==========================
-# Godot & GDExtension Project
-# ==========================
-
-# ==========================
-# WORKFLOW NOTES
-# ==========================
-# - Develop on WSL2 Linux
-# - Build artifacts are platform-specific and NOT committed
-# - Only godot-cpp source (submodule) is tracked
-# - Each platform builds its own binaries
-# ==========================
-
-# Godot project files
-.import/
-export.cfg
-export_presets.cfg
-.project_metadata/
-.godot/
-
-# Build artifacts - COMPILED BINARIES ONLY
+# Build artifacts
+bin/
 *.o
 *.a
-*.so        # Linux compiled libraries
-*.dll       # Windows compiled libraries
-*.dylib     # macOS compiled libraries
-*.exe
+*.so
+*.dll
+*.dylib
 
-# ==========================
-# Godot C++ Bindings
-# ==========================
+# Godot-cpp build outputs
 godot-cpp/bin/
-godot-cpp/gen/
-godot-cpp/lib/
-godot-cpp/.sconsign.dblite
-godot-cpp/build/
-godot-cpp/.vscode/
 
-# ==========================
-# Build directories
-# ==========================
-build/
-bin/*.o           # Keep bin/ folder but ignore object files
-bin/*.a           # Keep bin/ folder but ignore static libs
-
-# ==========================
-# System / Editor
-# ==========================
-.DS_Store
-Thumbs.db
-*.log
-*.swp
-*.swo
-*.tmp
-*.bak
-*.old
-
-# ==========================
-# C++ / Build System
-# ==========================
-cmake-build-*/
-CMakeCache.txt
-CMakeFiles/
-Makefile~
-*.make
-*.cmake
+# IDE files
 compile_commands.json
-
-# ==========================
-# IDE / Editor
-# ==========================
 .vscode/
 .idea/
-.clangd/
-.clang-tidy
-.clang-format
+*.swp
+*.swo
+*~
 
-# ==========================
-# Misc
-# ==========================
-*.out
-*.err
-*.cache
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.log

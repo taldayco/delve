@@ -1,2 +1,12 @@
 CompileFlags:
-  Add: [-std=c++20, -Iinclude, -Isrc]
+  Add:
+    - -std=c++17
+    - -Iinclude
+    - -Isrc
+    - -Igodot-cpp/include
+    - -Igodot-cpp/gen/include
+    - -Igodot-cpp/gdextension
+    - -I./godot-cpp
+  Remove:
+    - -m*
+    - -f*

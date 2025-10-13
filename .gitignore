@@ -16,6 +16,12 @@ compile_commands.json
 *.swp
 *.swo
 *~
+.clangd
+.cache/
+
+# Godot files
+.godot/
+*.import
 
 # OS files
 .DS_Store

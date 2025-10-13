@@ -88,20 +88,25 @@ delve/
 ## Class Overview
 
 ### MapGenerator
-Node-based procedural map generator that creates a grid-based dungeon map.
+Node-based procedural map generator that creates a positioned grid of map nodes.
 
-**Key Features:**
-- Configurable grid dimensions (height/width)
-- Randomized node placement with offset
-- Weighted random node type assignment
-- Boss node on final floor
+**Current Implementation:**
+- Generates grid of nodes at specified dimensions
+- Calculates base positions with configurable spacing
+- Applies random offset to each node position
+- Boss row gets extra vertical spacing
 
 **Configuration:**
 - `MAP_HEIGHT`: Number of floors (default: 15)
 - `MAP_WIDTH`: Number of columns (default: 7)
-- `X_DIST` / `Y_DIST`: Node spacing
-- `PLACEMENT_RANDOMNESS`: Position variance
-- Node type weights (ENEMY, WENNY, SHELTER)
+- `X_DIST`: Horizontal spacing between nodes (default: 30)
+- `Y_DIST`: Vertical spacing between nodes (default: 25)
+- `PLACEMENT_RANDOMNESS`: Position variance (default: 30)
+
+**Not Yet Implemented:**
+- Node type assignment (weights defined but not used)
+- Node connections/paths
+- Boss node special handling
 
 ### MapNode
 Resource-based node representing a single map location.
@@ -113,11 +118,14 @@ Resource-based node representing a single map location.
 - `next_nodes`: Array of connected nodes
 - `selected`: Current selection state
 
+**Current State:**
+- All nodes currently default to `NOT_ASSIGNED` type
+- Connections not yet generated
+
 ### RNGManager
-Singleton random number generator wrapper.
+Singleton random number generator wrapper used for deterministic randomization.
 
 **API:**
-- `get()`: Access singleton instance
 - `randomize()`: Randomize seed
 - `set_seed(uint64_t)`: Set specific seed
 - `randf()`: Random float [0, 1)
@@ -186,15 +194,26 @@ Singleton random number generator wrapper.
 - Release builds: Change `BUILD_TYPE := release` in Makefile
 - Use `-O2` or `-O3` flags in CXXFLAGS for release builds
 
-## Future Enhancements
+## Implementation Roadmap
 
+### Completed ✓
+- Basic grid generation with positioning
+- Random offset system for node placement
+- RNGManager singleton wrapper
+- MapNode resource with properties
+- Cross-platform build system
+
+### In Progress / Next Steps
+- [ ] Connect `pick_random_type()` to node creation
+- [ ] Implement path generation algorithm
+- [ ] Add boss node logic for final floor
+- [ ] Node connection system
+
+### Future Enhancements
 - [ ] Release build configurations
 - [ ] Automated testing
 - [ ] CI/CD pipeline (GitHub Actions)
 - [ ] Pre-built binaries for releases
-- [ ] Complete map generation algorithm implementation
-- [ ] Path generation between nodes
-- [ ] Node type assignment logic
 
 ## Credits
 

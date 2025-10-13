@@ -11,13 +11,19 @@ class RNGManager : public Node {
 
 public:
   RNGManager();
-  ~RNGManager();
+  ~RNGManager() override = default;
 
-  void randomize();
-  void set_seed(uint64_t s);
-  float randf();
-  float randf_range(float a, float b);
-  int randi_range(int a, int b);
+  // core RNG funcs
+  void randomize() noexcept;
+  void set_seed(uint64_t seed) noexcept;
+
+  [[nodiscard]] float randf() noexcept;
+  [[nodiscard]] float randf_range(float from, float to) noexcept;
+  [[nodiscard]] int randi_range(int from, int to) noexcept;
+
+  [[nodiscard]] const Ref<RandomNumberGenerator> &get_rng() const noexcept {
+    return rng;
+  }
 
 protected:
   static void _bind_methods();

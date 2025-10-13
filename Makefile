@@ -8,7 +8,7 @@ OUTPUT_DIR     := bin
 BUILD_TYPE     := debug
 # ---- Compiler and linker ----
 CXX            := g++
-CXXFLAGS       := -std=c++17 -fPIC -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter
+CXXFLAGS       := -std=c++20 -fPIC -O3 -Wall -Wextra -Wno-unknown-pragmas -Wno-unused-parameter -march=native
 LDFLAGS        := -shared
 INCLUDES := \
 	-I./include \

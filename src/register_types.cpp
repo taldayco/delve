@@ -1,5 +1,6 @@
 #include "map/map_generator.h"
 #include "map/map_node.h"
+#include "rng_manager.h"
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/core/defs.hpp>
@@ -13,6 +14,7 @@ void initialize_map_module(ModuleInitializationLevel p_level) {
 
   // Register every class you want Godot to know about:
   ClassDB::register_class<MapNode>();
+  ClassDB::register_class<RNGManager>();
   ClassDB::register_class<MapGenerator>();
 }
 

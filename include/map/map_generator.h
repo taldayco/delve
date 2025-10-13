@@ -9,6 +9,9 @@
 
 using namespace godot;
 
+// Forward declare
+class RNGManager;
+
 class MapGenerator : public Node {
   GDCLASS(MapGenerator, Node);
 
@@ -16,18 +19,15 @@ public:
   MapGenerator() = default;
   ~MapGenerator() = default;
 
-  // override placehoder godot  vitual methods
-  // that are called when a node is added to the scene tree.
   void _enter_tree() override;
   void _ready() override;
   void _exit_tree() override;
 
-  // methods required to generate map
   Array _generate_initial_grid();
   Array generate_map();
 
 private:
-  int MAP_HEIGHT = 15; // number of "Floors"
+  int MAP_HEIGHT = 15;
   int MAP_WIDTH = 7;
   int PATHS = 6;
   int X_DIST = 30;
@@ -38,10 +38,10 @@ private:
   float SHELTER_NODE_WEIGHT = 4.0f;
 
   Dictionary weightDict;
-
   float random_node_type_total_weight = 0.0f;
-
   Array map_data;
+
+  RNGManager *rng_manager = nullptr; // Add this
 
 protected:
   static void _bind_methods();

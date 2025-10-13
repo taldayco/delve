@@ -5,19 +5,20 @@
 #include "godot_cpp/variant/vector2.hpp"
 #include "godot_cpp/variant/vector2i.hpp"
 #include "map/map_node.h"
-#include "rng_manager.hpp"
+#include "rng_manager.h"
 
 using namespace godot;
 
-// bind methods first always
 void MapGenerator::_bind_methods() {
   ClassDB::bind_method(D_METHOD("generate_map"), &MapGenerator::generate_map);
   ClassDB::bind_method(D_METHOD("_generate_initial_grid"),
                        &MapGenerator::_generate_initial_grid);
 }
 
-// lifecycle 1
 void MapGenerator::_enter_tree() {
+  // Create RNGManager as a child node
+  rng_manager = memnew(RNGManager);
+  add_child(rng_manager);
 
   weightDict["enemy"] = ENEMY_NODE_WEIGHT;
   weightDict["wenny"] = WENNY_NODE_WEIGHT;
@@ -29,7 +30,6 @@ void MapGenerator::_enter_tree() {
   UtilityFunctions::print("MapGenerator Initialized Weights");
 }
 
-// lifecycle 2
 void MapGenerator::_ready() {
   map_data = _generate_initial_grid();
   UtilityFunctions::print("Grid Rows: ", map_data.size());
@@ -44,12 +44,8 @@ void MapGenerator::_ready() {
   }
 }
 
-// lifecycle 3
 void MapGenerator::_exit_tree() {
-  map_data.clear();
-  weightDict.clear();
-
-  UtilityFunctions::print("Cleaned up map data");
+  UtilityFunctions::print("MapGenerator exiting");
 }
 
 Array MapGenerator::_generate_initial_grid() {
@@ -59,22 +55,19 @@ Array MapGenerator::_generate_initial_grid() {
     Array adjacent_nodes;
 
     for (int j = 0; j < MAP_WIDTH; j++) {
-
       Ref<MapNode> current_node;
       current_node.instantiate();
       adjacent_nodes.append(current_node);
 
-      // add random placement offset
-      Vector2 offset = Vector2(RNGManager::get().randf_range(-1.0, 1.0),
-                               RNGManager::get().randf_range(-1.0, 1.0)) *
+      // Use rng_manager instance instead of singleton
+      Vector2 offset = Vector2(rng_manager->randf_range(-1.0, 1.0),
+                               rng_manager->randf_range(-1.0, 1.0)) *
                        PLACEMENT_RANDOMNESS;
 
-      // Add space between boss node and normal nodes
       if (i == MAP_HEIGHT - 1) {
         current_node->set_position(Vector2(j * X_DIST, (i + 1) * -Y_DIST) +
                                    offset);
       } else {
-
         current_node->set_position(Vector2(j * X_DIST, i * -Y_DIST) + offset);
       }
       current_node->set_row(i);
@@ -86,4 +79,4 @@ Array MapGenerator::_generate_initial_grid() {
   return result;
 }
 
-Array MapGenerator::generate_map() { return _generate_initial_grid(); };
+Array MapGenerator::generate_map() { return _generate_initial_grid(); }

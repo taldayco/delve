@@ -44,6 +44,7 @@ public:
 
   // Public API
   [[nodiscard]] Array generate_map();
+  void regenerate_map();
 
 private:
   // Node Weight Container (Tyoe-safe)

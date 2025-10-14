@@ -1,4 +1,5 @@
 #include "map/map_generator.h"
+#include "godot_cpp/classes/ref.hpp"
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/variant/array.hpp"
 #include "godot_cpp/variant/utility_functions.hpp"
@@ -10,6 +11,8 @@ using namespace godot;
 
 void MapGenerator::_bind_methods() {
   ClassDB::bind_method(D_METHOD("generate_map"), &MapGenerator::generate_map);
+  ClassDB::bind_method(D_METHOD("regenerate_map"),
+                       &MapGenerator::regenerate_map);
 }
 
 void MapGenerator::_enter_tree() {
@@ -90,6 +93,29 @@ Array MapGenerator::generate_initial_grid() const {
     result[row] = row_nodes;
   }
   return result;
+}
+
+// Map regeneration
+void MapGenerator::regenerate_map() {
+  if (rng_manager) {
+    rng_manager->randomize();
+  }
+  map_data = generate_initial_grid();
+  UtilityFunctions::print("MapGenerator: Regenerated map", map_data.size(),
+                          " rows");
+
+  if (map_data.size() > 0) {
+    Array first_row = map_data[0];
+    UtilityFunctions::print(" First Row has ", first_row.size(), " nodes:");
+
+    for (int i = 0; i < first_row.size(); ++i) {
+      const Ref<MapNode> node = first_row[i];
+      if (node.is_valid()) {
+        UtilityFunctions::print(" [", i, "]", node->_to_string(), " at  ",
+                                node->get_position());
+      }
+    }
+  }
 }
 
 // node creation helpers

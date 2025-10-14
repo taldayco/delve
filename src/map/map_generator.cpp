@@ -6,6 +6,7 @@
 #include "godot_cpp/variant/vector2.hpp"
 #include "map/map_node.h"
 #include "rng_manager.h"
+#include <unordered_set>
 
 using namespace godot;
 
@@ -76,7 +77,15 @@ MapNode::Type MapGenerator::NodeTypeWeights::pick_random_type(
 }
 
 // Map Generation
-Array MapGenerator::generate_map() { return generate_initial_grid(); }
+Array MapGenerator::generate_map() {
+  map_data = generate_initial_grid();
+
+  Array starting_points = get_starting_points();
+
+  UtilityFunctions::print("Starting points: ", starting_points);
+
+  return map_data;
+}
 
 Array MapGenerator::generate_initial_grid() const {
 
@@ -143,6 +152,31 @@ Vector2 MapGenerator::calculate_base_position(int row, int col) const noexcept {
       (row == MapConfig::HEIGHT - 1 ? row + 1 : row) * -MapConfig::Y_DIST;
 
   return Vector2(x, y);
+}
+
+Array MapGenerator::get_starting_points() const {
+  std::vector<int> y_coords;
+  y_coords.reserve(MapConfig::PATHS);
+
+  while (true) {
+    y_coords.clear();
+
+    for (int i = 0; i < MapConfig::PATHS; ++i) {
+      y_coords.push_back(rng_manager->randi_range(0, MapConfig::WIDTH - 1));
+    }
+    std::unordered_set<int> unique_check(y_coords.begin(), y_coords.end());
+
+    if (unique_check.size() >= 2) {
+      break;
+    }
+  }
+
+  Array result;
+  result.resize(MapConfig::PATHS);
+  for (int i = 0; i < MapConfig::PATHS; ++i) {
+    result[i] = y_coords[i];
+  }
+  return result;
 }
 
 Vector2 MapGenerator::generate_random_offset() const noexcept {

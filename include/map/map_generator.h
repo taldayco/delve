@@ -75,6 +75,7 @@ private:
 
   // random offset generation
   [[nodiscard]] Vector2 generate_random_offset() const noexcept;
+  [[nodiscard]] Array get_starting_points() const;
 
   NodeTypeWeights weights{.enemy = NodeWeights::ENEMY,
                           .wenny = NodeWeights::WENNY,

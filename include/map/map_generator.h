@@ -75,7 +75,14 @@ private:
 
   // random offset generation
   [[nodiscard]] Vector2 generate_random_offset() const noexcept;
-  [[nodiscard]] Array get_starting_points() const;
+  [[nodiscard]] Array get_starting_nodes() const;
+
+  void setup_connections(Array &starting_nodes);
+  [[nodiscard]] int single_random_connection(int row, int current_column);
+
+  [[nodiscard]] bool
+  would_cross_existing_path(int row, int current_column,
+                            const Ref<MapNode> &next_node) const;
 
   NodeTypeWeights weights{.enemy = NodeWeights::ENEMY,
                           .wenny = NodeWeights::WENNY,

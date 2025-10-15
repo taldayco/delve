@@ -6,6 +6,8 @@
 #include "godot_cpp/variant/vector2.hpp"
 #include "map/map_node.h"
 #include "rng_manager.h"
+#include <algorithm>
+#include <exception>
 #include <unordered_set>
 
 using namespace godot;
@@ -78,11 +80,11 @@ MapNode::Type MapGenerator::NodeTypeWeights::pick_random_type(
 
 // Map Generation
 Array MapGenerator::generate_map() {
+
   map_data = generate_initial_grid();
+  Array starting_nodes = get_starting_nodes();
 
-  Array starting_points = get_starting_points();
-
-  UtilityFunctions::print("Starting points: ", starting_points);
+  setup_connections(starting_nodes);
 
   return map_data;
 }
@@ -104,12 +106,17 @@ Array MapGenerator::generate_initial_grid() const {
   return result;
 }
 
-// Map regeneration
+//  Map regeneration
 void MapGenerator::regenerate_map() {
   if (rng_manager) {
     rng_manager->randomize();
   }
   map_data = generate_initial_grid();
+
+  Array starting_nodes = get_starting_nodes();
+
+  UtilityFunctions::print("Starting points: ", starting_nodes);
+
   UtilityFunctions::print("MapGenerator: Regenerated map", map_data.size(),
                           " rows");
 
@@ -154,7 +161,7 @@ Vector2 MapGenerator::calculate_base_position(int row, int col) const noexcept {
   return Vector2(x, y);
 }
 
-Array MapGenerator::get_starting_points() const {
+Array MapGenerator::get_starting_nodes() const {
   std::vector<int> y_coords;
   y_coords.reserve(MapConfig::PATHS);
 
@@ -177,6 +184,52 @@ Array MapGenerator::get_starting_points() const {
     result[i] = y_coords[i];
   }
   return result;
+}
+
+void MapGenerator::setup_connections(Array &starting_nodes) {
+  const int num_paths = starting_nodes.size();
+
+  for (int j = 0; j < num_paths; ++j) {
+    int current_column = static_cast<int>(starting_nodes[j]);
+
+    for (int i = 0; i < MapConfig::HEIGHT; ++i) {
+      current_column = single_random_connection(i, current_column);
+    }
+  }
+}
+
+int MapGenerator::single_random_connection(int row, int current_column) {
+
+  // get current node
+  const Array row_array = map_data[row];
+  Ref<MapNode> current_node = row_array[current_column];
+
+  Ref<MapNode> next_node;
+
+  // keep trying until we get a non crossing connection
+  while (next_node.is_null() ||
+         would_cross_existing_path(row, current_column, next_node)) {
+
+    const int random_column = std::clamp(
+        rng_manager->randi_range(current_column - 1, current_column + 1), 0,
+        MapConfig::WIDTH - 1);
+
+    // get node from next row
+    const Array next_row_array = map_data[row + 1];
+    next_node = next_row_array[random_column];
+  }
+  // establish connection
+  current_node->add_next_node(next_node);
+
+  // return the column
+  return next_node->get_column();
+}
+
+// stub
+bool MapGenerator::would_cross_existing_path(
+    int row, int current_column, const Ref<MapNode> &next_node) const {
+
+  return false;
 }
 
 Vector2 MapGenerator::generate_random_offset() const noexcept {

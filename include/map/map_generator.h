@@ -1,20 +1,15 @@
 #ifndef MAP_GENERATOR_H
 #define MAP_GENERATOR_H
 
-#include "godot_cpp/classes/ref.hpp"
-#include "godot_cpp/variant/array.hpp"
-#include "godot_cpp/variant/typed_array.hpp"
-#include "godot_cpp/variant/vector2.hpp"
-#include "map_node.h"
 #include <godot_cpp/classes/node.hpp>
-#include <optional>
+#include <godot_cpp/classes/random_number_generator.hpp>
+#include <godot_cpp/variant/dictionary.hpp>
+#include <godot_cpp/variant/vector2.hpp>
+#include <vector>
 
 using namespace godot;
 
-class RNGManager;
-
 // Map Generation Config
-
 namespace MapConfig {
 constexpr int HEIGHT = 15;
 constexpr int WIDTH = 7;
@@ -22,7 +17,54 @@ constexpr int PATHS = 6;
 constexpr int X_DIST = 30;
 constexpr int Y_DIST = 25;
 constexpr int PLACEMENT_RANDOMNESS = 30;
+constexpr int MAX_CONNECTIONS = 3; // Add this
 } // namespace MapConfig
+
+struct MapNodeData {
+  enum class Type : uint8_t {
+    NotAssigned = 0,
+    Enemy = 1,
+    Loot = 2,
+    Shelter = 3,
+    Wenny = 4,
+    Boss = 5
+  };
+
+  // Data members
+  Type type{};
+  int16_t row{};
+  int16_t column{};
+  Vector2 position{};
+  uint8_t next_count{};
+  int16_t next_indices[MapConfig::MAX_CONNECTIONS]{}; // Indices into flat array
+  Type parent_type{};
+  bool selected{};
+
+  // Debug helper
+  [[nodiscard]] static constexpr char type_to_char(Type t) noexcept {
+    const char *str = type_to_string(t);
+    return str[0];
+  }
+
+  [[nodiscard]] static constexpr const char *type_to_string(Type t) noexcept {
+    switch (t) {
+    case Type::NotAssigned:
+      return "NOT_ASSIGNED";
+    case Type::Enemy:
+      return "ENEMY";
+    case Type::Loot:
+      return "LOOT";
+    case Type::Shelter:
+      return "SHELTER";
+    case Type::Wenny:
+      return "WENNY";
+    case Type::Boss:
+      return "BOSS";
+    }
+    return "UNKNOWN";
+  }
+};
+
 namespace NodeWeights {
 constexpr float ENEMY = 10.0f;
 constexpr float WENNY = 2.5f;
@@ -44,65 +86,38 @@ public:
   void _exit_tree() override;
 
   // Public API
-  [[nodiscard]] Array generate_map();
   void regenerate_map();
+  [[nodiscard]] Dictionary get_map_data() const; // New export method
 
 private:
-  // Node Weight Container (Tyoe-safe)
-  struct NodeTypeWeights {
-    float enemy;
-    float wenny;
-    float shelter;
+  // Flat storage - index = row * WIDTH + col
+  std::vector<MapNodeData> nodes;
 
-    // Calculate total weight at compile-time when possible
-    [[nodiscard]] constexpr float total() const noexcept {
-      return enemy + wenny + shelter;
-    }
+  Ref<RandomNumberGenerator> rng;
 
-    // Pick random Node Type Based off weight distribution
-    [[nodiscard]] MapNode::Type
-    pick_random_type(float random_value) const noexcept;
-  };
+  // Inline accessor
+  [[nodiscard]] constexpr int idx(int row, int col) const noexcept {
+    return row * MapConfig::WIDTH + col;
+  }
 
-  // Initial grid struct w/o connection
-  [[nodiscard]] Array generate_initial_grid() const;
+  // Generation pipeline
+  void generate_initial_grid();
+  void create_node(int row, int col);
 
-  // single node at specified position
-  [[nodiscard]] Ref<MapNode> create_node(int row, int col) const;
-
-  // Calculate base position for a node (without randomness)
   [[nodiscard]] Vector2 calculate_base_position(int row,
                                                 int col) const noexcept;
-
-  // random offset generation
   [[nodiscard]] Vector2 generate_random_offset() const noexcept;
-  [[nodiscard]] Array get_starting_nodes() const;
 
-  void setup_connections(Array &starting_nodes);
-  [[nodiscard]] int single_random_connection(int row, int current_column);
+  [[nodiscard]] std::vector<int> get_starting_columns() const;
+  void setup_connections(const std::vector<int> &starting_columns);
 
-  [[nodiscard]] bool
-  would_cross_existing_path(int row, int current_column,
-                            const Ref<MapNode> &next_node) const;
-
-  NodeTypeWeights weights{.enemy = NodeWeights::ENEMY,
-                          .wenny = NodeWeights::WENNY,
-                          .shelter = NodeWeights::SHELTER};
+  int single_random_connection(int row, int current_column);
+  [[nodiscard]] bool would_cross_existing_path(int row, int current_column,
+                                               int next_column) const;
 
   void setup_boss_node();
-  // specifies which nodes have a random type,
-  // and which are predetermined
   void assign_node_types();
-
-  // check if node has parent with type
-  [[nodiscard]] bool node_has_parent_of_type(const Ref<MapNode> &node,
-                                             MapNode::Type type) const;
-
-  // random type assigning to leftover nodes
-  void assign_type_randomly(const Ref<MapNode> &node);
-
-  Array map_data;
-  RNGManager *rng_manager = nullptr;
+  void print_debug_info() const;
 
 protected:
   static void _bind_methods();

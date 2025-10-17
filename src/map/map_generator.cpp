@@ -1,41 +1,23 @@
 #include "map/map_generator.h"
-#include "godot_cpp/core/class_db.hpp"
-#include "godot_cpp/variant/dictionary.hpp"
-#include "godot_cpp/variant/packed_int32_array.hpp"
-#include "godot_cpp/variant/packed_vector2_array.hpp"
-#include "godot_cpp/variant/utility_functions.hpp"
 #include <algorithm>
+#include <iostream>
 #include <unordered_set>
 
-using namespace godot;
-
-void MapGenerator::_bind_methods() {
-  ClassDB::bind_method(D_METHOD("regenerate_map"),
-                       &MapGenerator::regenerate_map);
-  ClassDB::bind_method(D_METHOD("get_map_data"), &MapGenerator::get_map_data);
-}
-
-void MapGenerator::_enter_tree() {
-  // Direct RNG instantiation
-  rng.instantiate();
+void MapGenerator::initialize() {
+  // Initialize RNG
+  rng.seed(std::random_device{}());
 
   // Pre-allocate flat storage
   nodes.resize(MapConfig::HEIGHT * MapConfig::WIDTH);
-}
 
-void MapGenerator::_ready() {
+  // Generate map
   generate_initial_grid();
-
   std::vector<int> starting_columns = get_starting_columns();
   setup_connections(starting_columns);
   setup_boss_node();
   assign_node_types();
 
-  UtilityFunctions::print("MapGenerator: Ready with ", nodes.size(), " nodes");
-}
-
-void MapGenerator::_exit_tree() {
-  // Nothing needed yet, Ref handles cleanup
+  std::cout << "MapGenerator: Ready with " << nodes.size() << " nodes\n";
 }
 
 void MapGenerator::create_node(int row, int col) {
@@ -62,13 +44,13 @@ Vector2 MapGenerator::calculate_base_position(int row, int col) const noexcept {
   return Vector2(x, y);
 }
 
-Vector2 MapGenerator::generate_random_offset() const noexcept {
-  const float offset_x = rng->randf_range(-1.0f, 1.0f);
-  const float offset_y = rng->randf_range(-1.0f, 1.0f);
+Vector2 MapGenerator::generate_random_offset() noexcept {
+  const float offset_x = randf_range(-1.0f, 1.0f);
+  const float offset_y = randf_range(-1.0f, 1.0f);
   return Vector2(offset_x, offset_y) * MapConfig::PLACEMENT_RANDOMNESS;
 }
 
-std::vector<int> MapGenerator::get_starting_columns() const {
+std::vector<int> MapGenerator::get_starting_columns() {
   std::vector<int> columns;
   columns.reserve(MapConfig::PATHS);
 
@@ -76,7 +58,7 @@ std::vector<int> MapGenerator::get_starting_columns() const {
   while (true) {
     columns.clear();
     for (int i = 0; i < MapConfig::PATHS; ++i) {
-      columns.push_back(rng->randi_range(0, MapConfig::WIDTH - 1));
+      columns.push_back(randi_range(0, MapConfig::WIDTH - 1));
     }
 
     std::unordered_set<int> unique_check(columns.begin(), columns.end());
@@ -108,7 +90,7 @@ int MapGenerator::single_random_connection(int row, int current_column) {
   while (next_column < 0 ||
          would_cross_existing_path(row, current_column, next_column)) {
     next_column =
-        std::clamp(rng->randi_range(current_column - 1, current_column + 1), 0,
+        std::clamp(randi_range(current_column - 1, current_column + 1), 0,
                    MapConfig::WIDTH - 1);
   }
 
@@ -204,7 +186,7 @@ void MapGenerator::assign_node_types() {
           valid_weight += NodeWeights::WENNY;
         }
 
-        const float rand_val = rng->randf_range(0.0f, valid_weight);
+        const float rand_val = randf_range(0.0f, valid_weight);
         float accumulated = 0.0f;
 
         accumulated += NodeWeights::ENEMY;
@@ -232,11 +214,8 @@ void MapGenerator::assign_node_types() {
 }
 
 void MapGenerator::regenerate_map() {
-  if (rng.is_valid()) {
-    rng->randomize();
-  }
+  rng.seed(std::random_device{}());
 
-  // Clear all nodes (ZII - zero is valid state)
   std::fill(nodes.begin(), nodes.end(), MapNodeData{});
 
   generate_initial_grid();
@@ -248,63 +227,9 @@ void MapGenerator::regenerate_map() {
   print_debug_info();
 }
 
-Dictionary MapGenerator::get_map_data() const {
-  Dictionary result;
-
-  // Metadata
-  result["width"] = MapConfig::WIDTH;
-  result["height"] = MapConfig::HEIGHT;
-
-  // Pack node data
-  PackedInt32Array types;
-  PackedInt32Array rows;
-  PackedInt32Array columns;
-  PackedVector2Array positions;
-  PackedByteArray connection_counts;
-
-  const int total_nodes = nodes.size();
-  types.resize(total_nodes);
-  rows.resize(total_nodes);
-  columns.resize(total_nodes);
-  positions.resize(total_nodes);
-  connection_counts.resize(total_nodes);
-
-  int total_connections = 0;
-  for (int i = 0; i < total_nodes; ++i) {
-    const MapNodeData &node = nodes[i];
-    types[i] = static_cast<int>(node.type);
-    rows[i] = node.row;
-    columns[i] = node.column;
-    positions[i] = node.position;
-    connection_counts[i] = node.next_count;
-    total_connections += node.next_count;
-  }
-
-  // Pack connections as flat array [source_idx, target_idx, source_idx,
-  // target_idx, ...]
-  PackedInt32Array connections;
-  connections.resize(total_connections * 2);
-
-  int write_idx = 0;
-  for (int i = 0; i < total_nodes; ++i) {
-    const MapNodeData &node = nodes[i];
-    for (int j = 0; j < node.next_count; ++j) {
-      connections[write_idx++] = i;
-      connections[write_idx++] = node.next_indices[j];
-    }
-  }
-
-  result["types"] = types;
-  result["rows"] = rows;
-  result["columns"] = columns;
-  result["positions"] = positions;
-  result["connection_counts"] = connection_counts;
-  result["connections"] = connections;
-
-  return result;
+MapGenerator::MapData MapGenerator::get_map_data() const {
+  return {MapConfig::WIDTH, MapConfig::HEIGHT, &nodes};
 }
-
-// debugging
 void MapGenerator::print_debug_info() const {
   int connected_count = 0;
   for (const auto &node : nodes) {
@@ -312,8 +237,8 @@ void MapGenerator::print_debug_info() const {
       ++connected_count;
   }
 
-  UtilityFunctions::print("Total nodes: ", nodes.size());
-  UtilityFunctions::print("Connected nodes: ", connected_count);
-  UtilityFunctions::print("Boss node at: (", MapConfig::HEIGHT - 1, ", ",
-                          MapConfig::WIDTH / 2, ")");
+  std::cout << "Total nodes: " << nodes.size() << "\n";
+  std::cout << "Connected nodes: " << connected_count << "\n";
+  std::cout << "Boss node at: (" << MapConfig::HEIGHT - 1 << ", "
+            << MapConfig::WIDTH / 2 << ")\n";
 }

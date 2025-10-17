@@ -1,14 +1,16 @@
 #ifndef MAP_GENERATOR_H
 #define MAP_GENERATOR_H
-
-#include <godot_cpp/classes/node.hpp>
-#include <godot_cpp/classes/random_number_generator.hpp>
-#include <godot_cpp/variant/dictionary.hpp>
-#include <godot_cpp/variant/vector2.hpp>
+#include <random>
 #include <vector>
 
-using namespace godot;
-
+// we have vec2d at home
+struct Vector2 {
+  float x{}, y{};
+  Vector2() = default;
+  Vector2(float x, float y) : x(x), y(y) {}
+  Vector2 operator+(const Vector2 &o) const { return {x + o.x, y + o.y}; }
+  Vector2 operator*(float s) const { return {x * s, y * s}; }
+};
 // Map Generation Config
 namespace MapConfig {
 constexpr int HEIGHT = 15;
@@ -74,27 +76,39 @@ constexpr float TOTAL = ENEMY + WENNY + SHELTER;
 } // namespace NodeWeights
 
 // Map Generator
-class MapGenerator : public Node {
-  GDCLASS(MapGenerator, Node);
+class MapGenerator {
 
 public:
   MapGenerator() = default;
+  void initialize();
   ~MapGenerator() = default;
-
-  void _enter_tree() override;
-  void _ready() override;
-  void _exit_tree() override;
 
   // Public API
   void regenerate_map();
-  [[nodiscard]] Dictionary get_map_data() const; // New export method
+
+  struct MapData {
+    int width{MapConfig::WIDTH};
+    int height{MapConfig::HEIGHT};
+    const std::vector<MapNodeData> *nodes{nullptr}; // Non-owning view
+  };
+
+  [[nodiscard]] MapData get_map_data() const;
 
 private:
   // Flat storage - index = row * WIDTH + col
   std::vector<MapNodeData> nodes;
 
-  Ref<RandomNumberGenerator> rng;
+  // Rng member
+  mutable std::mt19937 rng;
+  mutable std::uniform_real_distribution<float> float_dist{0.0f, 1.0f};
+  // rng helper methods
+  [[nodiscard]] float randf_range(float min, float max) {
+    return min + float_dist(rng) * (max - min);
+  }
 
+  [[nodiscard]] int randi_range(int min, int max) const {
+    return std::uniform_int_distribution<int>{min, max}(rng);
+  }
   // Inline accessor
   [[nodiscard]] constexpr int idx(int row, int col) const noexcept {
     return row * MapConfig::WIDTH + col;
@@ -106,9 +120,9 @@ private:
 
   [[nodiscard]] Vector2 calculate_base_position(int row,
                                                 int col) const noexcept;
-  [[nodiscard]] Vector2 generate_random_offset() const noexcept;
+  [[nodiscard]] Vector2 generate_random_offset() noexcept;
 
-  [[nodiscard]] std::vector<int> get_starting_columns() const;
+  [[nodiscard]] std::vector<int> get_starting_columns();
   void setup_connections(const std::vector<int> &starting_columns);
 
   int single_random_connection(int row, int current_column);
@@ -118,9 +132,6 @@ private:
   void setup_boss_node();
   void assign_node_types();
   void print_debug_info() const;
-
-protected:
-  static void _bind_methods();
 };
 
 #endif

@@ -1,6 +1,7 @@
 #ifndef MAP_GENERATOR_H
 #define MAP_GENERATOR_H
 
+#include "godot_cpp/classes/ref.hpp"
 #include "godot_cpp/variant/array.hpp"
 #include "godot_cpp/variant/typed_array.hpp"
 #include "godot_cpp/variant/vector2.hpp"
@@ -87,6 +88,18 @@ private:
   NodeTypeWeights weights{.enemy = NodeWeights::ENEMY,
                           .wenny = NodeWeights::WENNY,
                           .shelter = NodeWeights::SHELTER};
+
+  void setup_boss_node();
+  // specifies which nodes have a random type,
+  // and which are predetermined
+  void assign_node_types();
+
+  // check if node has parent with type
+  [[nodiscard]] bool node_has_parent_of_type(const Ref<MapNode> &node,
+                                             MapNode::Type type) const;
+
+  // random type assigning to leftover nodes
+  void assign_type_randomly(const Ref<MapNode> &node);
 
   Array map_data;
   RNGManager *rng_manager = nullptr;

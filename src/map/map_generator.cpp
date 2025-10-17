@@ -2,12 +2,14 @@
 #include "godot_cpp/classes/ref.hpp"
 #include "godot_cpp/core/class_db.hpp"
 #include "godot_cpp/variant/array.hpp"
+#include "godot_cpp/variant/typed_array.hpp"
 #include "godot_cpp/variant/utility_functions.hpp"
 #include "godot_cpp/variant/vector2.hpp"
 #include "map/map_node.h"
 #include "rng_manager.h"
 #include <algorithm>
 #include <unordered_set>
+#include <vector>
 
 using namespace godot;
 
@@ -80,9 +82,11 @@ MapNode::Type MapGenerator::NodeTypeWeights::pick_random_type(
 // Map Generation
 Array MapGenerator::generate_map() {
   map_data = generate_initial_grid();
-
   Array starting_nodes = get_starting_nodes();
+
   setup_connections(starting_nodes);
+  setup_boss_node();
+  assign_node_types();
 
   return map_data;
 }
@@ -288,6 +292,124 @@ bool MapGenerator::would_cross_existing_path(
   return false;
 }
 
+void MapGenerator::setup_boss_node() {
+  // get middle column
+  const int middle = static_cast<int>(MapConfig::WIDTH * 0.5);
+
+  // get boss node from top row, middle column
+  const Array boss_row = map_data[MapConfig::HEIGHT - 1];
+  Ref<MapNode> boss_node = boss_row[middle];
+
+  // get second-to-last row where paths converge
+  const Array penultimate_row = map_data[MapConfig::HEIGHT - 2];
+
+  // connect all active paths to boss
+  for (int j = 0; j < MapConfig::WIDTH; ++j) {
+    Ref<MapNode> current_node = penultimate_row[j];
+
+    if (current_node.is_valid() && current_node->has_next_nodes()) {
+      // clear existing connections and redirect to boss
+      current_node->clear_next_nodes();
+      current_node->add_next_node(boss_node);
+    }
+  }
+  boss_node->set_type(MapNode::Type::Boss);
+}
+
+void MapGenerator::assign_node_types() {
+  std::vector<std::vector<MapNode::Type>> parent_types;
+  parent_types.resize(MapConfig::HEIGHT);
+
+  for (int i = 0; i < MapConfig::HEIGHT; ++i) {
+    parent_types[i].resize(MapConfig::WIDTH);
+  }
+
+  for (int i = 0; i < MapConfig::HEIGHT - 1; ++i) {
+    const Array floor = map_data[i];
+
+    for (int j = 0; j < floor.size(); ++j) {
+      const Ref<MapNode> node = floor[j];
+      if (!node.is_valid())
+        continue;
+
+      const TypedArray<MapNode> next_nodes = node->get_next_nodes();
+      for (int k = 0; k < next_nodes.size(); ++k) {
+        const Ref<MapNode> child = next_nodes[k];
+        if (child.is_valid()) {
+          parent_types[child->get_row()][child->get_column()] =
+              node->get_type();
+        }
+      }
+    }
+  }
+
+  const float total_weight = weights.total();
+
+  for (int i = 0; i < MapConfig::HEIGHT - 1; ++i) {
+    const Array floor = map_data[i];
+
+    for (int j = 0; j < floor.size(); ++i) {
+      Ref<MapNode> node = floor[j];
+      if (!node.is_valid() || !node->has_next_nodes())
+        continue;
+
+      // special floor rules
+      if (i == 0) {
+        node->set_type(MapNode::Type::Enemy);
+      } else if (i == 8) {
+        node->set_type(MapNode::Type::Shelter);
+      } else if (i == MapConfig::HEIGHT - 2) {
+        node->set_type(MapNode::Type::Shelter);
+      } else {
+        const MapNode::Type parent_type = parent_types[i][j];
+
+        std::vector<MapNode::Type> valid_types;
+        valid_types.reserve(3);
+
+        // check enemy
+        valid_types.push_back(MapNode::Type::Enemy);
+
+        // check shelter
+        if (i >= 3 && parent_type != MapNode::Type::Shelter) {
+          valid_types.push_back(MapNode::Type::Shelter);
+        }
+        // check wenny
+        if (parent_type != MapNode::Type::Wenny) {
+          valid_types.push_back(MapNode::Type::Wenny);
+        }
+        if (valid_types.size() == 1) {
+          node->set_type(valid_types[0]);
+        } else {
+          float valid_weight = 0.0f;
+          for (const auto type : valid_types) {
+            if (type == MapNode::Type::Enemy)
+              valid_weight += weights.enemy;
+            else if (type == MapNode::Type::Wenny)
+              valid_weight += weights.wenny;
+            else if (type == MapNode::Type::Shelter)
+              valid_weight += weights.shelter;
+          }
+          const float rand_val = rng_manager->randf_range(0.0f, valid_weight);
+          float accumulated = 0.0f;
+
+          for (const auto type : valid_types) {
+            if (type == MapNode::Type::Enemy)
+              accumulated += weights.enemy;
+            else if (type == MapNode::Type::Wenny)
+              accumulated += weights.wenny;
+            else if (type == MapNode::Type::Shelter)
+              accumulated += weights.shelter;
+
+            if (rand_val <= accumulated) {
+              node->set_type(type);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+}
 Vector2 MapGenerator::generate_random_offset() const noexcept {
   const float offset_x = rng_manager->randf_range(-1.0f, 1.0f);
   const float offset_y = rng_manager->randf_range(-1.0f, 1.0f);

@@ -7,7 +7,6 @@
 #include "map/map_node.h"
 #include "rng_manager.h"
 #include <algorithm>
-#include <exception>
 #include <unordered_set>
 
 using namespace godot;
@@ -80,10 +79,9 @@ MapNode::Type MapGenerator::NodeTypeWeights::pick_random_type(
 
 // Map Generation
 Array MapGenerator::generate_map() {
-
   map_data = generate_initial_grid();
-  Array starting_nodes = get_starting_nodes();
 
+  Array starting_nodes = get_starting_nodes();
   setup_connections(starting_nodes);
 
   return map_data;
@@ -196,6 +194,21 @@ void MapGenerator::setup_connections(Array &starting_nodes) {
       current_column = single_random_connection(i, current_column);
     }
   }
+
+  // For debugging, prints connected nodes per floor
+  for (int i = 0; i < map_data.size(); ++i) {
+    const Array floor = map_data[i];
+
+    String connected_nodes = "Floor " + String::num_int64(i) + ": ";
+
+    for (int j = 0; j < floor.size(); ++j) {
+      const Ref<MapNode> node = floor[j];
+      if (node.is_valid() && node->get_next_nodes().size() > 0) {
+        connected_nodes += String::num_int64(j) + " (N), ";
+      }
+    }
+    UtilityFunctions::print(connected_nodes);
+  }
 }
 
 int MapGenerator::single_random_connection(int row, int current_column) {
@@ -225,9 +238,52 @@ int MapGenerator::single_random_connection(int row, int current_column) {
   return next_node->get_column();
 }
 
-// stub
 bool MapGenerator::would_cross_existing_path(
     int row, int current_column, const Ref<MapNode> &next_node) const {
+  if (next_node.is_null()) {
+    return false;
+  }
+  const Array current_row = map_data[row];
+  const int next_column = next_node->get_column();
+
+  // Get adjacent neighbors, defaults to null
+  Ref<MapNode>(left_neighbor);
+  Ref<MapNode>(right_neighbor);
+
+  if (current_column > 0) {
+    left_neighbor = current_row[current_column - 1];
+  }
+
+  if (current_column < MapConfig::WIDTH - 1) {
+    right_neighbor = current_row[current_column + 1];
+  }
+
+  // Don't cross right if right neighbor goes left
+  if (!right_neighbor.is_null() && next_column > current_column) {
+    const Array right_next_nodes = right_neighbor->get_next_nodes();
+    const int count = right_next_nodes.size();
+
+    for (int i = 0; i < count; ++i) {
+      const Ref<MapNode> next_node = right_next_nodes[i];
+      if (!next_node.is_null() && next_node->get_column() < next_column) {
+        return true;
+      }
+    }
+  }
+
+  // Don't cross left if left neigbor goes right
+
+  if (!left_neighbor.is_null() && next_column < current_column) {
+    const Array left_next_rooms = left_neighbor->get_next_nodes();
+    const int count = left_next_rooms.size();
+
+    for (int i = 0; i < count; ++i) {
+      const Ref<MapNode> next_room = left_next_rooms[i];
+      if (!next_room.is_null() && next_room->get_column() > next_column) {
+        return true;
+      }
+    }
+  }
 
   return false;
 }

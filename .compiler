@@ -1,0 +1,8 @@
+# Run from the correct directory
+cd /home/neto/delve
+
+# Build the project
+make
+
+# If compilation succeeds, run the binary
+./bin/map_gen

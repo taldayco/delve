@@ -1,83 +1,84 @@
-#include "include/map/map_generator.h"
+#include "map/map_generator.h"
+#include "systems/input_system.h"
+#include "systems/render_system.h"
+#include "systems/ui_system.h"
+#include <GL/gl.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <vulkan/vulkan.h>
 
-// Simple button state
-struct Button {
-  float x, y, w, h;
-  bool was_pressed{};
-
-  bool check_click(double mouse_x, double mouse_y, bool mouse_down) {
-    bool inside =
-        mouse_x >= x && mouse_x <= x + w && mouse_y >= y && mouse_y <= y + h;
-    bool clicked = inside && mouse_down && !was_pressed;
-    was_pressed = mouse_down;
-    return clicked;
-  }
+struct AppContext {
+  GLFWwindow *window{};
+  InputSystem input{};
+  UISystem ui{};
+  RenderSystem render{};
+  MapGenerator map_gen{};
+  bool running{true};
 };
 
-void print_map_stats(const MapGenerator::MapData &data) {
-  std::cout << "\n=== Map Stats ===\n";
-  std::cout << "Dimensions: " << data.width << "x" << data.height << "\n";
-  std::cout << "Total nodes: " << data.nodes->size() << "\n";
+bool init_context(AppContext &ctx) {
+  if (!glfwInit())
+    return false;
 
-  // Count types
-  int type_counts[6] = {};
-  for (const auto &node : *data.nodes) {
-    type_counts[static_cast<int>(node.type)]++;
+  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+  ctx.window = glfwCreateWindow(800, 600, "Map Generator", nullptr, nullptr);
+  if (!ctx.window) {
+    std::cout << "Failed to create window!\n"; // Add this debug
+    glfwTerminate();
+    return false;
   }
 
-  std::cout << "Enemy: " << type_counts[1] << "\n";
-  std::cout << "Shelter: " << type_counts[3] << "\n";
-  std::cout << "Wenny: " << type_counts[4] << "\n";
-  std::cout << "Boss: " << type_counts[5] << "\n";
-  std::cout << "=================\n\n";
+  std::cout << "Window created: " << ctx.window << "\n"; // Debug
+
+  input_init(&ctx.input, ctx.window); // Must be AFTER window creation
+  std::cout << "Input window stored: " << ctx.input.window << "\n"; // Debug
+
+  ui_init(&ctx.ui);
+  render_init(&ctx.render, ctx.window);
+  ctx.map_gen.initialize();
+
+  return true;
 }
 
-int main() {
-  // Initialize GLFW
-  if (!glfwInit())
-    return -1;
-
-  glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // For future Vulkan
-  GLFWwindow *window =
-      glfwCreateWindow(800, 600, "Map Generator", nullptr, nullptr);
-  if (!window) {
-    glfwTerminate();
-    return -1;
-  }
-
-  // Initialize map
-  MapGenerator map_gen;
-  map_gen.initialize();
-  print_map_stats(map_gen.get_map_data());
-
-  Button new_game_btn{235, 101, 100, 40};
-
-  // Main loop
-  while (!glfwWindowShouldClose(window)) {
-    // Input
-    double mx, my;
-    glfwGetCursorPos(window, &mx, &my);
-    bool mouse_down =
-        glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-
-    if (new_game_btn.check_click(mx, my, mouse_down)) {
-      std::cout << "Regenerating map...\n";
-      map_gen.regenerate_map();
-      print_map_stats(map_gen.get_map_data());
-    }
-
-    // Or use keyboard
-    if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS) {
-      map_gen.regenerate_map();
-      print_map_stats(map_gen.get_map_data());
-    }
-
-    glfwPollEvents();
-  }
-
-  glfwDestroyWindow(window);
+void shutdown_context(AppContext &ctx) {
+  render_cleanup(&ctx.render);
+  ui_cleanup(&ctx.ui);
+  input_cleanup(&ctx.input);
+  if (ctx.window)
+    glfwDestroyWindow(ctx.window);
   glfwTerminate();
+}
+int main() {
+  uint32_t vk_version = VK_API_VERSION_1_0;
+  std::cout << "Vulkan API available: " << VK_VERSION_MAJOR(vk_version) << "."
+            << VK_VERSION_MINOR(vk_version) << "\n";
+
+  AppContext ctx{};
+  if (!init_context(ctx)) {
+    std::cout << "Failed to initialize context\n";
+    return -1;
+  }
+
+  std::cout << "Entering main loop...\n";
+
+  while (ctx.running) {
+    glClear(GL_COLOR_BUFFER_BIT);
+    input_update(&ctx.input);
+
+    if (input_window_should_close(&ctx.input)) {
+      std::cout << "Window close requested\n";
+      ctx.running = false;
+      break;
+    }
+
+    ui_update(&ctx.ui, &ctx.input, &ctx.map_gen);
+    render_frame(&ctx.render, &ctx.ui, &ctx.map_gen);
+
+    glfwSwapBuffers(ctx.window);
+  }
+
+  std::cout << "Exiting main loop...\n";
+  shutdown_context(ctx);
   return 0;
 }

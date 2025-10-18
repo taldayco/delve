@@ -12,11 +12,11 @@ BUILD_TYPE     := debug
 CXX            := g++
 CXXFLAGS       := -std=c++20 -O3 -Wall -Wextra -Wno-unused-parameter -march=native
 LDFLAGS        := 
-LIBS           := -lglfw
+LIBS           := -lglfw -lGL -lm -lvulkan
 
 # ---- Debug vs Release ----
 ifeq ($(BUILD_TYPE),debug)
-    CXXFLAGS += -g -DDEBUG
+    CXXFLAGS += -g -DDEBUG -DVK_ENABLE_VALIDATION
 else
     CXXFLAGS += -DNDEBUG
 endif
@@ -25,7 +25,7 @@ endif
 INCLUDES := -I./include
 
 # ---- Source directories ----
-SRC_DIRS := ./src ./src/map
+SRC_DIRS := ./src ./src/map ./src/systems
 SRCS     := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJS     := $(SRCS:.cpp=.o)
 

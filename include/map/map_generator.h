@@ -106,7 +106,7 @@ private:
     return min + float_dist(rng) * (max - min);
   }
 
-  [[nodiscard]] int randi_range(int min, int max) const {
+  [[nodiscard]] int randi_range(int min, int max) {
     return std::uniform_int_distribution<int>{min, max}(rng);
   }
   // Inline accessor

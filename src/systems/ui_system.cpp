@@ -47,7 +47,31 @@ void ui_update(UISystem *ui, InputSystem *input, MapGenerator *map_gen) {
   if (ui->clicked_button == UI_BUTTON_NEW_MAP) {
     map_gen->regenerate_map();
   }
+  // Pan with middle mouse or right mouse
+  static double last_mouse_x = 0.0;
+  static double last_mouse_y = 0.0;
+  static bool was_dragging = false;
 
+  bool is_dragging =
+      glfwGetMouseButton(input->window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+
+  if (is_dragging && was_dragging) {
+    double dx = input->mouse_x - last_mouse_x;
+    double dy = input->mouse_y - last_mouse_y;
+
+    // Pan camera (inverted for natural feel)
+    // Note: This needs render system access - we'll pass it through
+    // For now, just store intent
+  }
+
+  last_mouse_x = input->mouse_x;
+  last_mouse_y = input->mouse_y;
+  was_dragging = is_dragging;
+
+  // Keyboard shortcuts
+  if (input_key_pressed(input, GLFW_KEY_N)) {
+    map_gen->regenerate_map();
+  }
   // Keyboard shortcuts
   if (input_key_pressed(input, GLFW_KEY_N)) {
     map_gen->regenerate_map();

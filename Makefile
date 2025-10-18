@@ -28,12 +28,22 @@ INCLUDES := -I./include
 SRC_DIRS := ./src ./src/map ./src/systems
 SRCS     := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.cpp))
 OBJS     := $(SRCS:.cpp=.o)
+# ---- Shader compilation ----
+SHADER_DIR     := ./shaders
+SHADER_SOURCES := $(wildcard $(SHADER_DIR)/*.vert $(SHADER_DIR)/*.frag)
+SHADER_SPIRV   := $(SHADER_SOURCES:.vert=.vert.spv)
+SHADER_SPIRV   := $(SHADER_SPIRV:.frag=.frag.spv)
+
+# Shader compilation rule
+%.spv: %
+	@echo "Compiling shader $<..."
+	glslc $< -o $@
 
 # ---- Output executable ----
 TARGET_BIN := $(OUTPUT_DIR)/$(TARGET)
 
 # ---- Default rule ----
-all: $(TARGET_BIN)
+all: $(SHADER_SPIRV) $(TARGET_BIN)
 	@echo "Build complete: $(TARGET_BIN)"
 
 # ---- Build executable ----

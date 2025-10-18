@@ -4,6 +4,9 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_core.h>
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
+#include <vk_mem_alloc.h>
 
 struct UISystem;
 struct MapGenerator;
@@ -40,10 +43,31 @@ struct RenderSystem {
   VkFence in_flight_fences[2]{};               // Per frame (2 frames in flight)
   VkFence images_in_flight[8]{}; // Track which frame owns each image
   uint32_t current_frame{0};
+  // shader modules
+  VkShaderModule vertex_shader{VK_NULL_HANDLE};
+  VkShaderModule fragment_shader{VK_NULL_HANDLE};
+  // pipeline_layout
+  VkPipelineLayout pipeline_layout{VK_NULL_HANDLE};
+  VkPipeline graphics_pipeline{VK_NULL_HANDLE};
+  // VMA and buffers
+  VmaAllocator allocator{VK_NULL_HANDLE};
+  // Circle buffers for map
+  VkBuffer circle_vertex_buffer{VK_NULL_HANDLE};
+  VmaAllocation circle_vertex_allocation{VK_NULL_HANDLE};
+  uint32_t circle_vertex_count{0};
+  // instance buffer
+  VkBuffer instance_buffer{VK_NULL_HANDLE};
+  VmaAllocation instance_allocation{VK_NULL_HANDLE};
+  uint32_t instance_count{0};
+  // Camera state
+  float camera_x{100.0f}; // Center on map
+  float camera_y{-200.0f};
+  float camera_zoom{1.0f};
   // Window reference
   GLFWwindow *window{nullptr};
 };
-void render_init(RenderSystem *render, GLFWwindow *window);
+void render_init(RenderSystem *render, GLFWwindow *window,
+                 const MapGenerator *map_gen);
 void render_cleanup(RenderSystem *render);
 void render_frame(RenderSystem *render, const UISystem *ui,
                   const MapGenerator *map_gen);

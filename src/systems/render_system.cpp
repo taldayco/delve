@@ -1,11 +1,15 @@
+#define VMA_IMPLEMENTATION
+#define VMA_STATIC_VULKAN_FUNCTIONS 0
+#define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #include "systems/render_system.h"
 #include "map/map_generator.h"
 #include "systems/ui_system.h"
 #include <GLFW/glfw3.h>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <vector>
-
+#include <vk_mem_alloc.h>
 // ---- Validation Layers ----
 #ifdef VK_ENABLE_VALIDATION
 static const char *VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
@@ -13,7 +17,20 @@ static constexpr uint32_t VALIDATION_LAYER_COUNT = 1;
 #else
 static constexpr uint32_t VALIDATION_LAYER_COUNT = 0;
 #endif
+// ---- Data Structures ----
+struct PushConstants {
+  float view_projection[16]; // 4x4 matrix
+};
 
+struct Vertex {
+  float pos[2];
+};
+
+struct InstanceData {
+  float position[2];
+  float color[4];
+  float scale;
+};
 // ---- Debug Callback ----
 #ifdef VK_ENABLE_VALIDATION
 static VKAPI_ATTR VkBool32 VKAPI_CALL
@@ -610,13 +627,70 @@ static void record_command_buffer(RenderSystem *render, uint32_t image_index) {
   render_pass_info.renderArea.offset = {0, 0};
   render_pass_info.renderArea.extent = render->swapchain_extent;
 
-  VkClearValue clear_color = {{{0.0f, 0.0f, 0.2f, 1.0f}}}; // Dark blue
+  VkClearValue clear_color = {{{0.1f, 0.1f, 0.15f, 1.0f}}};
   render_pass_info.clearValueCount = 1;
   render_pass_info.pClearValues = &clear_color;
 
   vkCmdBeginRenderPass(cmd, &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-  // Drawing will go here later
+  // Bind pipeline
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    render->graphics_pipeline);
+
+  // Push constants with camera
+  PushConstants push{};
+
+  // ADD THESE TWO LINES:
+  float width = static_cast<float>(render->swapchain_extent.width);
+  float height = static_cast<float>(render->swapchain_extent.height);
+
+  // Create orthographic projection with camera
+  float zoom = render->camera_zoom;
+  float aspect = width / height;
+
+  // ... rest of function continues
+
+  // Simple ortho matrix (maps 0-200 world units to screen)
+  float left = 0.0f;
+  float right = 200.0f;
+  float bottom = -400.0f;
+  float top = 0.0f;
+
+  // Column-major 4x4 matrix
+  push.view_projection[0] = 2.0f / (right - left);
+  push.view_projection[1] = 0.0f;
+  push.view_projection[2] = 0.0f;
+  push.view_projection[3] = 0.0f;
+
+  push.view_projection[4] = 0.0f;
+  push.view_projection[5] = 2.0f / (top - bottom);
+  push.view_projection[6] = 0.0f;
+  push.view_projection[7] = 0.0f;
+
+  push.view_projection[8] = 0.0f;
+  push.view_projection[9] = 0.0f;
+  push.view_projection[10] = 1.0f;
+  push.view_projection[11] = 0.0f;
+
+  push.view_projection[12] = -(right + left) / (right - left);
+  push.view_projection[13] = -(top + bottom) / (top - bottom);
+  push.view_projection[14] = 0.0f;
+  push.view_projection[15] = 1.0f;
+
+  vkCmdPushConstants(cmd, render->pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                     0, sizeof(PushConstants), &push);
+
+  // Bind vertex buffer (circle geometry)
+  VkBuffer vertex_buffers[] = {render->circle_vertex_buffer};
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(cmd, 0, 1, vertex_buffers, offsets);
+
+  // Bind instance buffer
+  VkBuffer instance_buffers[] = {render->instance_buffer};
+  vkCmdBindVertexBuffers(cmd, 1, 1, instance_buffers, offsets);
+
+  // Draw all instances
+  vkCmdDraw(cmd, render->circle_vertex_count, render->instance_count, 0, 0);
 
   vkCmdEndRenderPass(cmd);
 
@@ -659,8 +733,434 @@ static bool create_sync_objects(RenderSystem *render) {
             << render->swapchain_image_count << " semaphore sets, 2 fences)\n";
   return true;
 }
+// ---- Shader Loading ----
+#include <fstream>
+#include <vector>
+
+static std::vector<char> read_file(const char *filename) {
+  std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+  if (!file.is_open()) {
+    std::cerr << "[Vulkan] Failed to open shader file: " << filename << "\n";
+    return {};
+  }
+
+  size_t file_size = static_cast<size_t>(file.tellg());
+  std::vector<char> buffer(file_size);
+
+  file.seekg(0);
+  file.read(buffer.data(), file_size);
+  file.close();
+
+  return buffer;
+}
+
+static VkShaderModule create_shader_module(VkDevice device,
+                                           const std::vector<char> &code) {
+  VkShaderModuleCreateInfo create_info{};
+  create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  create_info.codeSize = code.size();
+  create_info.pCode = reinterpret_cast<const uint32_t *>(code.data());
+
+  VkShaderModule shader_module;
+  if (vkCreateShaderModule(device, &create_info, nullptr, &shader_module) !=
+      VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create shader module\n";
+    return VK_NULL_HANDLE;
+  }
+
+  return shader_module;
+}
+
+static bool load_shaders(RenderSystem *render) {
+  // Load vertex shader
+  auto vert_code = read_file("shaders/map_node.vert.spv");
+  if (vert_code.empty())
+    return false;
+
+  render->vertex_shader = create_shader_module(render->device, vert_code);
+  if (render->vertex_shader == VK_NULL_HANDLE)
+    return false;
+
+  // Load fragment shader
+  auto frag_code = read_file("shaders/map_node.frag.spv");
+  if (frag_code.empty())
+    return false;
+
+  render->fragment_shader = create_shader_module(render->device, frag_code);
+  if (render->fragment_shader == VK_NULL_HANDLE)
+    return false;
+
+  std::cout << "[Vulkan] Shaders loaded\n";
+  return true;
+}
+// ---- Pipeline Layout Creation ----
+static bool create_pipeline_layout(RenderSystem *render) {
+  // Push constant range (camera matrix)
+  VkPushConstantRange push_constant_range{};
+  push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+  push_constant_range.offset = 0;
+  push_constant_range.size = sizeof(PushConstants);
+
+  VkPipelineLayoutCreateInfo layout_info{};
+  layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  layout_info.setLayoutCount = 0; // No descriptor sets
+  layout_info.pSetLayouts = nullptr;
+  layout_info.pushConstantRangeCount = 1;
+  layout_info.pPushConstantRanges = &push_constant_range;
+
+  VkResult result = vkCreatePipelineLayout(render->device, &layout_info,
+                                           nullptr, &render->pipeline_layout);
+  if (result != VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create pipeline layout: " << result
+              << "\n";
+    return false;
+  }
+
+  std::cout << "[Vulkan] Pipeline layout created\n";
+  return true;
+}
+// ---- Graphics Pipeline Creation ----
+static bool create_graphics_pipeline(RenderSystem *render) {
+  // Shader stages
+  VkPipelineShaderStageCreateInfo vert_stage{};
+  vert_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  vert_stage.stage = VK_SHADER_STAGE_VERTEX_BIT;
+  vert_stage.module = render->vertex_shader;
+  vert_stage.pName = "main";
+
+  VkPipelineShaderStageCreateInfo frag_stage{};
+  frag_stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  frag_stage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  frag_stage.module = render->fragment_shader;
+  frag_stage.pName = "main";
+
+  VkPipelineShaderStageCreateInfo shader_stages[] = {vert_stage, frag_stage};
+
+  // Vertex input - binding 0 (per-vertex), binding 1 (per-instance)
+  VkVertexInputBindingDescription bindings[2] = {};
+
+  // Binding 0: Vertex data (circle geometry)
+  bindings[0].binding = 0;
+  bindings[0].stride = sizeof(Vertex);
+  bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  // Binding 1: Instance data (node info)
+  bindings[1].binding = 1;
+  bindings[1].stride = sizeof(InstanceData);
+  bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+
+  // Vertex attributes
+  VkVertexInputAttributeDescription attributes[4] = {};
+
+  // Location 0: vertex position (from binding 0)
+  attributes[0].binding = 0;
+  attributes[0].location = 0;
+  attributes[0].format = VK_FORMAT_R32G32_SFLOAT;
+  attributes[0].offset = offsetof(Vertex, pos);
+
+  // Location 1: instance position (from binding 1)
+  attributes[1].binding = 1;
+  attributes[1].location = 1;
+  attributes[1].format = VK_FORMAT_R32G32_SFLOAT;
+  attributes[1].offset = offsetof(InstanceData, position);
+
+  // Location 2: instance color (from binding 1)
+  attributes[2].binding = 1;
+  attributes[2].location = 2;
+  attributes[2].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+  attributes[2].offset = offsetof(InstanceData, color);
+
+  // Location 3: instance scale (from binding 1)
+  attributes[3].binding = 1;
+  attributes[3].location = 3;
+  attributes[3].format = VK_FORMAT_R32_SFLOAT;
+  attributes[3].offset = offsetof(InstanceData, scale);
+
+  VkPipelineVertexInputStateCreateInfo vertex_input{};
+  vertex_input.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertex_input.vertexBindingDescriptionCount = 2;
+  vertex_input.pVertexBindingDescriptions = bindings;
+  vertex_input.vertexAttributeDescriptionCount = 4;
+  vertex_input.pVertexAttributeDescriptions = attributes;
+
+  // Input assembly
+  VkPipelineInputAssemblyStateCreateInfo input_assembly{};
+  input_assembly.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN;
+  input_assembly.primitiveRestartEnable = VK_FALSE;
+
+  // Viewport and scissor (dynamic, will set in command buffer)
+  VkViewport viewport{};
+  viewport.x = 0.0f;
+  viewport.y = 0.0f;
+  viewport.width = static_cast<float>(render->swapchain_extent.width);
+  viewport.height = static_cast<float>(render->swapchain_extent.height);
+  viewport.minDepth = 0.0f;
+  viewport.maxDepth = 1.0f;
+
+  VkRect2D scissor{};
+  scissor.offset = {0, 0};
+  scissor.extent = render->swapchain_extent;
+
+  VkPipelineViewportStateCreateInfo viewport_state{};
+  viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewport_state.viewportCount = 1;
+  viewport_state.pViewports = &viewport;
+  viewport_state.scissorCount = 1;
+  viewport_state.pScissors = &scissor;
+
+  // Rasterization
+  VkPipelineRasterizationStateCreateInfo rasterizer{};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_FALSE;
+
+  // Multisampling (disabled)
+  VkPipelineMultisampleStateCreateInfo multisampling{};
+  multisampling.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  // Color blending (alpha blending)
+  VkPipelineColorBlendAttachmentState color_blend_attachment{};
+  color_blend_attachment.colorWriteMask =
+      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  color_blend_attachment.blendEnable = VK_TRUE;
+  color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+  color_blend_attachment.dstColorBlendFactor =
+      VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+  color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+  color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+  color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+  color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+  VkPipelineColorBlendStateCreateInfo color_blending{};
+  color_blending.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  color_blending.logicOpEnable = VK_FALSE;
+  color_blending.attachmentCount = 1;
+  color_blending.pAttachments = &color_blend_attachment;
+
+  // Create pipeline
+  VkGraphicsPipelineCreateInfo pipeline_info{};
+  pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipeline_info.stageCount = 2;
+  pipeline_info.pStages = shader_stages;
+  pipeline_info.pVertexInputState = &vertex_input;
+  pipeline_info.pInputAssemblyState = &input_assembly;
+  pipeline_info.pViewportState = &viewport_state;
+  pipeline_info.pRasterizationState = &rasterizer;
+  pipeline_info.pMultisampleState = &multisampling;
+  pipeline_info.pDepthStencilState = nullptr;
+  pipeline_info.pColorBlendState = &color_blending;
+  pipeline_info.pDynamicState = nullptr;
+  pipeline_info.layout = render->pipeline_layout;
+  pipeline_info.renderPass = render->render_pass;
+  pipeline_info.subpass = 0;
+  pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+
+  VkResult result = vkCreateGraphicsPipelines(render->device, VK_NULL_HANDLE, 1,
+                                              &pipeline_info, nullptr,
+                                              &render->graphics_pipeline);
+  if (result != VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create graphics pipeline: " << result
+              << "\n";
+    return false;
+  }
+
+  std::cout << "[Vulkan] Graphics pipeline created\n";
+  return true;
+}
+// ---- VMA Initialization ----
+static bool init_vma(RenderSystem *render) {
+  VmaVulkanFunctions vk_funcs{};
+  vk_funcs.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
+  vk_funcs.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
+
+  VmaAllocatorCreateInfo allocator_info{};
+  allocator_info.vulkanApiVersion = VK_API_VERSION_1_0;
+  allocator_info.physicalDevice = render->physical_device;
+  allocator_info.device = render->device;
+  allocator_info.instance = render->instance;
+  allocator_info.pVulkanFunctions = &vk_funcs;
+
+  VkResult result = vmaCreateAllocator(&allocator_info, &render->allocator);
+  if (result != VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create VMA allocator: " << result << "\n";
+    return false;
+  }
+
+  std::cout << "[Vulkan] VMA allocator created\n";
+  return true;
+}
+
+// ---- Circle Geometry Generation ----
+#include <cmath>
+
+static bool create_circle_geometry(RenderSystem *render) {
+  constexpr int segments = 32;
+  constexpr float radius = 1.0f; // Unit circle, scaled per-instance
+
+  render->circle_vertex_count =
+      segments + 2; // Center + perimeter + closing vertex
+
+  std::vector<Vertex> vertices;
+  vertices.reserve(render->circle_vertex_count);
+
+  // Center vertex
+  vertices.push_back({{0.0f, 0.0f}});
+
+  // Perimeter vertices
+  for (int i = 0; i <= segments; ++i) {
+    float angle = (i * 2.0f * M_PI) / segments;
+    vertices.push_back({{radius * cosf(angle), radius * sinf(angle)}});
+  }
+
+  // Create buffer
+  VkBufferCreateInfo buffer_info{};
+  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  buffer_info.size = sizeof(Vertex) * vertices.size();
+  buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo alloc_info{};
+  alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+  alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+  VkResult result = vmaCreateBuffer(render->allocator, &buffer_info,
+                                    &alloc_info, &render->circle_vertex_buffer,
+                                    &render->circle_vertex_allocation, nullptr);
+  if (result != VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create circle vertex buffer: " << result
+              << "\n";
+    return false;
+  }
+
+  // Copy data to GPU
+  void *data;
+  vmaMapMemory(render->allocator, render->circle_vertex_allocation, &data);
+  memcpy(data, vertices.data(), sizeof(Vertex) * vertices.size());
+  vmaUnmapMemory(render->allocator, render->circle_vertex_allocation);
+
+  std::cout << "[Vulkan] Circle geometry created ("
+            << render->circle_vertex_count << " vertices)\n";
+  return true;
+}
+// ---- Instance Buffer Creation ----
+static bool create_instance_buffer(RenderSystem *render,
+                                   const MapGenerator *map_gen) {
+  auto map_data = map_gen->get_map_data();
+
+  // Count connected nodes (nodes with outgoing connections)
+  uint32_t connected_count = 0;
+  for (const auto &node : *map_data.nodes) {
+    if (node.next_count > 0 || node.row == map_data.height - 1) {
+      connected_count++;
+    }
+  }
+
+  render->instance_count = connected_count;
+
+  if (render->instance_count == 0) {
+    std::cerr << "[Vulkan] No nodes to render\n";
+    return false;
+  }
+
+  // Create buffer
+  VkBufferCreateInfo buffer_info{};
+  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  buffer_info.size = sizeof(InstanceData) * render->instance_count;
+  buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  VmaAllocationCreateInfo alloc_info{};
+  alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+  alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
+                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+  VkResult result = vmaCreateBuffer(render->allocator, &buffer_info,
+                                    &alloc_info, &render->instance_buffer,
+                                    &render->instance_allocation, nullptr);
+  if (result != VK_SUCCESS) {
+    std::cerr << "[Vulkan] Failed to create instance buffer: " << result
+              << "\n";
+    return false;
+  }
+
+  // Map node data to instance data
+  void *data;
+  vmaMapMemory(render->allocator, render->instance_allocation, &data);
+  InstanceData *instances = static_cast<InstanceData *>(data);
+
+  uint32_t instance_idx = 0;
+  for (const auto &node : *map_data.nodes) {
+    if (node.next_count == 0 && node.row != map_data.height - 1)
+      continue;
+
+    // Position
+    instances[instance_idx].position[0] = node.position.x;
+    instances[instance_idx].position[1] = node.position.y;
+
+    // Color based on type
+    switch (node.type) {
+    case MapNodeData::Type::Enemy:
+      instances[instance_idx].color[0] = 1.0f; // Red
+      instances[instance_idx].color[1] = 0.3f;
+      instances[instance_idx].color[2] = 0.3f;
+      instances[instance_idx].color[3] = 1.0f;
+      break;
+    case MapNodeData::Type::Shelter:
+      instances[instance_idx].color[0] = 0.3f; // Blue
+      instances[instance_idx].color[1] = 0.6f;
+      instances[instance_idx].color[2] = 1.0f;
+      instances[instance_idx].color[3] = 1.0f;
+      break;
+    case MapNodeData::Type::Wenny:
+      instances[instance_idx].color[0] = 1.0f; // Yellow
+      instances[instance_idx].color[1] = 0.9f;
+      instances[instance_idx].color[2] = 0.2f;
+      instances[instance_idx].color[3] = 1.0f;
+      break;
+    case MapNodeData::Type::Boss:
+      instances[instance_idx].color[0] = 0.8f; // Purple
+      instances[instance_idx].color[1] = 0.2f;
+      instances[instance_idx].color[2] = 0.8f;
+      instances[instance_idx].color[3] = 1.0f;
+      break;
+    default:
+      instances[instance_idx].color[0] = 0.5f; // Gray
+      instances[instance_idx].color[1] = 0.5f;
+      instances[instance_idx].color[2] = 0.5f;
+      instances[instance_idx].color[3] = 1.0f;
+      break;
+    }
+
+    // Scale
+    instances[instance_idx].scale = 8.0f; // Node radius
+
+    instance_idx++;
+  }
+
+  vmaUnmapMemory(render->allocator, render->instance_allocation);
+
+  std::cout << "[Vulkan] Instance buffer created (" << render->instance_count
+            << " nodes)\n";
+  return true;
+}
 // ---- Public API ----
-void render_init(RenderSystem *render, GLFWwindow *window) {
+void render_init(RenderSystem *render, GLFWwindow *window,
+                 const MapGenerator *map_gen) {
   render->window = window;
 
   if (!create_instance(render))
@@ -702,16 +1202,39 @@ void render_init(RenderSystem *render, GLFWwindow *window) {
     return;
   if (!create_sync_objects(render))
     return;
-  // Record initial commands
-  for (uint32_t i = 0; i < render->swapchain_image_count; ++i) {
-    record_command_buffer(render, i);
-  }
+  if (!load_shaders(render))
+    return;
+  if (!create_pipeline_layout(render))
+    return;
+  if (!create_graphics_pipeline(render))
+    return;
+  if (!init_vma(render))
+    return;
+  if (!create_circle_geometry(render))
+    return;
+  if (!create_instance_buffer(render, map_gen))
+    return;
   std::cout << "[Vulkan] Render system initialized\n";
 }
 
 void render_cleanup(RenderSystem *render) {
   if (render->device) {
     vkDeviceWaitIdle(render->device); // Wait before cleanup
+  }
+  // Destroy buffers:
+  if (render->instance_buffer) {
+    vmaDestroyBuffer(render->allocator, render->instance_buffer,
+                     render->instance_allocation);
+  }
+  if (render->circle_vertex_buffer) {
+    vmaDestroyBuffer(render->allocator, render->circle_vertex_buffer,
+                     render->circle_vertex_allocation);
+  }
+
+  // Destroy VMA allocator
+  if (render->allocator) {
+    vmaDestroyAllocator(render->allocator);
+    std::cout << "[Vulkan] VMA allocator destroyed\n";
   }
   // Destroy command pool (automatically frees command buffers)
   if (render->command_pool) {
@@ -734,6 +1257,21 @@ void render_cleanup(RenderSystem *render) {
     if (render->in_flight_fences[i]) {
       vkDestroyFence(render->device, render->in_flight_fences[i], nullptr);
     }
+  }
+  // Destroy shader modules
+  if (render->vertex_shader) {
+    vkDestroyShaderModule(render->device, render->vertex_shader, nullptr);
+  }
+  if (render->fragment_shader) {
+    vkDestroyShaderModule(render->device, render->fragment_shader, nullptr);
+  }
+  // Destroy pipeline layout
+  if (render->pipeline_layout) {
+    vkDestroyPipelineLayout(render->device, render->pipeline_layout, nullptr);
+  }
+  // Destroy graphics pipeline
+  if (render->graphics_pipeline) {
+    vkDestroyPipeline(render->device, render->graphics_pipeline, nullptr);
   }
   // Destroy framebuffers
   for (uint32_t i = 0; i < render->swapchain_image_count; ++i) {
@@ -820,10 +1358,10 @@ void render_frame(RenderSystem *render, const UISystem *ui,
                     VK_TRUE, UINT64_MAX);
   }
   render->images_in_flight[image_index] = render->in_flight_fences[frame];
-
   // Reset fence
   vkResetFences(render->device, 1, &render->in_flight_fences[frame]);
-
+  // Re-record command buffer with current camera
+  record_command_buffer(render, image_index);
   // Submit - use IMAGE INDEX for both wait and signal semaphores
   VkSubmitInfo submit_info{};
   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;

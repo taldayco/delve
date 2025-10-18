@@ -26,7 +26,11 @@ void input_update(InputSystem *input) { // Remove window parameter
   glfwGetCursorPos(input->window, &input->mouse_x, &input->mouse_y);
   input->mouse_down =
       glfwGetMouseButton(input->window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-
+  // test a specific key (for debugging)
+  int up_key_state = glfwGetKey(input->window, GLFW_KEY_UP);
+  if (up_key_state == GLFW_PRESS) {
+    std::cout << "UP key detected in input_update!\n";
+  }
   // Update key states
   for (int i = 0; i < 512; ++i) {
     input->keys[i] = glfwGetKey(input->window, i) == GLFW_PRESS;

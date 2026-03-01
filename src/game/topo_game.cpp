@@ -4,11 +4,14 @@
 #include "terrain/noise_composer.h"
 #include "terrain/contour.h"
 #include "terrain/palettes.h"
+#include "terrain/map_util.h"
+#include "terrain/hex.h"
 #include "ui/imgui_ui.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -133,7 +136,276 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
         if (in.held[(int)Action::ZoomOut])
           camera_system.set_zoom(camera, camera.target_zoom - dt * 2.0f);
 
+        // Follow player if alive and no camera keys held.
+        if (!cam_moved && player_entity.is_alive()) {
+          const auto *t = player_entity.get<Transform>();
+          if (t) camera_system.follow(camera, t->x, t->y);
+        }
+
         camera_system.update(camera, dt);
+      });
+
+  // Create player entity.
+  player_entity = ecs.entity("player")
+      .add<Player>()
+      .add<ActorTag>()
+      .set<Transform>({})
+      .set<Velocity>({})
+      .set<ActorConfig>({})
+      .set<ProceduralGait>({})
+      .set<LegState>({})
+      .set<SkeletonPose>({});
+
+  // PlayerMovementSystem.
+  ecs.system("PlayerMovementSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        auto *phase = ecs.get<GamePhase>();
+        if (!phase || phase->current != GamePhase::Playing) return;
+        if (!player_entity.is_alive()) return;
+
+        auto *t    = player_entity.get_mut<Transform>();
+        auto *vel  = player_entity.get_mut<Velocity>();
+        auto *gait = player_entity.get_mut<ProceduralGait>();
+        if (!t || !vel || !gait) return;
+
+        auto &in = input.state();
+        float dt = ecs.delta_time();
+
+        vel->x = 0.0f;
+        vel->y = 0.0f;
+        if (in.held[(int)Action::MoveUp])    vel->y -= gait->move_speed;
+        if (in.held[(int)Action::MoveDown])  vel->y += gait->move_speed;
+        if (in.held[(int)Action::MoveLeft])  vel->x -= gait->move_speed;
+        if (in.held[(int)Action::MoveRight]) vel->x += gait->move_speed;
+
+        t->x += vel->x * dt;
+        t->y += vel->y * dt;
+
+        float spd = sqrtf(vel->x * vel->x + vel->y * vel->y);
+        if (spd > 0.001f)
+          t->facing = atan2f(vel->y, vel->x);
+      });
+
+  // ActorGroundingSystem.
+  ecs.system("ActorGroundingSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        const auto *map_data = ecs.get<MapData>();
+        if (!map_data || map_data->basalt_height.empty()) return;
+
+        float dt = ecs.delta_time();
+        ecs.each([&](ActorTag, Transform &t, const ActorConfig &cfg) {
+          float target_z = sample_world_height(*map_data, t.x, t.y)
+                           + cfg.leg_len + cfg.shin_len;
+          t.z = t.z + (target_z - t.z) * (1.0f - expf(-8.0f * dt));
+        });
+      });
+
+  // GaitSystem.
+  ecs.system("GaitSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        const auto *map_data = ecs.get<MapData>();
+        if (!map_data || map_data->basalt_height.empty()) return;
+
+        float dt = ecs.delta_time();
+        ecs.each([&](ActorTag,
+                     const Transform &t,
+                     const Velocity &vel,
+                     ProceduralGait &gait,
+                     LegState &legs,
+                     const ActorConfig &cfg) {
+
+          float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
+          gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len));
+
+          float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+          float vel_dx = speed > 0.001f ? vel.x / speed : fwd_x;
+          float vel_dy = speed > 0.001f ? vel.y / speed : fwd_y;
+
+          float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+
+          // Hip socket XY offsets (legs offset left/right of facing).
+          float hip_sign[2] = { -1.0f, 1.0f }; // left, right
+
+          for (int leg = 0; leg < 2; ++leg) {
+            float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
+            float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
+            float hip_z = t.z;
+
+            float stride_off_x = vel_dx * gait.stride_len * 0.5f;
+            float stride_off_y = vel_dy * gait.stride_len * 0.5f;
+            float pred_x = hip_x + stride_off_x;
+            float pred_y = hip_y + stride_off_y;
+            float pred_z = sample_world_height(*map_data, pred_x, pred_y);
+
+            if (!legs.stepping[leg]) {
+              float dx = legs.foot[leg].x - pred_x;
+              float dy = legs.foot[leg].y - pred_y;
+              float dist = sqrtf(dx * dx + dy * dy);
+              if (dist > gait.stride_len * 0.5f) {
+                legs.stepping[leg]  = true;
+                legs.progress[leg]  = 0.0f;
+                legs.prev_foot[leg] = legs.foot[leg];
+                legs.target[leg]    = {pred_x, pred_y, pred_z};
+              }
+            }
+
+            if (legs.stepping[leg]) {
+              legs.progress[leg] += dt / gait.step_duration;
+              float progress = std::min(legs.progress[leg], 1.0f);
+              // Cubic smoothstep.
+              float ts = progress * progress * (3.0f - 2.0f * progress);
+
+              legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
+              legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts;
+              legs.foot[leg].z = legs.prev_foot[leg].z + (legs.target[leg].z - legs.prev_foot[leg].z) * ts
+                                 + sinf(progress * glm::pi<float>()) * gait.step_height;
+
+              if (legs.progress[leg] >= 1.0f) {
+                legs.stepping[leg] = false;
+                legs.foot[leg]     = legs.target[leg];
+              }
+            }
+          }
+        });
+      });
+
+  // IKSystem.
+  ecs.system("IKSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        ecs.each([&](ActorTag,
+                     const Transform &t,
+                     const LegState &legs,
+                     const ActorConfig &cfg,
+                     SkeletonPose &pose) {
+
+          using J = Joint;
+
+          float facing = t.facing;
+          float fwd_x  =  cosf(facing), fwd_y  = sinf(facing);
+          float rght_x = -sinf(facing), rght_y = cosf(facing);
+
+          // Root and spine chain.
+          glm::vec3 root(t.x, t.y, t.z);
+          glm::vec3 spine  = root  + glm::vec3(0, 0, cfg.torso_len * 0.4f);
+          glm::vec3 chest  = root  + glm::vec3(0, 0, cfg.torso_len);
+          glm::vec3 neck   = chest + glm::vec3(0, 0, cfg.neck_len);
+          glm::vec3 head   = neck  + glm::vec3(0, 0, cfg.head_radius);
+
+          pose.joints[(int)J::ROOT]  = root;
+          pose.joints[(int)J::SPINE] = spine;
+          pose.joints[(int)J::CHEST] = chest;
+          pose.joints[(int)J::NECK]  = neck;
+          pose.joints[(int)J::HEAD]  = head;
+
+          // Hip sockets.
+          glm::vec3 l_hip(t.x - rght_x * cfg.hip_width, t.y - rght_y * cfg.hip_width, t.z);
+          glm::vec3 r_hip(t.x + rght_x * cfg.hip_width, t.y + rght_y * cfg.hip_width, t.z);
+          pose.joints[(int)J::L_HIP] = l_hip;
+          pose.joints[(int)J::R_HIP] = r_hip;
+
+          // Shoulder sockets.
+          glm::vec3 l_shoulder(chest.x - rght_x * cfg.shoulder_width, chest.y - rght_y * cfg.shoulder_width, chest.z);
+          glm::vec3 r_shoulder(chest.x + rght_x * cfg.shoulder_width, chest.y + rght_y * cfg.shoulder_width, chest.z);
+          pose.joints[(int)J::L_SHOULDER] = l_shoulder;
+          pose.joints[(int)J::R_SHOULDER] = r_shoulder;
+
+          // Arm joints (hang down with slight forward lean).
+          pose.joints[(int)J::L_ELBOW] = l_shoulder + glm::vec3(0, 0, -cfg.arm_len     * 0.8f);
+          pose.joints[(int)J::L_WRIST] = pose.joints[(int)J::L_ELBOW] + glm::vec3(0, 0, -cfg.forearm_len * 0.8f);
+          pose.joints[(int)J::R_ELBOW] = r_shoulder + glm::vec3(0, 0, -cfg.arm_len     * 0.8f);
+          pose.joints[(int)J::R_WRIST] = pose.joints[(int)J::R_ELBOW] + glm::vec3(0, 0, -cfg.forearm_len * 0.8f);
+
+          // Leg IK — two-bone analytical solver for each leg.
+          auto solve_leg = [&](glm::vec3 H, glm::vec3 foot_target,
+                               float a, float b,
+                               glm::vec3 pole,
+                               glm::vec3 &out_knee, glm::vec3 &out_ankle) {
+            out_ankle = foot_target;
+
+            glm::vec3 axis = foot_target - H;
+            float D = glm::length(axis);
+            float min_D = fabsf(a - b) + 0.001f;
+            float max_D = a + b - 0.001f;
+            D = std::max(min_D, std::min(D, max_D));
+
+            if (glm::length(axis) > 1e-5f)
+              axis = glm::normalize(axis) * D;
+            else
+              axis = glm::vec3(0, 0, -D);
+
+            float cos_alpha = (a * a + D * D - b * b) / (2.0f * a * D);
+            cos_alpha = std::max(-1.0f, std::min(1.0f, cos_alpha));
+            float alpha = acosf(cos_alpha);
+
+            glm::vec3 axis_n = glm::normalize(axis);
+            glm::vec3 pole_off = pole - H;
+            glm::vec3 perp = pole_off - glm::dot(pole_off, axis_n) * axis_n;
+            if (glm::length(perp) > 1e-5f)
+              perp = glm::normalize(perp);
+            else
+              perp = glm::vec3(rght_x, rght_y, 0.0f);
+
+            glm::vec3 dir_to_knee = axis_n * cosf(alpha) + perp * sinf(alpha);
+            out_knee = H + dir_to_knee * a;
+          };
+
+          // Left leg.
+          glm::vec3 l_pole = l_hip + glm::vec3(-rght_x * 0.5f, -rght_y * 0.5f, 0.2f);
+          glm::vec3 l_knee, l_ankle;
+          solve_leg(l_hip, legs.foot[0], cfg.leg_len, cfg.shin_len, l_pole, l_knee, l_ankle);
+          pose.joints[(int)J::L_KNEE]  = l_knee;
+          pose.joints[(int)J::L_ANKLE] = l_ankle;
+
+          // Right leg.
+          glm::vec3 r_pole = r_hip + glm::vec3(rght_x * 0.5f, rght_y * 0.5f, 0.2f);
+          glm::vec3 r_knee, r_ankle;
+          solve_leg(r_hip, legs.foot[1], cfg.leg_len, cfg.shin_len, r_pole, r_knee, r_ankle);
+          pose.joints[(int)J::R_KNEE]  = r_knee;
+          pose.joints[(int)J::R_ANKLE] = r_ankle;
+        });
+      });
+
+  // SkeletonFinaliseSystem.
+  ecs.system("SkeletonFinaliseSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        ecs.each([&](ActorTag,
+                     const Transform &t,
+                     const Velocity &vel,
+                     const ActorConfig &cfg,
+                     SkeletonPose &pose) {
+
+          using J = Joint;
+          float dt = ecs.delta_time();
+          float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
+
+          float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+
+          // CoM hip sway.
+          static float sway_phase = 0.0f;
+          sway_phase += speed * dt * 6.0f;
+          float sway_amt = 0.04f;
+          float sway = sinf(sway_phase) * sway_amt;
+          glm::vec3 sway_vec(rght_x * sway, rght_y * sway, 0.0f);
+          pose.joints[(int)J::ROOT]  += sway_vec;
+          pose.joints[(int)J::SPINE] += sway_vec;
+          pose.joints[(int)J::CHEST] += sway_vec;
+
+          // Torso lean forward when moving.
+          float lean = 0.03f;
+          if (speed > 0.001f) {
+            glm::vec3 lean_vec(vel.x / speed * lean * speed,
+                               vel.y / speed * lean * speed,
+                               0.0f);
+            pose.joints[(int)J::CHEST] += lean_vec;
+            pose.joints[(int)J::NECK]  += lean_vec;
+            pose.joints[(int)J::HEAD]  += lean_vec;
+          }
+        });
       });
 }
 
@@ -189,6 +461,41 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
     ready_mesh_pending.reset();
     ready_map_pending.reset();
     ready_contours_pending.reset();
+
+    // Spawn player on new terrain.
+    player_spawned = false;
+    {
+      const auto *md = ecs.get<MapData>();
+      if (md && !md->columns.empty()) {
+        const auto *worley = ecs.get<WorleyParams>();
+        uint32_t seed = worley ? (uint32_t)worley->seed : 0u;
+        HexColumn col = find_spawn_column(*md, seed);
+        float wx, wy;
+        hex_to_pixel(col.q, col.r, Config::HEX_SIZE, wx, wy);
+        wx /= Config::HEX_SIZE;
+        wy /= Config::HEX_SIZE;
+        const ActorConfig default_cfg{};
+        float wz = col.height + default_cfg.leg_len + default_cfg.shin_len;
+
+        if (player_entity.is_alive()) {
+          player_entity.set<Transform>({wx, wy, wz, 0.0f});
+
+          // Initialise feet directly below hip sockets.
+          LegState ls{};
+          ls.foot[0] = {wx - 0.25f, wy, col.height};
+          ls.foot[1] = {wx + 0.25f, wy, col.height};
+          ls.prev_foot[0] = ls.foot[0];
+          ls.prev_foot[1] = ls.foot[1];
+          ls.target[0]    = ls.foot[0];
+          ls.target[1]    = ls.foot[1];
+          player_entity.set<LegState>(ls);
+        }
+
+        camera.world_x = camera.follow_x = wx;
+        camera.world_y = camera.follow_y = wy;
+        player_spawned = true;
+      }
+    }
   }
 
   // Depth texture is rebuilt first (if needed), then clusters are sized to match.
@@ -240,6 +547,10 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                              SDL_GetGPUSwapchainTextureFormat(gpu.device, gpu.game_window),
                              terrain_renderer.get_depth_format(),
                              asset_manager);
+    actor_renderer.init(gpu.device,
+                        terrain_renderer.get_terrain_pipeline(),
+                        terrain_renderer.get_dummy_ssbo(),
+                        &asset_manager);
   }
 
   terrain_renderer.rebuild_dirty_pipelines(gpu.game_window);
@@ -387,6 +698,23 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           frame.swapchain_w, frame.swapchain_h,
                           uniforms, point_lights,
                           gpu.upload_manager);
+
+    // Actor pass — upload geometry before opening the render pass.
+    if (actor_renderer.is_initialized()) {
+      uint32_t actor_vert_count = actor_renderer.prepare(frame.cmd, ecs);
+      if (actor_vert_count > 0) {
+        SDL_GPURenderPass *actor_pass =
+            terrain_renderer.begin_render_pass_load_preserve_depth(
+                frame.cmd, frame.swapchain,
+                frame.swapchain_w, frame.swapchain_h);
+        if (actor_pass) {
+          actor_renderer.draw(actor_pass, frame.cmd, uniforms,
+                              terrain_renderer.get_point_light_ssbo(),
+                              actor_vert_count);
+          SDL_EndGPURenderPass(actor_pass);
+        }
+      }
+    }
   }
 
   frame.render_pass = nullptr;
@@ -396,6 +724,7 @@ void TopoGame::on_cleanup(flecs::world &ecs) {
   task_system.shutdown();
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
+  actor_renderer.cleanup(gpu_ctx.device);
 }
 
 bool TopoGame::wants_game_window_open(flecs::world &ecs) {

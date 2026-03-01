@@ -37,6 +37,14 @@ public:
                                             SDL_GPUTexture *swapchain,
                                             uint32_t w, uint32_t h);
 
+  SDL_GPURenderPass *begin_render_pass_load_preserve_depth(SDL_GPUCommandBuffer *cmd,
+                                                           SDL_GPUTexture *swapchain,
+                                                           uint32_t w, uint32_t h);
+
+  SDL_GPUBuffer           *get_point_light_ssbo()  const { return point_light_ssbo;  }
+  SDL_GPUGraphicsPipeline *get_terrain_pipeline()  const { return terrain_pipeline;  }
+  SDL_GPUBuffer           *get_dummy_ssbo()        const { return dummy_ssbo;        }
+
   // Called from on_pre_frame_game (no frame cmd buf open). Releases and recreates
   // the depth texture if desired_depth_w/h differ from current depth_w/h.
   // Caller must have already called SDL_WaitForGPUIdle before invoking this.
@@ -72,8 +80,7 @@ private:
   void init_cluster_buffers(SDL_GPUDevice *device, uint32_t tilesX, uint32_t tilesY, uint32_t num_slices);
 
 
-  void stage_geometry(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
-                      const SceneUniforms &uniforms);
+
   void stage_cull_lights(SDL_GPUCommandBuffer *cmd,
                          const SceneUniforms &uniforms,
                          const std::vector<GpuPointLight> &lights);
@@ -98,7 +105,6 @@ private:
 
 
   SDL_GPUGraphicsPipeline *terrain_pipeline         = nullptr;
-  SDL_GPUGraphicsPipeline *terrain_stencil_pipeline = nullptr;
   SDL_GPUGraphicsPipeline *lava_pipeline            = nullptr;
   SDL_GPUGraphicsPipeline *contour_pipeline         = nullptr;
 
@@ -116,9 +122,6 @@ private:
   SDL_GPUBuffer *lava_ibo       = nullptr;
   uint32_t       lava_vertex_count = 0;
   uint32_t       lava_index_count  = 0;
-
-  SDL_GPUBuffer *void_vbo       = nullptr;
-  uint32_t       void_vertex_count = 0;
 
   SDL_GPUBuffer *contour_vbo    = nullptr;
   uint32_t       contour_vertex_count = 0;

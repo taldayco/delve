@@ -1,6 +1,7 @@
 #pragma once
 #include "app.h"
 #include "game_state.h"
+#include "actor.h"
 #include "terrain/noise_layers.h"
 #include "terrain/noise_cache.h"
 #include "terrain/noise_composer.h"
@@ -11,6 +12,7 @@
 #include "input/input.h"
 #include "camera/camera.h"
 #include "render/background.h"
+#include "render/actor_renderer.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -18,12 +20,15 @@ class TopoGame : public Application {
 public:
   TerrainRenderer    terrain_renderer;
   BackgroundRenderer background_renderer;
+  ActorRenderer      actor_renderer;
   InputSystem        input;
   CameraState        camera;
   CameraSystem       camera_system;
   std::vector<GpuPointLight> point_lights;
   TaskSystem          task_system;
   AsyncTerrainState   async_terrain;
+  flecs::entity       player_entity;
+  bool                player_spawned = false;
 
   void on_init(GpuContext &gpu, flecs::world &ecs) override;
   void on_event(const SDL_Event &event, flecs::world &ecs) override;

@@ -142,10 +142,8 @@ void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window 
     pi.depth_stencil_state.enable_depth_write        = true;
 
     terrain_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pi);
-    terrain_stencil_pipeline = nullptr;
 
-    asset_manager->register_pipeline("terrain",         "terrain.vert", "terrain.frag");
-    asset_manager->register_pipeline("terrain_stencil", "terrain.vert", "terrain.frag");
+    asset_manager->register_pipeline("terrain", "terrain.vert", "terrain.frag");
     // Shaders are owned by the asset manager; do NOT release them here.
   }
 
@@ -320,10 +318,6 @@ void TerrainRenderer::rebuild_dirty_pipelines(SDL_Window *window) {
     pi.depth_stencil_state.enable_depth_test = true; pi.depth_stencil_state.enable_depth_write = true;
     return SDL_CreateGPUGraphicsPipeline(gpu_device, &pi);
   });
-  // terrain_stencil shares the same shader keys — clear its flag too
-  if (asset_manager->pipeline_needs_rebuild("terrain_stencil"))
-    asset_manager->clear_rebuild_flag("terrain_stencil");
-
   rebuild_graphics("lava", lava_pipeline, [&]() -> SDL_GPUGraphicsPipeline * {
     SDL_GPUShader *vert = asset_manager->load_shader("lava.vert", shader_dir + "/lava.vert.glsl.spv", SDL_GPU_SHADERSTAGE_VERTEX, 1, 0);
     SDL_GPUShader *frag = asset_manager->load_shader("lava.frag", shader_dir + "/lava.frag.glsl.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
@@ -702,28 +696,6 @@ void TerrainRenderer::rebuild_clusters_if_needed(SDL_GPUCommandBuffer *cmd,
 
 
 
-void TerrainRenderer::stage_geometry(SDL_GPURenderPass *pass,
-                                      SDL_GPUCommandBuffer *cmd,
-                                      const SceneUniforms &uniforms) {
-  if (!basalt_vbo || !basalt_ibo || basalt_total_index_count == 0) return;
-
-  SDL_BindGPUGraphicsPipeline(pass, terrain_pipeline);
-  SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
-  SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
-
-  if (point_light_ssbo && light_grid_ssbo && global_index_ssbo) {
-    SDL_GPUBuffer *storage_bufs[3] = {
-        point_light_ssbo, light_grid_ssbo, global_index_ssbo };
-    SDL_BindGPUFragmentStorageBuffers(pass, 0, storage_bufs, 3);
-  }
-
-  SDL_GPUBufferBinding vbind = { basalt_vbo, 0 };
-  SDL_GPUBufferBinding ibind = { basalt_ibo, 0 };
-  SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);
-  SDL_BindGPUIndexBuffer(pass, &ibind, SDL_GPU_INDEXELEMENTSIZE_32BIT);
-  SDL_DrawGPUIndexedPrimitives(pass, basalt_total_index_count, 1, 0, 0, 0);
-}
-
 
 
 
@@ -938,6 +910,33 @@ SDL_GPURenderPass *TerrainRenderer::begin_render_pass_load(SDL_GPUCommandBuffer 
 
 
 
+SDL_GPURenderPass *TerrainRenderer::begin_render_pass_load_preserve_depth(
+    SDL_GPUCommandBuffer *cmd,
+    SDL_GPUTexture *swapchain,
+    uint32_t w, uint32_t h) {
+
+  desired_depth_w = w;
+  desired_depth_h = h;
+  if (!depth_texture || depth_w != w || depth_h != h) return nullptr;
+
+  SDL_GPUColorTargetInfo color_target = {};
+  color_target.texture  = swapchain;
+  color_target.load_op  = SDL_GPU_LOADOP_LOAD;
+  color_target.store_op = SDL_GPU_STOREOP_STORE;
+  color_target.cycle    = false;
+
+  SDL_GPUDepthStencilTargetInfo depth_target = {};
+  depth_target.texture          = depth_texture;
+  depth_target.load_op          = SDL_GPU_LOADOP_LOAD;
+  depth_target.store_op         = SDL_GPU_STOREOP_STORE;
+  depth_target.stencil_load_op  = SDL_GPU_LOADOP_LOAD;
+  depth_target.stencil_store_op = SDL_GPU_STOREOP_STORE;
+  depth_target.cycle            = false;
+
+  return SDL_BeginGPURenderPass(cmd, &color_target, 1, &depth_target);
+}
+
+
 
 void TerrainRenderer::prepare_frame_resources(SDL_GPUDevice *device) {
   if (desired_depth_w == 0 || desired_depth_h == 0) return;
@@ -976,7 +975,6 @@ void TerrainRenderer::release_buffers(SDL_GPUDevice *device) {
   rel(lava_vbo,    "lava_vbo");
   rel(lava_ibo,    "lava_ibo");
   rel(contour_vbo, "contour_vbo");
-  if (void_vbo) { SDL_ReleaseGPUBuffer(device, void_vbo); void_vbo = nullptr; }
   has_data = false;
 }
 
@@ -1007,7 +1005,6 @@ void TerrainRenderer::cleanup(SDL_GPUDevice *device) {
   if (dummy_ssbo)               { SDL_ReleaseGPUBuffer(device, dummy_ssbo);                           dummy_ssbo               = nullptr; }
   if (depth_texture)            { SDL_ReleaseGPUTexture(device, depth_texture);                        depth_texture            = nullptr; }
   if (terrain_pipeline)         { SDL_ReleaseGPUGraphicsPipeline(device, terrain_pipeline);            terrain_pipeline         = nullptr; }
-  if (terrain_stencil_pipeline) { SDL_ReleaseGPUGraphicsPipeline(device, terrain_stencil_pipeline);   terrain_stencil_pipeline = nullptr; }
   if (lava_pipeline)            { SDL_ReleaseGPUGraphicsPipeline(device, lava_pipeline);               lava_pipeline            = nullptr; }
   if (contour_pipeline)         { SDL_ReleaseGPUGraphicsPipeline(device, contour_pipeline);            contour_pipeline         = nullptr; }
   if (cluster_gen_pipeline)     { SDL_ReleaseGPUComputePipeline(device, cluster_gen_pipeline);         cluster_gen_pipeline     = nullptr; }

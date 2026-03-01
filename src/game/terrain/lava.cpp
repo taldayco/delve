@@ -157,7 +157,6 @@ static void generate_lava_grid_mesh(LavaBody &lava, int width, int height, float
 
   if (lava.pixels.empty()) return;
 
-
   if (lava.pixel_set.empty()) {
     for (int idx : lava.pixels) lava.pixel_set.insert(idx);
   }
@@ -172,6 +171,15 @@ static void generate_lava_grid_mesh(LavaBody &lava, int width, int height, float
 
   int nx = (int)std::ceil((lava.max_x - lava.min_x) / grid_spacing) + 1;
   int ny = (int)std::ceil((lava.max_y - lava.min_y) / grid_spacing) + 1;
+
+  // Guard against pathologically large lava bodies that would allocate
+  // hundreds of MB and freeze/OOM the system.
+  constexpr int MAX_LAVA_GRID_CELLS = 200 * 200; // ~40k cells max
+  if (nx * ny > MAX_LAVA_GRID_CELLS) {
+    lava.pixel_set.clear();
+    { std::unordered_set<int> empty; lava.pixel_set.swap(empty); }
+    return;
+  }
 
   std::vector<int> vertex_map(nx * ny, -1);
 
@@ -208,6 +216,11 @@ static void generate_lava_grid_mesh(LavaBody &lava, int width, int height, float
       }
     }
   }
+
+  // pixel_set is only needed during mesh generation — free it now so that
+  // destructing a LavaBody on the main thread does not stall the render loop.
+  lava.pixel_set.clear();
+  { std::unordered_set<int> empty; lava.pixel_set.swap(empty); }
 }
 
 static void build_triangle_mesh_from_polygon(const std::vector<P2> &poly,

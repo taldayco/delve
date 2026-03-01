@@ -1,5 +1,6 @@
 #include "gpu/gpu.h"
 #include <algorithm>
+#include <vector>
 
 bool gpu_init(GpuContext &ctx) {
   SDL_Log("Init starting...");
@@ -36,6 +37,9 @@ bool gpu_init(GpuContext &ctx) {
   SDL_SetGPUSwapchainParameters(ctx.device, ctx.window,
                                 SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
                                 SDL_GPU_PRESENTMODE_VSYNC);
+
+  ctx.upload_manager.init(ctx.device, 8 * 1024 * 1024);
+
   SDL_Log("Init complete");
   return true;
 }
@@ -96,6 +100,8 @@ bool gpu_acquire_frame(GpuContext &ctx, FrameContext &frame) {
 bool gpu_acquire_game_frame(GpuContext &ctx, FrameContext &frame) {
   if (!ctx.game_window) return false;
 
+  ctx.upload_manager.reset();
+
   frame.cmd = SDL_AcquireGPUCommandBuffer(ctx.device);
   if (!frame.cmd) return false;
 
@@ -126,6 +132,7 @@ void gpu_end_frame(FrameContext &frame) {
 
 void gpu_cleanup(GpuContext &ctx) {
   SDL_WaitForGPUIdle(ctx.device);
+  ctx.upload_manager.cleanup(ctx.device);
   if (ctx.game_window) {
     SDL_ReleaseWindowFromGPUDevice(ctx.device, ctx.game_window);
     SDL_DestroyWindow(ctx.game_window);
@@ -191,4 +198,99 @@ TextureHandle upload_pixels_to_texture(SDL_GPUDevice *device,
   if (!sampler) { SDL_ReleaseGPUTexture(device, texture); return {}; }
 
   return { texture, sampler, width, height };
+}
+
+void UploadManager::init(SDL_GPUDevice *device, uint32_t size) {
+  capacity = size;
+  cursor   = 0;
+  SDL_GPUTransferBufferCreateInfo ti = {};
+  ti.usage  = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  ti.size   = size;
+  buffer = SDL_CreateGPUTransferBuffer(device, &ti);
+  if (!buffer) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "UploadManager::init: Failed to create transfer buffer: %s", SDL_GetError());
+    capacity = 0;
+    return;
+  }
+  // Map persistently — SDL3-GPU allows the buffer to stay mapped between frames.
+  mapped = (uint8_t *)SDL_MapGPUTransferBuffer(device, buffer, false);
+  if (!mapped) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "UploadManager::init: Failed to map transfer buffer: %s", SDL_GetError());
+  }
+}
+
+void UploadManager::cleanup(SDL_GPUDevice *device) {
+  if (buffer) {
+    SDL_UnmapGPUTransferBuffer(device, buffer);
+    SDL_ReleaseGPUTransferBuffer(device, buffer);
+    buffer   = nullptr;
+    mapped   = nullptr;
+    capacity = 0;
+    cursor   = 0;
+  }
+}
+
+void *UploadManager::alloc(uint32_t size, uint32_t *out_offset) {
+  // 256-byte align for GPU safety
+  uint32_t aligned_cursor = (cursor + 255u) & ~255u;
+  if (!mapped || aligned_cursor + size > capacity) return nullptr;
+  *out_offset = aligned_cursor;
+  cursor      = aligned_cursor + size;
+  return mapped + aligned_cursor;
+}
+
+void UploadManager::reset() {
+  cursor = 0;
+}
+
+SDL_GPUBuffer *gpu_create_buffer(SDL_GPUDevice *device, uint32_t size,
+                                  SDL_GPUBufferUsageFlags usage) {
+  SDL_GPUBufferCreateInfo info = {};
+  info.usage = usage;
+  info.size  = size;
+  SDL_GPUBuffer *buf = SDL_CreateGPUBuffer(device, &info);
+  if (!buf)
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "gpu_create_buffer: Failed (size=%u): %s", size, SDL_GetError());
+  return buf;
+}
+
+SDL_GPUBuffer *gpu_upload_buffer(SDL_GPUDevice *device, const void *data,
+                                  uint32_t size, SDL_GPUBufferUsageFlags usage) {
+  SDL_GPUBuffer *buffer = gpu_create_buffer(device, size, usage);
+  if (!buffer) return nullptr;
+
+  SDL_GPUTransferBufferCreateInfo ti = {};
+  ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  ti.size  = size;
+  SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &ti);
+  if (!transfer) { SDL_ReleaseGPUBuffer(device, buffer); return nullptr; }
+
+  void *mapped = SDL_MapGPUTransferBuffer(device, transfer, false);
+  if (!mapped) {
+    SDL_ReleaseGPUTransferBuffer(device, transfer);
+    SDL_ReleaseGPUBuffer(device, buffer);
+    return nullptr;
+  }
+  SDL_memcpy(mapped, data, size);
+  SDL_UnmapGPUTransferBuffer(device, transfer);
+
+  SDL_GPUCommandBuffer *cmd  = SDL_AcquireGPUCommandBuffer(device);
+  SDL_GPUCopyPass      *copy = SDL_BeginGPUCopyPass(cmd);
+  SDL_GPUTransferBufferLocation src = { transfer, 0 };
+  SDL_GPUBufferRegion           dst = { buffer,   0, size };
+  SDL_UploadToGPUBuffer(copy, &src, &dst, false);
+  SDL_EndGPUCopyPass(copy);
+  SDL_SubmitGPUCommandBuffer(cmd);
+  SDL_WaitForGPUIdle(device);
+  SDL_ReleaseGPUTransferBuffer(device, transfer);
+  return buffer;
+}
+
+SDL_GPUBuffer *gpu_create_zeroed_buffer(SDL_GPUDevice *device, uint32_t size,
+                                         SDL_GPUBufferUsageFlags usage) {
+  std::vector<uint8_t> zeros(size, 0);
+  return gpu_upload_buffer(device, zeros.data(), size, usage);
 }

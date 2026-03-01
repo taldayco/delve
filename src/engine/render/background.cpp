@@ -1,69 +1,26 @@
 #include "background.h"
 #include <SDL3/SDL.h>
-#include <vector>
 #include <string>
 
-static std::vector<uint8_t> load_shader_file(const char *path) {
-    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
-    if (!io) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "BackgroundRenderer: Failed to open shader: %s", path);
-        return {};
-    }
-    Sint64 size = SDL_GetIOSize(io);
-    if (size <= 0) { SDL_CloseIO(io); return {}; }
-    std::vector<uint8_t> data(size);
-    SDL_ReadIO(io, data.data(), size);
-    SDL_CloseIO(io);
-    return data;
-}
-
-static SDL_GPUShader *create_shader(SDL_GPUDevice *device, const char *path,
-                                    SDL_GPUShaderStage stage,
-                                    Uint32 num_uniform_buffers) {
-    auto code = load_shader_file(path);
-    if (code.empty()) return nullptr;
-
-    SDL_GPUShaderCreateInfo info = {};
-    info.code        = code.data();
-    info.code_size   = code.size();
-    info.entrypoint  = "main";
-    info.format      = SDL_GPU_SHADERFORMAT_SPIRV;
-    info.stage       = stage;
-    info.num_uniform_buffers = num_uniform_buffers;
-
-    SDL_GPUShader *shader = SDL_CreateGPUShader(device, &info);
-    if (!shader)
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "BackgroundRenderer: Failed to create shader %s: %s",
-                     path, SDL_GetError());
-    return shader;
-}
-
-bool BackgroundRenderer::init(SDL_GPUDevice *device,
-                              SDL_GPUTextureFormat swapchain_format,
-                              SDL_GPUTextureFormat depth_format) {
-    this->device = device;
-
 #ifdef SHADER_DIR
-    std::string shader_dir = SHADER_DIR;
+static const std::string s_shader_dir = SHADER_DIR;
 #else
-    std::string shader_dir = "shaders";
+static const std::string s_shader_dir = "shaders";
 #endif
 
+bool BackgroundRenderer::build_pipeline(SDL_GPUTextureFormat swapchain_format,
+                                         SDL_GPUTextureFormat depth_format) {
+    SDL_GPUShader *vert = asset_manager->load_shader(
+        "background.vert",
+        s_shader_dir + "/background.vert.glsl.spv",
+        SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
 
-    SDL_GPUShader *vert = create_shader(
-        device, (shader_dir + "/background.vert.glsl.spv").c_str(),
-        SDL_GPU_SHADERSTAGE_VERTEX, 0);
-    SDL_GPUShader *frag = create_shader(
-        device, (shader_dir + "/background.frag.glsl.spv").c_str(),
-        SDL_GPU_SHADERSTAGE_FRAGMENT, 1);
+    SDL_GPUShader *frag = asset_manager->load_shader(
+        "background.frag",
+        s_shader_dir + "/background.frag.glsl.spv",
+        SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
 
-    if (!vert || !frag) {
-        if (vert) SDL_ReleaseGPUShader(device, vert);
-        if (frag) SDL_ReleaseGPUShader(device, frag);
-        return false;
-    }
+    if (!vert || !frag) return false;
 
     SDL_GPUColorTargetDescription color_desc = {};
     color_desc.format = swapchain_format;
@@ -72,27 +29,22 @@ bool BackgroundRenderer::init(SDL_GPUDevice *device,
     pi.vertex_shader   = vert;
     pi.fragment_shader = frag;
     pi.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-
-
-
-
     pi.target_info.color_target_descriptions = &color_desc;
     pi.target_info.num_color_targets         = 1;
     pi.target_info.has_depth_stencil_target  = true;
     pi.target_info.depth_stencil_format      = depth_format;
-
     pi.depth_stencil_state.enable_depth_test  = false;
     pi.depth_stencil_state.enable_depth_write = false;
 
+    if (pipeline) {
+        SDL_ReleaseGPUGraphicsPipeline(device, pipeline);
+        pipeline = nullptr;
+    }
+
     pipeline = SDL_CreateGPUGraphicsPipeline(device, &pi);
-
-    SDL_ReleaseGPUShader(device, vert);
-    SDL_ReleaseGPUShader(device, frag);
-
     if (!pipeline) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
-                     "BackgroundRenderer: Failed to create pipeline: %s",
-                     SDL_GetError());
+                     "BackgroundRenderer: Failed to create pipeline: %s", SDL_GetError());
         return false;
     }
 
@@ -100,11 +52,29 @@ bool BackgroundRenderer::init(SDL_GPUDevice *device,
     return true;
 }
 
+bool BackgroundRenderer::init(SDL_GPUDevice *dev,
+                               SDL_GPUTextureFormat swapchain_format,
+                               SDL_GPUTextureFormat depth_format,
+                               AssetManager &am) {
+    device        = dev;
+    asset_manager = &am;
+
+    asset_manager->register_pipeline("background", "background.vert", "background.frag");
+    return build_pipeline(swapchain_format, depth_format);
+}
+
+void BackgroundRenderer::rebuild_if_dirty(SDL_GPUTextureFormat swapchain_format,
+                                           SDL_GPUTextureFormat depth_format) {
+    if (!asset_manager || !asset_manager->pipeline_needs_rebuild("background")) return;
+    build_pipeline(swapchain_format, depth_format);
+    asset_manager->clear_rebuild_flag("background");
+}
+
 void BackgroundRenderer::draw(SDL_GPUCommandBuffer *cmd,
-                              SDL_GPURenderPass   *render_pass,
-                              float                time,
-                              float                cam_x,
-                              float                cam_y) {
+                               SDL_GPURenderPass   *render_pass,
+                               float                time,
+                               float                cam_x,
+                               float                cam_y) {
     if (!pipeline || !render_pass) return;
 
     SDL_BindGPUGraphicsPipeline(render_pass, pipeline);

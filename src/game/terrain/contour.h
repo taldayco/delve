@@ -12,6 +12,9 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
                       float interval, std::vector<Line> &out_lines,
                       std::vector<int> &out_band_map);
 
+// Remove contour segments shorter than epsilon (world units) — call after extract_contours.
+void simplify_contours(std::vector<Line> &lines, float epsilon);
+
 struct Plateau {
   float height;
   std::vector<int> pixels;

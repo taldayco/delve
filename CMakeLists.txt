@@ -115,6 +115,8 @@ add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 # ---- topo_engine (static library) ----
 add_library(topo_engine STATIC
     src/engine/app.cpp
+    src/engine/core/asset_manager.cpp
+    src/engine/core/task_system.cpp
     src/engine/gpu/gpu.cpp
     src/engine/input/input.cpp
     src/engine/camera/camera.cpp
@@ -153,6 +155,8 @@ add_executable(topogen
     src/game/terrain/map_gen.cpp
     src/game/terrain/terrain_mesh.cpp
     src/game/terrain/terrain_renderer.cpp
+    src/game/terrain/map_util.cpp
+    src/game/render/actor_renderer.cpp
 )
 
 target_include_directories(topogen PRIVATE

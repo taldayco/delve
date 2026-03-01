@@ -9,6 +9,7 @@ int Application::run() {
   if (!gpu_init(gpu_ctx))
     return 1;
 
+  asset_manager.init(gpu_ctx.device);
   ui_init(gpu_ctx.window, gpu_ctx.device);
 
   on_init(gpu_ctx, ecs_world);
@@ -63,6 +64,8 @@ int Application::run() {
     }
 
 
+    asset_manager.check_for_updates();
+
     FrameContext tool_frame;
     if (gpu_acquire_frame(gpu_ctx, tool_frame)) {
       on_render_tool(gpu_ctx, tool_frame, ecs_world);
@@ -71,6 +74,7 @@ int Application::run() {
 
 
     if (gpu_ctx.game_window) {
+      on_pre_frame_game(gpu_ctx, ecs_world);
       FrameContext game_frame;
       if (gpu_acquire_game_frame(gpu_ctx, game_frame)) {
         on_render_game(gpu_ctx, game_frame, ecs_world);
@@ -80,6 +84,7 @@ int Application::run() {
   }
 
   on_cleanup(ecs_world);
+  asset_manager.clear();
   ui_shutdown();
   gpu_cleanup(gpu_ctx);
   return 0;

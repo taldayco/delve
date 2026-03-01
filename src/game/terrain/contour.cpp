@@ -1,6 +1,7 @@
 #include "terrain/contour.h"
 #include <SDL3/SDL.h>
 #include <algorithm>
+#include <cmath>
 #include <queue>
 
 void extract_contours(std::span<const float> heightmap, int width, int height,
@@ -159,4 +160,16 @@ std::vector<Plateau> detect_plateaus(std::span<const int> band_map,
 
   SDL_Log("Detected %zu plateaus", plateaus.size());
   return plateaus;
+}
+
+void simplify_contours(std::vector<Line> &lines, float epsilon) {
+  float eps2 = epsilon * epsilon;
+  size_t before = lines.size();
+  lines.erase(std::remove_if(lines.begin(), lines.end(), [eps2](const Line &l) {
+    float dx = l.x2 - l.x1;
+    float dy = l.y2 - l.y1;
+    return (dx * dx + dy * dy) < eps2;
+  }), lines.end());
+  SDL_Log("simplify_contours: %zu -> %zu segments (epsilon=%.2f)",
+          before, lines.size(), epsilon);
 }

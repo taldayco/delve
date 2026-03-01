@@ -239,6 +239,19 @@ flecs_static/fast:
 	$(MAKE) $(MAKESILENT) -f _deps/flecs-build/CMakeFiles/flecs_static.dir/build.make _deps/flecs-build/CMakeFiles/flecs_static.dir/build
 .PHONY : flecs_static/fast
 
+#=============================================================================
+# Target rules for targets named glm
+
+# Build rule for target.
+glm: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 glm
+.PHONY : glm
+
+# fast build rule for target.
+glm/fast:
+	$(MAKE) $(MAKESILENT) -f _deps/glm-build/glm/CMakeFiles/glm.dir/build.make _deps/glm-build/glm/CMakeFiles/glm.dir/build
+.PHONY : glm/fast
+
 src/engine/app.o: src/engine/app.cpp.o
 .PHONY : src/engine/app.o
 
@@ -286,6 +299,30 @@ src/engine/camera/camera.s: src/engine/camera/camera.cpp.s
 src/engine/camera/camera.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/topo_engine.dir/build.make CMakeFiles/topo_engine.dir/src/engine/camera/camera.cpp.s
 .PHONY : src/engine/camera/camera.cpp.s
+
+src/engine/core/asset_manager.o: src/engine/core/asset_manager.cpp.o
+.PHONY : src/engine/core/asset_manager.o
+
+# target to build an object file
+src/engine/core/asset_manager.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/topo_engine.dir/build.make CMakeFiles/topo_engine.dir/src/engine/core/asset_manager.cpp.o
+.PHONY : src/engine/core/asset_manager.cpp.o
+
+src/engine/core/asset_manager.i: src/engine/core/asset_manager.cpp.i
+.PHONY : src/engine/core/asset_manager.i
+
+# target to preprocess a source file
+src/engine/core/asset_manager.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/topo_engine.dir/build.make CMakeFiles/topo_engine.dir/src/engine/core/asset_manager.cpp.i
+.PHONY : src/engine/core/asset_manager.cpp.i
+
+src/engine/core/asset_manager.s: src/engine/core/asset_manager.cpp.s
+.PHONY : src/engine/core/asset_manager.s
+
+# target to generate assembly for a file
+src/engine/core/asset_manager.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/topo_engine.dir/build.make CMakeFiles/topo_engine.dir/src/engine/core/asset_manager.cpp.s
+.PHONY : src/engine/core/asset_manager.cpp.s
 
 src/engine/gpu/gpu.o: src/engine/gpu/gpu.cpp.o
 .PHONY : src/engine/gpu/gpu.o
@@ -974,6 +1011,7 @@ help:
 	@echo "... shaders"
 	@echo "... flecs"
 	@echo "... flecs_static"
+	@echo "... glm"
 	@echo "... imgui"
 	@echo "... topo_engine"
 	@echo "... topogen"
@@ -983,6 +1021,9 @@ help:
 	@echo "... src/engine/camera/camera.o"
 	@echo "... src/engine/camera/camera.i"
 	@echo "... src/engine/camera/camera.s"
+	@echo "... src/engine/core/asset_manager.o"
+	@echo "... src/engine/core/asset_manager.i"
+	@echo "... src/engine/core/asset_manager.s"
 	@echo "... src/engine/gpu/gpu.o"
 	@echo "... src/engine/gpu/gpu.i"
 	@echo "... src/engine/gpu/gpu.s"

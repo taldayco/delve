@@ -1,12 +1,15 @@
 #pragma once
 #include "terrain/terrain_mesh.h"
+#include "core/asset_manager.h"
+#include "gpu/gpu.h"
 #include <SDL3/SDL.h>
 #include <vector>
 
 class TerrainRenderer {
 public:
-  void init(SDL_GPUDevice *device, SDL_Window *window);
+  void init(SDL_GPUDevice *device, SDL_Window *window, AssetManager &am);
   void upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh);
+  void rebuild_dirty_pipelines(SDL_Window *window);
 
 
 
@@ -14,7 +17,8 @@ public:
             SDL_GPUTexture *swapchain,
             uint32_t w, uint32_t h,
             const SceneUniforms &uniforms,
-            const std::vector<GpuPointLight> &lights);
+            const std::vector<GpuPointLight> &lights,
+            UploadManager &uploader);
 
 
 
@@ -33,6 +37,29 @@ public:
                                             SDL_GPUTexture *swapchain,
                                             uint32_t w, uint32_t h);
 
+  SDL_GPURenderPass *begin_render_pass_load_preserve_depth(SDL_GPUCommandBuffer *cmd,
+                                                           SDL_GPUTexture *swapchain,
+                                                           uint32_t w, uint32_t h);
+
+  SDL_GPUBuffer           *get_point_light_ssbo()  const { return point_light_ssbo;  }
+  SDL_GPUGraphicsPipeline *get_terrain_pipeline()  const { return terrain_pipeline;  }
+  SDL_GPUBuffer           *get_dummy_ssbo()        const { return dummy_ssbo;        }
+
+  // Called from on_pre_frame_game (no frame cmd buf open). Releases and recreates
+  // the depth texture if desired_depth_w/h differ from current depth_w/h.
+  // Caller must have already called SDL_WaitForGPUIdle before invoking this.
+  void prepare_frame_resources(SDL_GPUDevice *device);
+
+  // Returns true if the depth texture needs to be (re)created before the next frame.
+  bool depth_needs_rebuild() const {
+    return desired_depth_w > 0 && desired_depth_h > 0 &&
+           (desired_depth_w != depth_w || desired_depth_h != depth_h);
+  }
+
+  // Requested depth texture dimensions (set by begin_render_pass from swapchain size).
+  uint32_t desired_depth_w = 0;
+  uint32_t desired_depth_h = 0;
+
   void cleanup(SDL_GPUDevice *device);
 
   bool is_initialized() const { return initialized; }
@@ -42,6 +69,10 @@ public:
   uint32_t cluster_tiles_x() const { return cluster_grid_w; }
   uint32_t cluster_tiles_y() const { return cluster_grid_y; }
 
+  // Current depth texture dimensions (0 until first prepare_frame_resources call).
+  uint32_t depth_width()  const { return depth_w; }
+  uint32_t depth_height() const { return depth_h; }
+
 private:
 
   void init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window *window);
@@ -49,8 +80,7 @@ private:
   void init_cluster_buffers(SDL_GPUDevice *device, uint32_t tilesX, uint32_t tilesY, uint32_t num_slices);
 
 
-  void stage_geometry(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
-                      const SceneUniforms &uniforms);
+
   void stage_cull_lights(SDL_GPUCommandBuffer *cmd,
                          const SceneUniforms &uniforms,
                          const std::vector<GpuPointLight> &lights);
@@ -60,7 +90,9 @@ private:
 
   void release_buffers(SDL_GPUDevice *device);
   void release_cluster_buffers(SDL_GPUDevice *device);
-  void upload_lights(const std::vector<GpuPointLight> &lights);
+  void upload_lights(SDL_GPUCommandBuffer *cmd,
+                     UploadManager &uploader,
+                     const std::vector<GpuPointLight> &lights);
 
 
   bool initialized = false;
@@ -73,7 +105,6 @@ private:
 
 
   SDL_GPUGraphicsPipeline *terrain_pipeline         = nullptr;
-  SDL_GPUGraphicsPipeline *terrain_stencil_pipeline = nullptr;
   SDL_GPUGraphicsPipeline *lava_pipeline            = nullptr;
   SDL_GPUGraphicsPipeline *contour_pipeline         = nullptr;
 
@@ -92,9 +123,6 @@ private:
   uint32_t       lava_vertex_count = 0;
   uint32_t       lava_index_count  = 0;
 
-  SDL_GPUBuffer *void_vbo       = nullptr;
-  uint32_t       void_vertex_count = 0;
-
   SDL_GPUBuffer *contour_vbo    = nullptr;
   uint32_t       contour_vertex_count = 0;
 
@@ -104,11 +132,13 @@ private:
   SDL_GPUBuffer *light_grid_ssbo    = nullptr;
   SDL_GPUBuffer *global_index_ssbo  = nullptr;
   SDL_GPUBuffer *cull_counter_ssbo  = nullptr;
+  SDL_GPUBuffer *dummy_ssbo         = nullptr; // 4-byte fallback; always valid after init
 
 
 
   SDL_GPUTransferBuffer *counter_reset_transfer = nullptr;
 
+  AssetManager *asset_manager = nullptr;
 
   uint32_t cluster_grid_w = 0;
   uint32_t cluster_grid_y = 0;

@@ -72,8 +72,3 @@ imgui/
 *.bak
 *.tmp
 
-# Claude-specific files
-claude_to_do.md
-CLAUDE.md
-plan.md
-topo_index.md

@@ -1,0 +1,6 @@
+{
+  "extensions": [
+    "./extensions/orchestrator",
+    "./node_modules/pi-mcp-adapter"
+  ]
+}

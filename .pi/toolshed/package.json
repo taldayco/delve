@@ -1,0 +1,19 @@
+{
+  "name": "delve-toolshed",
+  "version": "1.0.0",
+  "description": "Delve MCP tool shed — centralized tools for the agentic development team",
+  "type": "module",
+  "main": "src/server.ts",
+  "scripts": {
+    "start": "npx tsx src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

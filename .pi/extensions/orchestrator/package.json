@@ -1,0 +1,11 @@
+{
+  "name": "delve-orchestrator",
+  "version": "2.0.0",
+  "description": "Meta-agentic blueprint engine for Delve development team",
+  "pi": {
+    "extensions": ["./src"]
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}

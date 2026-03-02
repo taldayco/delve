@@ -34,7 +34,7 @@ FetchContent_Declare(glm
 FetchContent_MakeAvailable(flecs json glm)
 
 # ImGui
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 add_library(imgui STATIC
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -180,3 +180,27 @@ target_link_libraries(topogen PRIVATE
 )
 
 add_dependencies(topogen shaders)
+
+# ---- delve_tests (test executable) ----
+add_executable(delve_tests
+    src/test/test_main.cpp
+    src/test/tests/test_noise.cpp
+    src/test/tests/test_hex.cpp
+    src/test/tests/test_animation.cpp
+    src/test/tests/test_palettes.cpp
+    src/game/terrain/noise.cpp
+    src/game/terrain/noise_layers.cpp
+    src/game/terrain/hex.cpp
+    src/game/terrain/contour.cpp
+)
+
+target_include_directories(delve_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
+)
+
+target_link_libraries(delve_tests PRIVATE
+    SDL3::SDL3
+    glm::glm
+)

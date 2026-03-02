@@ -1,0 +1,18 @@
+{
+  "settings": {
+    "toolPrefix": "none",
+    "idleTimeout": 30
+  },
+  "mcpServers": {
+    "delve-toolshed": {
+      "command": "npx",
+      "args": ["tsx", ".pi/toolshed/src/server.ts"],
+      "cwd": ".",
+      "lifecycle": "lazy",
+      "idleTimeout": 30,
+      "env": {
+        "DELVE_PROJECT_ROOT": "."
+      }
+    }
+  }
+}

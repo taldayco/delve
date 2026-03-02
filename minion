@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "Usage: ./minion <feature description>"
+  echo ""
+  echo "Runs the Delve agentic development team to implement a feature."
+  echo "The agent will: plan → implement → build → test → review → create PR."
+  echo ""
+  echo "Examples:"
+  echo "  ./minion 'add an ocean palette with blue-green colors'"
+  echo "  ./minion 'fix hex grid alignment at map edges'"
+  echo "  ./minion 'add a snow biome with white terrain above elevation 0.8'"
+  exit 1
+fi
+
+PROMPT="$*"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+LOG_DIR=".pi/logs/${TIMESTAMP}"
+mkdir -p "${LOG_DIR}"
+
+echo "=== Delve Minion ==="
+echo "Task: ${PROMPT}"
+echo "Log:  ${LOG_DIR}/run.log"
+echo "===================="
+echo ""
+
+# Run pi in JSON mode with the /minion command
+pi "/minion ${PROMPT}" --mode json 2>&1 | tee "${LOG_DIR}/run.log"
+
+EXIT_CODE=${PIPESTATUS[0]}
+
+if [ ${EXIT_CODE} -eq 0 ]; then
+  echo ""
+  echo "=== Minion complete ==="
+  echo "Check the PR for review."
+else
+  echo ""
+  echo "=== Minion failed (exit ${EXIT_CODE}) ==="
+  echo "See log: ${LOG_DIR}/run.log"
+fi
+
+exit ${EXIT_CODE}

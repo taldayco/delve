@@ -13,6 +13,7 @@
 #include "camera/camera.h"
 #include "render/background.h"
 #include "render/actor_renderer.h"
+#include "animation_log.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -29,6 +30,7 @@ public:
   AsyncTerrainState   async_terrain;
   flecs::entity       player_entity;
   bool                player_spawned = false;
+  AnimationLogger     anim_log;
 
   void on_init(GpuContext &gpu, flecs::world &ecs) override;
   void on_event(const SDL_Event &event, flecs::world &ecs) override;

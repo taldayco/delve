@@ -370,6 +370,11 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       });
 
   // SkeletonFinaliseSystem.
+  static float s_sway_phase = 0.0f;
+  static float s_sway_amt   = 0.04f;
+  static float s_lean_x     = 0.0f;
+  static float s_lean_y     = 0.0f;
+
   ecs.system("SkeletonFinaliseSystem")
       .kind(flecs::PostUpdate)
       .run([this, &ecs](flecs::iter &) {
@@ -386,10 +391,8 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
           float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
           // CoM hip sway.
-          static float sway_phase = 0.0f;
-          sway_phase += speed * dt * 6.0f;
-          float sway_amt = 0.04f;
-          float sway = sinf(sway_phase) * sway_amt;
+          s_sway_phase += speed * dt * 6.0f;
+          float sway = sinf(s_sway_phase) * s_sway_amt;
           glm::vec3 sway_vec(rght_x * sway, rght_y * sway, 0.0f);
           pose.joints[(int)J::ROOT]  += sway_vec;
           pose.joints[(int)J::SPINE] += sway_vec;
@@ -397,15 +400,43 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
 
           // Torso lean forward when moving.
           float lean = 0.03f;
+          s_lean_x = 0.0f;
+          s_lean_y = 0.0f;
           if (speed > 0.001f) {
-            glm::vec3 lean_vec(vel.x / speed * lean * speed,
-                               vel.y / speed * lean * speed,
-                               0.0f);
+            s_lean_x = vel.x / speed * lean * speed;
+            s_lean_y = vel.y / speed * lean * speed;
+            glm::vec3 lean_vec(s_lean_x, s_lean_y, 0.0f);
             pose.joints[(int)J::CHEST] += lean_vec;
             pose.joints[(int)J::NECK]  += lean_vec;
             pose.joints[(int)J::HEAD]  += lean_vec;
           }
         });
+      });
+
+  // AnimationLogSystem — runs after SkeletonFinaliseSystem.
+  ecs.system("AnimationLogSystem")
+      .kind(flecs::PostUpdate)
+      .run([this, &ecs](flecs::iter &) {
+        if (!anim_log.active) return;
+        if (!player_entity.is_alive()) return;
+
+        const auto *t    = player_entity.get<Transform>();
+        const auto *vel  = player_entity.get<Velocity>();
+        const auto *gait = player_entity.get<ProceduralGait>();
+        const auto *legs = player_entity.get<LegState>();
+        const auto *pose = player_entity.get<SkeletonPose>();
+        const auto *cfg  = player_entity.get<ActorConfig>();
+        if (!t || !vel || !gait || !legs || !pose || !cfg) return;
+
+        float dt = ecs.delta_time();
+        anim_log.begin_frame(dt);
+        anim_log.log_transform(*t, *vel);
+        anim_log.log_gait(*gait);
+        anim_log.log_legs(*legs, *t, *cfg);
+        anim_log.log_joints(*pose, *t);
+        anim_log.log_finalize(s_sway_phase, s_sway_amt, s_lean_x, s_lean_y);
+        anim_log.log_camera(camera);
+        anim_log.end_frame();
       });
 }
 
@@ -721,6 +752,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 }
 
 void TopoGame::on_cleanup(flecs::world &ecs) {
+  anim_log.close();
   task_system.shutdown();
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
@@ -875,6 +907,13 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Text("Contour Lines: %zu", contours ? contours->contour_lines.size() : 0u);
   ImGui::Text("Resolution: %dx%d", Config::MAP_WIDTH, Config::MAP_HEIGHT);
   ImGui::Text("Camera: (%.1f, %.1f) zoom %.2fx", camera.world_x, camera.world_y, camera.zoom);
+  if (anim_log.active) {
+    ImGui::TextColored({1.0f, 0.2f, 0.2f, 1.0f}, "REC");
+    ImGui::SameLine();
+    if (ImGui::Button("Stop Animation Log", {-1, 0})) anim_log.toggle();
+  } else {
+    if (ImGui::Button("Record Animation Log", {-1, 0})) anim_log.toggle();
+  }
 
   ImGui::Separator();
   if (ImGui::CollapsingHeader("Resources")) {

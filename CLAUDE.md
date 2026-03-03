@@ -67,43 +67,11 @@ cmake --build build --target delve_tests -j$(nproc) && ./build/delve_tests
 ```
 
 Tests output JSON to stdout. Test infrastructure in `src/test/`:
-- `test_harness.h` — Custom test framework (DELVE_TEST macro, EXPECT_* assertions)
+
+- `test_harness.h` — Custom test framework (DELVE*TEST macro, EXPECT*\* assertions)
 - `terrain_metrics.h` — Elevation stats, water coverage, plateau counts
 - `geometry_metrics.h` — Mesh validity, hex roundtrip accuracy, normal checks
 - `animation_metrics.h` — Joint angles, symmetry scores, gait parameters
-
-### Agentic Development System
-
-Pi-mono agent harness configured in `.pi/` using **meta-agentic architecture**:
-
-**Core infrastructure:**
-- `.pi/SYSTEM.md` — Agent team system prompt
-- `.pi/extensions/orchestrator/` — Meta-agentic blueprint engine with three-tier model routing
-- `.pi/skills/` — Specialist skills (plan, terrain, engine, shader, actor, test, review)
-- `.pi/rules/` — Subdirectory-scoped context rules (auto-loaded by glob pattern)
-- `.pi/toolshed/` — MCP server exposing Delve-specific tools + meta-tools
-- `.pi/mcp.json` — MCP adapter config connecting tool shed to pi via pi-mcp-adapter
-- `.pi/state/` — Phase artifacts for destructive context handoffs
-
-**Orchestrator modules (`.pi/extensions/orchestrator/src/`):**
-- `index.ts` — Extension entry point: registers tools, `/minion` command orchestrates via tool calls
-- `models.ts` — Anthropic SDK wrapper with `ask()` for stateless sub-agent calls at any model tier
-- `agents.ts` — Agent-as-tool definitions: `askMetaPlanner`, `askMetaImplementer`, `askMetaTester`, `askReviewer`, `askWorker`, `generateWorkerPrompt`
-- `tools.ts` — Deterministic tools: `runBuild`, `runTests`, `gitBranch`, `gitCommitAndPr`
-
-**Three-tier model routing:**
-- **Opus** (orchestrator) — Makes decisions, calls tools
-- **Sonnet** (meta-agents) — Stateless planning, implementation, testing, review
-- **Haiku** (workers) — Cheap leaf agents for focused subtasks
-
-**Meta-tools (tools that select tools):**
-- `suggest_tools` — Rank relevant tools for a given task
-- `compose_toolchain` — Ordered tool sequence for a workflow
-- `tool_dependencies` — Prerequisites and downstream tools
-
-**Token efficiency:** Agent-as-tool pattern — each sub-agent is a stateless API call, only returning summaries to the main context. O(1) context growth vs O(N) in the old sendUserMessage pattern.
-
-Run a minion: `./minion "feature description"` or `pi` then `/minion feature description`
 
 ### Dependencies
 

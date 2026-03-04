@@ -411,7 +411,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
     return await spawnSubagentOnce(opts);
   } catch (err: any) {
     // Retry once on spawn failures (ENOENT, EACCES, etc.) with a short delay
-    const isSpawnError = err?.code === "ENOENT" || err?.code === "EACCES" || err?.message?.includes("exited with code");
+    const isSpawnError = err?.code === "ENOENT" || err?.code === "EACCES";
     if (isSpawnError) {
       const agentName = opts.agentName || "subagent";
       agentEvents.emit("agent:retry", { name: agentName, error: err.message });
@@ -1614,6 +1614,7 @@ export async function generateWorkerPrompt(opts: {
   taskType: string;
   context: string;
   constraints: string[];
+  cwd?: string;
 }): Promise<{
   systemPrompt: string;
   userPrompt: string;
@@ -1656,6 +1657,7 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
     model: promptEngConfig.model || "anthropic/claude-sonnet-4-6",
     thinking: promptEngConfig.thinking || "off",
     agentName: "prompt-engineer",
+    cwd: opts.cwd,
   });
 
   // Parse JSON from the response
@@ -2048,6 +2050,7 @@ Synthesize a unified diagnosis from the worker findings.`;
 export async function askBlueprintGenerator(opts: {
   task: string;
   availablePhases: string[];
+  cwd?: string;
 }): Promise<string> {
   const bpGenConfig = loadAgentConfig("blueprint-gen");
   const model = bpGenConfig.model || "anthropic/claude-sonnet-4-6";
@@ -2098,6 +2101,7 @@ Decompose this into classification questions.`;
     model,
     thinking: bpGenConfig.thinking || "off",
     agentName: "blueprint-gen-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -2115,6 +2119,7 @@ Decompose this into classification questions.`;
       model,
       thinking: bpGenConfig.thinking || "off",
       agentName: "blueprint-gen",
+      cwd: opts.cwd,
     });
   }
 
@@ -2125,6 +2130,7 @@ Decompose this into classification questions.`;
       const result = await askWorker({
         systemPrompt: `You are a task classifier for a C++20 game engine development pipeline. Answer the classification question concisely in the requested format.`,
         task: st.worker_prompt,
+        cwd: opts.cwd,
       });
       return `- ${st.instructions}: ${result}`;
     }),
@@ -2158,6 +2164,7 @@ Based on the worker analysis, design the optimal pipeline. Output ONLY the JSON 
     model,
     thinking: bpGenConfig.thinking || "off",
     agentName: "blueprint-gen-synthesizer",
+    cwd: opts.cwd,
   });
 }
 
@@ -2167,6 +2174,7 @@ export async function askVerifier(opts: {
   task: string;
   metricsDir: string;
   domains: string[];
+  cwd?: string;
 }): Promise<string> {
   const verifierConfig = loadAgentConfig("verifier");
   const model = verifierConfig.model || "anthropic/claude-sonnet-4-6";
@@ -2184,7 +2192,7 @@ export async function askVerifier(opts: {
   console.error(`[meta-verifier] Delegating ${Object.keys(domainData).length} domain analyses to workers`);
   const workerResults = await Promise.all(
     Object.entries(domainData).map(([domain, metricData]) =>
-      spawnDomainAnalyzer({ domain, metricData, task: opts.task })
+      spawnDomainAnalyzer({ domain, metricData, task: opts.task, cwd: opts.cwd })
     ),
   );
 
@@ -2244,6 +2252,7 @@ Synthesize a final verification verdict from the worker findings.`;
     model,
     thinking: verifierConfig.thinking || "low",
     agentName: "verifier-synthesizer",
+    cwd: opts.cwd,
   });
 }
 
@@ -2253,6 +2262,7 @@ export async function askDecoupleAnalyst(opts: {
   domainReport: { domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; files: string[] };
   recentMetrics: RunMetricsRecord[];
   files: string[];
+  cwd?: string;
 }): Promise<string> {
   const decouplerConfig = loadAgentConfig("decoupler");
   const model = decouplerConfig.model || "anthropic/claude-sonnet-4-6";
@@ -2317,6 +2327,7 @@ Decompose this domain into file groups for coupling analysis.`;
     thinking: decouplerConfig.thinking || "medium",
     tools: decouplerConfig.tools.length > 0 ? decouplerConfig.tools : ["read"],
     agentName: "decoupler-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -2341,6 +2352,7 @@ Produce a structured SPLIT_PROPOSAL in markdown with sub-domains, agent definiti
       thinking: decouplerConfig.thinking || "medium",
       tools: decouplerConfig.tools.length > 0 ? decouplerConfig.tools : ["read"],
       agentName: "decoupler",
+      cwd: opts.cwd,
     });
     writeState("decouple_proposal.md", result);
     return result;
@@ -2353,8 +2365,9 @@ Produce a structured SPLIT_PROPOSAL in markdown with sub-domains, agent definiti
     parsed.subtasks.map(async (st) => {
       const fileContents: Record<string, string> = {};
       const allFiles = [st.file, ...st.context_files].slice(0, 5);
+      const basePath = opts.cwd || PROJECT_ROOT;
       for (const f of allFiles) {
-        const fullPath = f.startsWith("/") ? f : join(PROJECT_ROOT, f);
+        const fullPath = f.startsWith("/") ? f : join(basePath, f);
         if (existsSync(fullPath) && statSync(fullPath).isFile()) {
           const content = readFileSync(fullPath, "utf-8");
           fileContents[f] = content.length > 3000 ? content.slice(0, 3000) + "\n... [truncated]" : content;
@@ -2365,6 +2378,7 @@ Produce a structured SPLIT_PROPOSAL in markdown with sub-domains, agent definiti
 Analyze the provided files and output per-file: RESPONSIBILITY: [1 sentence] | PUBLIC_API: [exported symbols] | DEPENDS_ON: [external dependencies].`,
         task: st.worker_prompt,
         fileContents,
+        cwd: opts.cwd,
       });
       return `### File Group: ${st.file}\n${result}`;
     }),
@@ -2416,6 +2430,7 @@ Synthesize a domain split proposal from the coupling analyses.`;
     model,
     thinking: decouplerConfig.thinking || "medium",
     agentName: "decoupler-synthesizer",
+    cwd: opts.cwd,
   });
 
   writeState("decouple_proposal.md", result);
@@ -2427,6 +2442,7 @@ Synthesize a domain split proposal from the coupling analyses.`;
 export async function askMapUpdater(opts: {
   coverageReport: { unmappedDirs: string[]; unmappedKeywords: string[]; currentKeywordCount: number };
   currentToolsContent: string;
+  cwd?: string;
 }): Promise<string> {
   // Step 1: Sonnet decomposes unmapped dirs into per-directory classification tasks
   const decomposerPrompt = `${loadAgentSystemPrompt()}
@@ -2481,6 +2497,7 @@ Decompose unmapped directories into classification tasks.`;
     thinking: "low",
     tools: ["read"],
     agentName: "map-updater-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -2503,6 +2520,7 @@ Output a single FILE block with updated KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SU
       thinking: "low",
       tools: ["read"],
       agentName: "map-updater",
+      cwd: opts.cwd,
     });
   }
 
@@ -2514,6 +2532,7 @@ Output a single FILE block with updated KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SU
         systemPrompt: `You are a directory classifier for a C++20 project. Classify directories into: terrain, actor, shader, or engine.
 Output EXACTLY: SUBSYSTEM: [name] | KEYWORDS: [comma-separated keywords]`,
         task: st.worker_prompt,
+        cwd: opts.cwd,
       });
       return result;
     }),
@@ -2554,6 +2573,7 @@ Produce the updated map code incorporating these classifications.`;
     model: "anthropic/claude-sonnet-4-6",
     thinking: "low",
     agentName: "map-updater-synthesizer",
+    cwd: opts.cwd,
   });
 }
 
@@ -2563,6 +2583,7 @@ export async function spawnDomainAnalyzer(opts: {
   domain: string;
   metricData: string;
   task: string;
+  cwd?: string;
 }): Promise<{ domain: string; result: string }> {
   const systemPrompt = `You are a METRICS ANALYZER for the "${opts.domain}" domain of the Delve game engine.
 You receive JSON metric data and must determine if the metrics are healthy.
@@ -2590,6 +2611,7 @@ Analyze these metrics. Is this domain healthy?`;
     model: "anthropic/claude-haiku-4-5",
     thinking: "off",
     agentName: `analyzer-${opts.domain}`,
+    cwd: opts.cwd,
   });
 
   return { domain: opts.domain, result };
@@ -2604,25 +2626,29 @@ export interface FailureSignal {
 }
 
 export function detectAgentFailure(output: string): FailureSignal {
+  // Only check the beginning of output for refusal/failure patterns
+  // to avoid false positives from legitimate content deeper in the response
+  const head = output.slice(0, 500);
+
   // Capability failures
-  if (/\b(I cannot|I can't|I am unable to|I'm unable to)\b/i.test(output)) {
+  if (/\b(I cannot|I can't|I am unable to|I'm unable to)\b/i.test(head)) {
     return { failed: true, reason: "Agent reported inability", category: "capability" };
   }
 
   // Tool failures
-  if (/\b(tool|command)\s+(not\s+)?(available|found|supported)\b/i.test(output)) {
+  if (/\b(tool|command)\s+(not\s+)?(available|found|supported)\b/i.test(head)) {
     return { failed: true, reason: "Tool not available", category: "tool" };
   }
-  if (/Error:\s*(ENOENT|EACCES|EPERM)\b/.test(output)) {
+  if (/Error:\s*(ENOENT|EACCES|EPERM)\b/.test(head)) {
     return { failed: true, reason: "File system error", category: "tool" };
   }
 
   // Context failures
-  if (/\b(context|file)\s+(missing|truncated|not found)\b/i.test(output)) {
+  if (/\b(context|file)\s+(missing|truncated|not found)\b/i.test(head)) {
     return { failed: true, reason: "Missing context", category: "context" };
   }
 
-  // Explicit escalation request from worker
+  // Explicit escalation request from worker — check full output
   const escalateMatch = output.match(/\bESCALATE:\s*(.+)/i);
   if (escalateMatch) {
     const reason = escalateMatch[1].trim();
@@ -2644,23 +2670,40 @@ export function escalate(opts: {
   currentModel: string;
   currentTools: string[];
 }): { model: string; tools: string[] } {
-  // Never auto-escalate to opus
-  if (opts.currentModel === "anthropic/claude-sonnet-4-6" || opts.currentModel === "anthropic/claude-opus-4-6") {
+  // Never auto-escalate beyond opus
+  if (opts.currentModel === "anthropic/claude-opus-4-6") {
     return { model: opts.currentModel, tools: opts.currentTools };
   }
 
+  // For Sonnet, don't upgrade model but allow tool expansion
+  if (opts.currentModel === "anthropic/claude-sonnet-4-6") {
+    switch (opts.failureCategory) {
+      case "tool":
+        return {
+          model: opts.currentModel,
+          tools: [...new Set([...opts.currentTools, "write", "edit", "bash"])],
+        };
+      case "context":
+        return {
+          model: opts.currentModel,
+          tools: [...new Set([...opts.currentTools, "read", "bash"])],
+        };
+      default:
+        // No model upgrade available for capability failures on Sonnet
+        return { model: opts.currentModel, tools: opts.currentTools };
+    }
+  }
+
+  // Haiku → Sonnet escalation
   switch (opts.failureCategory) {
     case "capability":
-      // Upgrade haiku → sonnet
       return { model: "anthropic/claude-sonnet-4-6", tools: opts.currentTools };
     case "tool":
-      // Add write tools, upgrade model
       return {
         model: "anthropic/claude-sonnet-4-6",
         tools: [...new Set([...opts.currentTools, "write", "edit", "bash"])],
       };
     case "context":
-      // Same model but expand file reading tools
       return {
         model: opts.currentModel,
         tools: [...new Set([...opts.currentTools, "read", "bash"])],

@@ -1,5 +1,7 @@
 import { silentShell, writeState } from "./agents.js";
 import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
 
 // ─── Configuration ─────────────────────────────────────────────────────────
 
@@ -134,16 +136,19 @@ export function gitBranch(branchName: string): { ok: boolean; summary: string; w
   shell("git checkout main 2>&1 && git pull --ff-only 2>&1");
 
   // Create worktree directory
-  const safeName = branchName.replace(/\//g, "-");
+  const safeName = branchName.replace(/[^a-zA-Z0-9._-]/g, "-");
   const worktreePath = `${WORKTREE_DIR}/${safeName}`;
 
   // Clean up existing worktree at this path if it exists
   shell(`git worktree remove --force "${worktreePath}" 2>&1`);
 
+  // Delete stale branch from previous runs if it exists
+  shell(`git branch -D "${branchName}" 2>&1`);
+
   const result = shell(
     `git worktree add -b "${branchName}" "${worktreePath}" main 2>&1`
   );
-  if (!result.ok && !result.stderr.includes("already exists")) {
+  if (!result.ok) {
     return { ok: false, summary: `Failed to create worktree: ${result.stderr}` };
   }
   return { ok: true, summary: `Worktree created: ${worktreePath} (branch: ${branchName})`, worktreePath };
@@ -238,29 +243,35 @@ export function gitCommitAndPr(opts: {
     .split("\n")
     .filter((f) => f.length > 0);
 
-  // Commit
+  // Commit — use temp file to avoid shell injection via opts.prompt
+  const { writeFileSync: writeTmp, unlinkSync } = require("node:fs");
+  const { join: joinPath } = require("node:path");
   const commitMsg = `feat: ${opts.prompt}\n\nImplemented by Delve minion agent (meta-agentic).\nBuild: ${opts.buildOk ? "PASS" : "FAIL"}\nTests: ${opts.testsOk ? "PASS" : "FAIL"}`;
-  const commitResult = shell(
-    `git commit -m "${commitMsg.replace(/"/g, '\\"')}" 2>&1`,
-    cwd
-  );
+  const tmpCommitFile = joinPath(tmpdir(), `delve-commit-${Date.now()}.txt`);
+  writeTmp(tmpCommitFile, commitMsg, "utf-8");
+  const commitResult = shell(`git commit -F "${tmpCommitFile}" 2>&1`, cwd);
+  try { unlinkSync(tmpCommitFile); } catch { /* ignore */ }
   if (!commitResult.ok) {
     return { ok: false, prUrl: "", summary: `git commit failed: ${commitResult.stderr}` };
   }
 
   // Push
-  const pushResult = shell(`git push -u origin "${opts.branch}" 2>&1`, cwd);
+  const safeBranch = opts.branch.replace(/[^a-zA-Z0-9._\/-]/g, "-");
+  const pushResult = shell(`git push -u origin "${safeBranch}" 2>&1`, cwd);
   if (!pushResult.ok) {
     return { ok: false, prUrl: "", summary: `git push failed: ${pushResult.stderr}` };
   }
 
-  // Create PR
-  const prTitle = `feat: ${opts.prompt.slice(0, 60)}`;
+  // Create PR — use temp file for body to avoid shell injection
+  const prTitle = `feat: ${opts.prompt.slice(0, 60).replace(/[^a-zA-Z0-9 _.,:;!?()-]/g, "")}`;
   const prBody = buildPrBody(opts.prompt, changedFiles, opts.buildOk, opts.testsOk);
+  const tmpBodyFile = joinPath(tmpdir(), `delve-pr-body-${Date.now()}.txt`);
+  writeTmp(tmpBodyFile, prBody, "utf-8");
   const prResult = shell(
-    `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body "${prBody.replace(/"/g, '\\"').replace(/\n/g, "\\n")}" 2>&1`,
+    `gh pr create --title "${prTitle.replace(/"/g, "'")}" --body-file "${tmpBodyFile}" 2>&1`,
     cwd
   );
+  try { unlinkSync(tmpBodyFile); } catch { /* ignore */ }
 
   const prUrl = prResult.ok ? prResult.stdout.trim() : "";
   return {
@@ -525,11 +536,12 @@ export function measureDomainComplexity(): DomainReport[] {
 
 // ─── Deterministic Tool: run_shader_validation ─────────────────────────────
 
-export function runShaderValidation(): { ok: boolean; summary: string } {
+export function runShaderValidation(cwd?: string): { ok: boolean; summary: string } {
   return silentShell(
     "find src/shaders -name '*.glsl' ! -name '*.inc.glsl' " +
       "-exec glslc --target-env=vulkan1.2 -o /dev/null {} \\; 2>&1",
-    30
+    30,
+    cwd
   );
 }
 
@@ -863,7 +875,13 @@ function writeFileBlock(
   dirname: Function,
   join: Function,
 ): void {
-  const fullPath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
+  const rawPath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
+  const fullPath = resolve(rawPath);
+  const resolvedCwd = resolve(cwd);
+  if (!fullPath.startsWith(resolvedCwd + "/") && fullPath !== resolvedCwd) {
+    console.error(`Path traversal blocked: ${filePath} resolved to ${fullPath} (outside ${resolvedCwd})`);
+    return;
+  }
   try {
     mkdirSync(dirname(fullPath), { recursive: true });
     writeFileSync(fullPath, content, "utf-8");

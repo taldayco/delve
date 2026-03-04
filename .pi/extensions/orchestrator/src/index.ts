@@ -1070,7 +1070,7 @@ export default function (pi: ExtensionAPI) {
         const { execSync } = require("node:child_process");
         let recentCommits = "";
         try {
-          recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8" });
+          recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: wt });
         } catch { /* ignore */ }
 
         const diagnosis = await askDiagnoser({
@@ -1221,7 +1221,7 @@ export default function (pi: ExtensionAPI) {
 
         // Shader validation via glslc
         setPhase("shader-validate", ctx);
-        const shaderResult = runShaderValidation();
+        const shaderResult = runShaderValidation(wt);
         ctx.ui.notify(
           shaderResult.ok ? "Shader validation PASSED" : `Shader validation FAILED:\n${shaderResult.summary}`,
           shaderResult.ok ? "success" : "warning"
@@ -1336,7 +1336,7 @@ export default function (pi: ExtensionAPI) {
       } catch (error: any) {
         worktreePath = worktreePath || state?.worktreePath;
         if (state) state.phase = "failed";
-        recordFailure(state?.phase || "unknown", error.message);
+        recordFailure("blueprint", error.message);
         ctx.ui.notify(`Minion-meta error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -1474,7 +1474,7 @@ export default function (pi: ExtensionAPI) {
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
-        if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        if (!branchResult.ok) { state.phase = "failed"; recordFailure("branch", branchResult.summary); ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
         worktreePath = wt;
         state.worktreePath = wt;
@@ -1499,6 +1499,7 @@ export default function (pi: ExtensionAPI) {
 
         if (!buildOk) {
           state.phase = "failed";
+          recordFailure("build", "Build failed after max fix attempts");
           ctx.ui.notify("Build FAILED after max attempts — decouple aborted", "error");
           return;
         }
@@ -1526,6 +1527,7 @@ export default function (pi: ExtensionAPI) {
         state = null;
       } catch (error: any) {
         if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Decouple-execute error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;

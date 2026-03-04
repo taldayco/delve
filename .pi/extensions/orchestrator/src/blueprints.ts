@@ -284,7 +284,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const { execSync } = require("node:child_process");
     let recentCommits = "";
     try {
-      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8" });
+      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: ctx.data.worktreePath || process.cwd() });
     } catch { /* ignore */ }
 
     const diagnosis = await askDiagnoser({
@@ -299,7 +299,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   shader_validate: async (ctx) => {
-    const result = runShaderValidation();
+    const result = runShaderValidation(ctx.data.worktreePath);
     return { ok: result.ok, output: result.ok ? "Shader validation PASSED" : result.summary };
   },
 
@@ -374,23 +374,9 @@ const PHASE_VALIDATORS: Record<string, (output: string, ctx: BlueprintContext) =
     return { valid: warnings.length === 0, warnings };
   },
 
-  implement: (output) => {
-    const warnings: string[] = [];
-    const fileBlocks = (output.match(/###\s*FILE:/g) || []).length;
-    if (fileBlocks === 0) warnings.push("No FILE blocks produced — no code was generated");
-    if (output.length < 100) warnings.push("Implementation output is suspiciously short");
-    return { valid: fileBlocks > 0, warnings };
-  },
-
-  write_tests: (output) => {
-    const warnings: string[] = [];
-    const fileBlocks = (output.match(/###\s*FILE:/g) || []).length;
-    if (fileBlocks === 0) warnings.push("No FILE blocks in test output — no test code generated");
-    if (!/DELVE_TEST|TEST|test_/i.test(output)) {
-      warnings.push("Output doesn't appear to contain test definitions");
-    }
-    return { valid: fileBlocks > 0, warnings };
-  },
+  // Note: implement and write_tests validators removed — handlers already check
+  // for FILE blocks and return ok:false. Validators received the summary string
+  // (e.g., "Applied 3 files"), not the raw output, causing false warnings.
 
   review: (output) => {
     const warnings: string[] = [];
@@ -516,6 +502,7 @@ export async function executeBlueprint(
 ): Promise<void> {
   // Agent listeners are managed by MinionDisplay in index.ts — no need to
   // duplicate them here. We just notify on phase transitions.
+  let allPhasesOk = true;
   try {
     for (const phase of blueprint.phases) {
       const handler = PHASE_HANDLERS[phase.handler];
@@ -528,6 +515,7 @@ export async function executeBlueprint(
       const result = await handler(context);
 
       if (!result.ok && !phase.optional) {
+        allPhasesOk = false;
         context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
         return;
       }
@@ -550,7 +538,11 @@ export async function executeBlueprint(
     }
   } finally {
     if (context.data.worktreePath) {
-      cleanupWorktree(context.data.worktreePath);
+      if (allPhasesOk) {
+        cleanupWorktree(context.data.worktreePath);
+      } else {
+        console.error(`[blueprint] Worktree preserved for debugging: ${context.data.worktreePath}`);
+      }
     }
   }
 }

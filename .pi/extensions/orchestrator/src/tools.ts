@@ -81,6 +81,46 @@ export function cleanupMergedBranches(): { deleted: string[]; summary: string } 
   };
 }
 
+// ─── Deterministic Tool: cleanup_stale_state ────────────────────────────────
+
+const PROTECTED_STATE_FILES = new Set(["metrics.jsonl", "audit_report.md", "history"]);
+
+export function cleanupStaleState(maxAgeDays = 7): { deleted: string[]; summary: string } {
+  const { readdirSync, statSync, unlinkSync } = require("node:fs");
+  const { join } = require("node:path");
+  const stateDir = join(process.cwd(), ".pi/state");
+
+  let entries: string[];
+  try {
+    entries = readdirSync(stateDir);
+  } catch {
+    return { deleted: [], summary: "No .pi/state directory found" };
+  }
+
+  const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  const deleted: string[] = [];
+
+  for (const entry of entries) {
+    if (PROTECTED_STATE_FILES.has(entry)) continue;
+
+    const fullPath = join(stateDir, entry);
+    try {
+      const stat = statSync(fullPath);
+      if (stat.isFile() && stat.mtimeMs < cutoff) {
+        unlinkSync(fullPath);
+        deleted.push(entry);
+      }
+    } catch { /* ignore */ }
+  }
+
+  return {
+    deleted,
+    summary: deleted.length > 0
+      ? `Cleaned ${deleted.length} stale state file(s): ${deleted.join(", ")}`
+      : "No stale state files to clean up",
+  };
+}
+
 // ─── Deterministic Tool: git_branch (worktree-based) ────────────────────────
 
 const WORKTREE_DIR = ".pi/worktrees";
@@ -381,6 +421,70 @@ export function resolveSubsystems(task: string): string[] {
   return Array.from(matched);
 }
 
+// ─── Domain Complexity Monitor ──────────────────────────────────────────────
+
+export const DOMAIN_COMPLEXITY_THRESHOLD = 60;
+
+const DOMAIN_DIRECTORIES: Record<string, string> = {
+  terrain: "src/game/terrain",
+  actor: "src/game/render",
+  shader: "src/shaders",
+  engine: "src/engine",
+};
+
+export interface DomainReport {
+  domain: string;
+  directory: string;
+  fileCount: number;
+  totalLines: number;
+  complexityScore: number;
+  exceedsThreshold: boolean;
+  files: string[];
+}
+
+export function measureDomainComplexity(): DomainReport[] {
+  const reports: DomainReport[] = [];
+
+  for (const [domain, directory] of Object.entries(DOMAIN_DIRECTORIES)) {
+    const fullDir = directory;
+
+    // Count files
+    const findResult = shell(
+      `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) 2>/dev/null`
+    );
+    const files = findResult.ok
+      ? findResult.stdout.trim().split("\n").filter((f) => f.length > 0)
+      : [];
+    const fileCount = files.length;
+
+    // Count total lines
+    let totalLines = 0;
+    if (fileCount > 0) {
+      const wcResult = shell(
+        `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) -exec wc -l {} + 2>/dev/null | tail -1`
+      );
+      if (wcResult.ok) {
+        const match = wcResult.stdout.trim().match(/^\s*(\d+)/);
+        if (match) totalLines = parseInt(match[1], 10);
+      }
+    }
+
+    const complexityScore = fileCount + Math.floor(totalLines / 100);
+
+    reports.push({
+      domain,
+      directory,
+      fileCount,
+      totalLines,
+      complexityScore,
+      exceedsThreshold: complexityScore > DOMAIN_COMPLEXITY_THRESHOLD,
+      files,
+    });
+  }
+
+  return reports;
+}
+
 // ─── Deterministic Tool: run_shader_validation ─────────────────────────────
 
 export function runShaderValidation(): { ok: boolean; summary: string } {
@@ -436,6 +540,196 @@ export function runMetrics(cwd?: string): {
   } catch { /* ignore */ }
 
   return { ok: true, outputDir, domains, summary: `Metrics: ${domains.length} domains emitted` };
+}
+
+// ─── System Audit ───────────────────────────────────────────────────────────
+
+export interface AuditFinding {
+  category: "stale-agent" | "broken-rule-glob" | "unmapped-directory" | "domain-overload" | "orphaned-state";
+  severity: "warning" | "error";
+  message: string;
+}
+
+export interface AuditReport {
+  findings: AuditFinding[];
+  domainReports: DomainReport[];
+  summary: string;
+}
+
+export function runSystemAudit(): AuditReport {
+  const { readdirSync, readFileSync, existsSync, statSync } = require("node:fs");
+  const { join } = require("node:path");
+  const cwd = process.cwd();
+  const findings: AuditFinding[] = [];
+
+  // 1. Stale agents — agent .md files referencing non-existent src/ directories
+  const agentsDir = join(cwd, ".pi/agents");
+  try {
+    const agentFiles = readdirSync(agentsDir).filter((f: string) => f.endsWith(".md"));
+    for (const file of agentFiles) {
+      const content = readFileSync(join(agentsDir, file), "utf-8");
+      const dirRefs = content.match(/src\/[a-zA-Z0-9_/]+/g) || [];
+      for (const ref of dirRefs) {
+        const refPath = join(cwd, ref);
+        if (!existsSync(refPath)) {
+          findings.push({
+            category: "stale-agent",
+            severity: "warning",
+            message: `Agent ${file} references non-existent directory: ${ref}`,
+          });
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 2. Broken rule globs — rule YAML globs: pointing to missing base directories
+  const rulesDir = join(cwd, ".pi/rules");
+  try {
+    const ruleFiles = readdirSync(rulesDir).filter((f: string) => f.endsWith(".md") || f.endsWith(".yaml") || f.endsWith(".yml"));
+    for (const file of ruleFiles) {
+      const content = readFileSync(join(rulesDir, file), "utf-8");
+      const globMatch = content.match(/globs?:\s*(.+)/gi);
+      if (globMatch) {
+        for (const line of globMatch) {
+          const paths = line.replace(/globs?:\s*/i, "").split(",").map((p: string) => p.trim().replace(/["'[\]]/g, ""));
+          for (const p of paths) {
+            // Extract base directory from glob pattern
+            const baseDir = p.split("*")[0].replace(/\/+$/, "");
+            if (baseDir && baseDir.startsWith("src/") && !existsSync(join(cwd, baseDir))) {
+              findings.push({
+                category: "broken-rule-glob",
+                severity: "warning",
+                message: `Rule ${file} has glob pointing to missing directory: ${baseDir}`,
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
+  // 3. Unmapped directories — new src/game/ or src/engine/ subdirectories not in SUBSYSTEM_DIRS
+  const knownDirs = new Set(Object.values(SUBSYSTEM_DIRS).flat());
+  for (const parent of ["src/game", "src/engine"]) {
+    const parentPath = join(cwd, parent);
+    try {
+      const entries = readdirSync(parentPath);
+      for (const entry of entries) {
+        const entryPath = join(parentPath, entry);
+        try {
+          if (statSync(entryPath).isDirectory()) {
+            const relPath = `${parent}/${entry}`;
+            if (!knownDirs.has(relPath)) {
+              findings.push({
+                category: "unmapped-directory",
+                severity: "warning",
+                message: `Directory ${relPath} is not mapped in SUBSYSTEM_DIRS`,
+              });
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 4. Domain overload — uses measureDomainComplexity
+  const domainReports = measureDomainComplexity();
+  for (const report of domainReports) {
+    if (report.exceedsThreshold) {
+      findings.push({
+        category: "domain-overload",
+        severity: "error",
+        message: `Domain "${report.domain}" exceeds complexity threshold: score=${report.complexityScore} (threshold=${DOMAIN_COMPLEXITY_THRESHOLD}), ${report.fileCount} files, ${report.totalLines} lines in ${report.directory}`,
+      });
+    }
+  }
+
+  // 5. Orphaned state — state files older than 7 days
+  const stateDir = join(cwd, ".pi/state");
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  try {
+    const stateFiles = readdirSync(stateDir);
+    for (const file of stateFiles) {
+      if (PROTECTED_STATE_FILES.has(file)) continue;
+      const filePath = join(stateDir, file);
+      try {
+        const stat = statSync(filePath);
+        if (stat.isFile() && stat.mtimeMs < cutoff) {
+          findings.push({
+            category: "orphaned-state",
+            severity: "warning",
+            message: `State file "${file}" is older than 7 days (last modified: ${new Date(stat.mtimeMs).toISOString()})`,
+          });
+        }
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+
+  const errorCount = findings.filter((f) => f.severity === "error").length;
+  const warningCount = findings.filter((f) => f.severity === "warning").length;
+
+  return {
+    findings,
+    domainReports,
+    summary: findings.length === 0
+      ? "All checks passed — system is healthy"
+      : `Found ${errorCount} error(s) and ${warningCount} warning(s) across ${findings.length} finding(s)`,
+  };
+}
+
+// ─── Map Coverage Detection ─────────────────────────────────────────────────
+
+export interface MapCoverageReport {
+  unmappedDirs: string[];
+  unmappedKeywords: string[];
+  currentKeywordCount: number;
+  suggestion: string;
+}
+
+export function detectMapCoverage(): MapCoverageReport {
+  const { readdirSync, statSync } = require("node:fs");
+  const { join } = require("node:path");
+  const cwd = process.cwd();
+  const knownDirs = new Set(Object.values(SUBSYSTEM_DIRS).flat());
+  const unmappedDirs: string[] = [];
+
+  for (const parent of ["src/game", "src/engine"]) {
+    const parentPath = join(cwd, parent);
+    try {
+      const entries = readdirSync(parentPath);
+      for (const entry of entries) {
+        try {
+          if (statSync(join(parentPath, entry)).isDirectory()) {
+            const relPath = `${parent}/${entry}`;
+            if (!knownDirs.has(relPath)) {
+              unmappedDirs.push(relPath);
+            }
+          }
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Check for directory names not covered by any keyword
+  const allKeywords = new Set(Object.keys(KEYWORD_SYNONYMS));
+  const unmappedKeywords: string[] = [];
+  for (const dir of unmappedDirs) {
+    const dirName = dir.split("/").pop() || "";
+    if (!allKeywords.has(dirName)) {
+      unmappedKeywords.push(dirName);
+    }
+  }
+
+  const suggestion = unmappedDirs.length > 0
+    ? `Add mappings for: ${unmappedDirs.join(", ")}`
+    : "All directories are mapped";
+
+  return {
+    unmappedDirs,
+    unmappedKeywords,
+    currentKeywordCount: allKeywords.size,
+    suggestion,
+  };
 }
 
 // ─── File Block Parser (shared) ─────────────────────────────────────────────

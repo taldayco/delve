@@ -28,6 +28,10 @@ import {
   askBlueprintGenerator,
   askVerifier,
   agentEvents,
+  readRunMetrics,
+  pruneMetricsLog,
+  askDecoupleAnalyst,
+  askMapUpdater,
 } from "./agents.js";
 import {
   slugify,
@@ -47,6 +51,10 @@ import {
   applyFileBlocks,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
+  measureDomainComplexity,
+  runSystemAudit,
+  detectMapCoverage,
+  cleanupStaleState,
 } from "./tools.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -335,6 +343,34 @@ export default function (pi: ExtensionAPI) {
         domains: metrics.domains,
       });
       return { content: [{ type: "text", text: result }] };
+    },
+  });
+
+  // ── Register Self-Scaling Tools ──────────────────────────────────────────
+
+  pi.registerTool({
+    name: "read_run_metrics",
+    label: "Read Run Metrics",
+    description:
+      "Read recent per-agent-invocation metrics (context usage, duration, escalation). Returns last N records from .pi/state/metrics.jsonl.",
+    parameters: Type.Object({
+      max_records: Type.Number({ description: "Maximum number of records to return (default 50)" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const records = readRunMetrics((params as any).max_records || 50);
+      return { content: [{ type: "text", text: JSON.stringify(records, null, 2) }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "measure_domain_complexity",
+    label: "Measure Domain Complexity",
+    description:
+      "Measure file count, line count, and complexity score for each domain (terrain, actor, shader, engine). Flags domains exceeding the threshold.",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+      const reports = measureDomainComplexity();
+      return { content: [{ type: "text", text: JSON.stringify(reports, null, 2) }] };
     },
   });
 
@@ -1260,10 +1296,236 @@ export default function (pi: ExtensionAPI) {
   // ── /minion-cleanup command ─────────────────────────────────────────────
 
   pi.registerCommand("minion-cleanup", {
-    description: "Clean up remote minion/* branches that have been merged into main",
+    description: "Clean up merged minion branches and stale state files",
     handler: async (_args, ctx) => {
-      const result = cleanupMergedBranches();
-      ctx.ui.notify(result.summary, result.deleted.length > 0 ? "success" : "info");
+      const branchResult = cleanupMergedBranches();
+      ctx.ui.notify(branchResult.summary, branchResult.deleted.length > 0 ? "success" : "info");
+
+      const stateResult = cleanupStaleState();
+      if (stateResult.deleted.length > 0) {
+        ctx.ui.notify(stateResult.summary, "success");
+      }
+
+      pruneMetricsLog();
+    },
+  });
+
+  // ── /minion-audit command ───────────────────────────────────────────────
+
+  pi.registerCommand("minion-audit", {
+    description: "Run a system audit: check for stale agents, broken rules, unmapped directories, domain overload, and orphaned state",
+    handler: async (_args, ctx) => {
+      cleanupMergedBranches();
+
+      ctx.ui.notify("Running system audit...", "info");
+      const report = runSystemAudit();
+
+      // Format findings as markdown
+      const lines: string[] = [
+        "# System Audit Report",
+        "",
+        `**Summary:** ${report.summary}`,
+        "",
+      ];
+
+      if (report.findings.length > 0) {
+        lines.push("## Findings", "");
+        for (const finding of report.findings) {
+          const icon = finding.severity === "error" ? "ERROR" : "WARNING";
+          lines.push(`- **[${icon}]** (${finding.category}) ${finding.message}`);
+        }
+        lines.push("");
+      }
+
+      lines.push("## Domain Complexity", "");
+      for (const domain of report.domainReports) {
+        const flag = domain.exceedsThreshold ? " **OVER THRESHOLD**" : "";
+        lines.push(`- **${domain.domain}** (${domain.directory}): score=${domain.complexityScore}, files=${domain.fileCount}, lines=${domain.totalLines}${flag}`);
+      }
+
+      const markdown = lines.join("\n");
+      writeState("audit_report.md", markdown);
+      ctx.ui.notify(report.summary, report.findings.length > 0 ? "warning" : "success");
+      ctx.ui.notify("Full report: .pi/state/audit_report.md", "info");
+    },
+  });
+
+  // ── /minion-decouple command ────────────────────────────────────────────
+
+  pi.registerCommand("minion-decouple", {
+    description: "Propose a domain split for an over-complex domain. Usage: /minion-decouple [domain]",
+    handler: async (args, ctx) => {
+      cleanupMergedBranches();
+
+      ctx.ui.notify("Measuring domain complexity...", "info");
+      const reports = measureDomainComplexity();
+      const overThreshold = reports.filter((r) => r.exceedsThreshold);
+
+      if (overThreshold.length === 0) {
+        ctx.ui.notify("No domains exceed the complexity threshold — no decoupling needed", "info");
+        return;
+      }
+
+      // Pick specified domain or highest-scoring one
+      const targetDomain = args?.trim() || "";
+      let target = overThreshold.find((r) => r.domain === targetDomain);
+      if (!target) {
+        target = overThreshold.sort((a, b) => b.complexityScore - a.complexityScore)[0];
+        if (targetDomain) {
+          ctx.ui.notify(`Domain "${targetDomain}" not over threshold — using highest: ${target.domain}`, "warning");
+        }
+      }
+
+      ctx.ui.notify(`Analyzing domain "${target.domain}" (score=${target.complexityScore})...`, "info");
+
+      const recentMetrics = readRunMetrics(20);
+      const proposal = await askDecoupleAnalyst({
+        domainReport: target,
+        recentMetrics,
+        files: target.files,
+      });
+
+      ctx.ui.notify(`Decouple proposal written to .pi/state/decouple_proposal.md`, "success");
+      ctx.ui.notify("Review the proposal, then run /minion-decouple-execute to apply it", "info");
+    },
+  });
+
+  // ── /minion-decouple-execute command ────────────────────────────────────
+
+  pi.registerCommand("minion-decouple-execute", {
+    description: "Execute a previously generated decouple proposal (reads from .pi/state/decouple_proposal.md)",
+    handler: async (_args, ctx) => {
+      const proposal = readState("decouple_proposal.md");
+      if (!proposal || proposal.trim().length === 0) {
+        ctx.ui.notify("No decouple proposal found. Run /minion-decouple first.", "error");
+        return;
+      }
+
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
+      const prompt = `Apply the following domain decoupling proposal:\n\n${proposal}`;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const branch = `minion-decouple/${timestamp}`;
+
+      state = { prompt, branch, phase: "branch", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 };
+      attachAgentListeners(ctx);
+      ctx.ui.notify("Executing decouple proposal...", "info");
+
+      let worktreePath: string | undefined;
+      try {
+        cleanupMergedBranches();
+
+        // Branch
+        setPhase("branch", ctx);
+        const branchResult = gitBranch(branch);
+        if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        const wt = branchResult.worktreePath;
+        worktreePath = wt;
+        state.worktreePath = wt;
+
+        // Apply proposal file blocks
+        setPhase("implement", ctx);
+        const appliedCount = applyFileBlocks(proposal, wt);
+        ctx.ui.notify(`Applied ${appliedCount} files from proposal`, "success");
+
+        // Build
+        setPhase("build", ctx);
+        let buildOk = false;
+        for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
+          state.buildFixRound = round + 1;
+          const build = runBuild(wt);
+          if (build.ok) { buildOk = true; break; }
+          if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
+          setPhase("fix-build", ctx);
+          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
+          applyFileBlocks(fix, wt);
+        }
+
+        if (!buildOk) {
+          state.phase = "failed";
+          ctx.ui.notify("Build FAILED after max attempts — decouple aborted", "error");
+          return;
+        }
+
+        // Review
+        setPhase("review", ctx);
+        const diff = getDiff(wt);
+        const review = await askReviewer({
+          task: "Domain decoupling refactor",
+          diff,
+          testResults: "No tests run (structural refactor).",
+        });
+        const reviewDecision = parseReviewDecision(review);
+        ctx.ui.notify(`Review: ${reviewDecision}`, reviewDecision === "APPROVE" ? "success" : "warning");
+
+        // Commit + PR
+        setPhase("commit-pr", ctx);
+        const prResult = gitCommitAndPr({ prompt: "Domain decoupling", branch, buildOk, testsOk: false, cwd: wt });
+        ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
+
+        state.phase = "done";
+        ctx.ui.notify(`Decouple-execute complete in ${elapsed(state.startTime)}`, "success");
+        detachAgentListeners();
+        state = null;
+      } catch (error: any) {
+        if (state) state.phase = "failed";
+        ctx.ui.notify(`Decouple-execute error: ${error.message}`, "error");
+        detachAgentListeners();
+        state = null;
+      } finally {
+        if (worktreePath) cleanupWorktree(worktreePath);
+      }
+    },
+  });
+
+  // ── /minion-update-maps command ─────────────────────────────────────────
+
+  pi.registerCommand("minion-update-maps", {
+    description: "Detect unmapped directories and update KEYWORD_SYNONYMS/SUBSYSTEM_DIRS maps",
+    handler: async (_args, ctx) => {
+      cleanupMergedBranches();
+
+      ctx.ui.notify("Detecting map coverage gaps...", "info");
+      const coverage = detectMapCoverage();
+
+      if (coverage.unmappedDirs.length === 0) {
+        ctx.ui.notify("All directories are mapped — no updates needed", "success");
+        return;
+      }
+
+      ctx.ui.notify(`Found ${coverage.unmappedDirs.length} unmapped directory(s): ${coverage.unmappedDirs.join(", ")}`, "warning");
+
+      // Read current tools.ts for the maps section
+      const { readFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      const toolsPath = join(process.cwd(), ".pi/extensions/orchestrator/src/tools.ts");
+      let toolsContent = "";
+      try {
+        const full = readFileSync(toolsPath, "utf-8");
+        // Extract just the maps section
+        const start = full.indexOf("const KEYWORD_SYNONYMS");
+        const end = full.indexOf("};", full.indexOf("const SUBSYSTEM_CANONICAL")) + 2;
+        if (start >= 0 && end > start) {
+          toolsContent = full.slice(start, end);
+        }
+      } catch { /* ignore */ }
+
+      ctx.ui.notify("Spawning map updater agent...", "info");
+      const result = await askMapUpdater({
+        coverageReport: coverage,
+        currentToolsContent: toolsContent,
+      });
+
+      const appliedCount = applyFileBlocks(result);
+      if (appliedCount > 0) {
+        ctx.ui.notify(`Updated ${appliedCount} file(s). Rebuild the extension: cd .pi/extensions/orchestrator && npm run build`, "success");
+      } else {
+        writeState("map_update_suggestion.md", result);
+        ctx.ui.notify("No file blocks produced. Suggestion written to .pi/state/map_update_suggestion.md", "warning");
+      }
     },
   });
 

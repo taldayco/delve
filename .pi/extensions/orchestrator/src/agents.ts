@@ -151,6 +151,52 @@ export function readState(filename: string): string {
   return existsSync(path) ? readFileSync(path, "utf-8") : "";
 }
 
+// ─── Run Metrics Tracking ──────────────────────────────────────────────────
+
+export interface RunMetricsRecord {
+  runId: string;
+  timestamp: string;
+  agentName: string;
+  model: string;
+  phase: string;
+  durationMs: number;
+  contextUsagePct: number;
+  success: boolean;
+  escalated: boolean;
+  truncated: boolean;
+}
+
+const METRICS_FILE = join(STATE_DIR, "metrics.jsonl");
+
+export function appendRunMetrics(record: RunMetricsRecord): void {
+  mkdirSync(STATE_DIR, { recursive: true });
+  fs.appendFileSync(METRICS_FILE, JSON.stringify(record) + "\n", "utf-8");
+}
+
+export function readRunMetrics(maxRecords = 50): RunMetricsRecord[] {
+  if (!existsSync(METRICS_FILE)) return [];
+  const lines = readFileSync(METRICS_FILE, "utf-8").trim().split("\n").filter(Boolean);
+  const records: RunMetricsRecord[] = [];
+  const start = Math.max(0, lines.length - maxRecords);
+  for (let i = start; i < lines.length; i++) {
+    try {
+      records.push(JSON.parse(lines[i]));
+    } catch { /* skip malformed lines */ }
+  }
+  return records;
+}
+
+export function pruneMetricsLog(maxLines = 500): number {
+  if (!existsSync(METRICS_FILE)) return 0;
+  const lines = readFileSync(METRICS_FILE, "utf-8").trim().split("\n").filter(Boolean);
+  if (lines.length <= maxLines) return 0;
+  const pruned = lines.length - maxLines;
+  writeFileSync(METRICS_FILE, lines.slice(pruned).join("\n") + "\n", "utf-8");
+  return pruned;
+}
+
+let metricsRunCounter = 0;
+
 // ─── File Content Loader ───────────────────────────────────────────────────
 
 function loadFileContents(files: string[], budgetChars?: number): string {
@@ -385,6 +431,8 @@ async function spawnSubagentOnce(opts: SpawnSubagentOpts): Promise<string> {
   const effectivePrompt = budget.userPrompt;
 
   const agentName = opts.agentName || "subagent";
+  const metricsStartTime = Date.now();
+  const runId = `${agentName}-${++metricsRunCounter}-${Date.now()}`;
 
   try {
     agentEvents.emit("agent:start", { name: agentName, model });
@@ -496,15 +544,60 @@ async function spawnSubagentOnce(opts: SpawnSubagentOpts): Promise<string> {
       }, SUBAGENT_TIMEOUT_MS);
     });
 
+    let result: string;
+    let success = true;
     try {
-      return await Promise.race([spawnPromise, timeoutPromise]);
+      result = await Promise.race([spawnPromise, timeoutPromise]);
+    } catch (err) {
+      success = false;
+      // Record failure metrics
+      const contextLimit = MODEL_CONTEXT_LIMITS[model] || 200_000;
+      const contextBudget = Math.floor(contextLimit * CONTEXT_BUDGET_RATIO);
+      const totalTokens = estimateTokens(effectiveSystemPrompt) + estimateTokens(effectivePrompt);
+      const pct = Math.round((totalTokens / contextBudget) * 100);
+      try {
+        appendRunMetrics({
+          runId,
+          timestamp: new Date().toISOString(),
+          agentName,
+          model,
+          phase: agentName,
+          durationMs: Date.now() - metricsStartTime,
+          contextUsagePct: pct,
+          success: false,
+          escalated: false,
+          truncated: budget.truncated,
+        });
+      } catch { /* ignore metrics failures */ }
+      throw err;
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
-      // Ensure the process is dead after timeout or completion
       if (!proc.killed) {
         proc.kill("SIGKILL");
       }
     }
+
+    // Record success metrics
+    const contextLimit = MODEL_CONTEXT_LIMITS[model] || 200_000;
+    const contextBudget = Math.floor(contextLimit * CONTEXT_BUDGET_RATIO);
+    const totalTokens = estimateTokens(effectiveSystemPrompt) + estimateTokens(effectivePrompt);
+    const pct = Math.round((totalTokens / contextBudget) * 100);
+    try {
+      appendRunMetrics({
+        runId,
+        timestamp: new Date().toISOString(),
+        agentName,
+        model,
+        phase: agentName,
+        durationMs: Date.now() - metricsStartTime,
+        contextUsagePct: pct,
+        success: true,
+        escalated: false,
+        truncated: budget.truncated,
+      });
+    } catch { /* ignore metrics failures */ }
+
+    return result;
   } finally {
     // Clean up all temp files in the directory
     if (tmpDir) {
@@ -1351,6 +1444,151 @@ Analyze the metrics above and provide your verification summary.`;
   });
 }
 
+// ─── Domain Decoupling Analyst (Sonnet) ──────────────────────────────────────
+
+export async function askDecoupleAnalyst(opts: {
+  domainReport: { domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; files: string[] };
+  recentMetrics: RunMetricsRecord[];
+  files: string[];
+}): Promise<string> {
+  const decouplerConfig = loadAgentConfig("decoupler");
+
+  const systemPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a DOMAIN SPLIT SPECIALIST. You analyze over-complex domains and propose how to split them
+into smaller, well-bounded sub-domains.
+
+## Output Format
+Produce a structured SPLIT_PROPOSAL in markdown:
+
+## SPLIT_PROPOSAL
+
+### New Sub-domains
+For each proposed sub-domain:
+
+#### Sub-domain: <name>
+- **Directory:** <new directory path>
+- **Files to move:** <list of files>
+- **Responsibility:** <brief description>
+
+### New Agent Definitions
+For each new sub-domain, a new agent .md file:
+
+### FILE: .pi/agents/<name>.md
+\`\`\`
+---
+name: <name>-specialist
+description: <description>
+tools: read,write,edit,bash
+model: anthropic/claude-sonnet-4-6
+thinking: low
+---
+
+<agent instructions>
+\`\`\`
+
+### Keyword Map Additions
+New entries for KEYWORD_SYNONYMS and SUBSYSTEM_DIRS.
+
+## Constraints
+- Each sub-domain must have >= 5 files
+- Preserve public interfaces (headers used outside the domain)
+- Don't cross game/engine boundary
+- Follow existing naming conventions`;
+
+  const fileList = opts.files.map((f) => `- ${f}`).join("\n");
+  const metricsSection = opts.recentMetrics.length > 0
+    ? `## Recent Agent Metrics\n${opts.recentMetrics.map((m) => `- ${m.agentName}: ${m.contextUsagePct}% context, ${m.durationMs}ms, success=${m.success}`).join("\n")}`
+    : "## Recent Agent Metrics\nNo recent metrics available.";
+
+  const prompt = `## Domain Analysis
+- Domain: ${opts.domainReport.domain}
+- Directory: ${opts.domainReport.directory}
+- Files: ${opts.domainReport.fileCount}
+- Lines: ${opts.domainReport.totalLines}
+- Complexity Score: ${opts.domainReport.complexityScore}
+
+## File Listing
+${fileList}
+
+${metricsSection}
+
+Analyze this domain and propose how to split it into well-bounded sub-domains.`;
+
+  const result = await spawnSubagent({
+    prompt,
+    systemPrompt,
+    model: decouplerConfig.model || "anthropic/claude-sonnet-4-6",
+    thinking: decouplerConfig.thinking || "medium",
+    tools: decouplerConfig.tools.length > 0 ? decouplerConfig.tools : ["read"],
+    agentName: "decoupler",
+  });
+
+  writeState("decouple_proposal.md", result);
+  return result;
+}
+
+// ─── Map Updater Agent (Sonnet) ──────────────────────────────────────────────
+
+export async function askMapUpdater(opts: {
+  coverageReport: { unmappedDirs: string[]; unmappedKeywords: string[]; currentKeywordCount: number };
+  currentToolsContent: string;
+}): Promise<string> {
+  const systemPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a MAP UPDATER. You maintain the subsystem routing maps in the orchestrator.
+Given unmapped directories and the current map definitions, produce updated map code.
+
+## Output Format
+Output a single file block with the updated maps section of tools.ts:
+
+### FILE: .pi/extensions/orchestrator/src/tools.ts
+\`\`\`typescript
+// Only output the KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SUBSYSTEM_CANONICAL objects.
+// These will be applied via applyFileBlocks.
+\`\`\`
+
+## Constraints
+- Preserve ALL existing mappings
+- Only ADD new entries for unmapped directories
+- Follow the existing naming patterns
+- Map new directories to the most logical canonical subsystem
+- Add relevant keyword synonyms for new subsystems`;
+
+  const prompt = `## Unmapped Directories
+${opts.coverageReport.unmappedDirs.map((d) => `- ${d}`).join("\n") || "None"}
+
+## Unmapped Keywords
+${opts.coverageReport.unmappedKeywords.map((k) => `- ${k}`).join("\n") || "None"}
+
+## Current Keyword Count
+${opts.coverageReport.currentKeywordCount}
+
+## Current Map Definitions (from tools.ts)
+\`\`\`typescript
+${opts.currentToolsContent}
+\`\`\`
+
+Update the maps to include the unmapped directories.`;
+
+  const result = await spawnSubagent({
+    prompt,
+    systemPrompt,
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+    tools: ["read"],
+    agentName: "map-updater",
+  });
+
+  return result;
+}
+
 // ─── Dynamic Domain Analyzer (Haiku throwaway agents) ────────────────────────
 
 export async function spawnDomainAnalyzer(opts: {
@@ -1489,6 +1727,23 @@ export async function spawnWithEscalation(
     console.error(
       `[escalation] ${currentModel}→${esc.model} reason=${failure.failed ? failure.reason : "no FILE blocks"}`
     );
+
+    // Record escalation in metrics for the failed attempt
+    try {
+      const recentMetrics = readRunMetrics(1);
+      if (recentMetrics.length > 0) {
+        const last = recentMetrics[recentMetrics.length - 1];
+        if (last.agentName === (opts.agentName || "subagent")) {
+          // Update last record to mark as escalated
+          appendRunMetrics({
+            ...last,
+            runId: last.runId + "-escalated",
+            escalated: true,
+            success: false,
+          });
+        }
+      }
+    } catch { /* ignore */ }
 
     return spawnWithEscalation({
       ...opts,

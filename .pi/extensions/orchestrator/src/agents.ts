@@ -311,15 +311,21 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       args.push("--tools", opts.tools.join(","));
     }
 
-    // Write system prompt to temp file
-    if (effectiveSystemPrompt.trim()) {
+    // Write system prompt and user prompt to temp files to avoid E2BIG
+    if (!tmpDir) {
       tmpDir = fs.mkdtempSync(join(os.tmpdir(), "delve-subagent-"));
+    }
+
+    if (effectiveSystemPrompt.trim()) {
       tmpFile = join(tmpDir, "system-prompt.md");
       fs.writeFileSync(tmpFile, effectiveSystemPrompt, { encoding: "utf-8", mode: 0o600 });
       args.push("--append-system-prompt", tmpFile);
     }
 
-    args.push(`Task: ${effectivePrompt}`);
+    // Write user prompt to temp file and pass via @file to avoid ARG_MAX limits
+    const promptFile = join(tmpDir, "user-prompt.md");
+    fs.writeFileSync(promptFile, `Task: ${effectivePrompt}`, { encoding: "utf-8", mode: 0o600 });
+    args.push(`@${promptFile}`);
 
     return await new Promise<string>((resolve, reject) => {
       const proc = spawn("pi", args, {
@@ -387,8 +393,15 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       }
     });
   } finally {
-    if (tmpFile) try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
-    if (tmpDir) try { fs.rmdirSync(tmpDir); } catch { /* ignore */ }
+    // Clean up all temp files in the directory
+    if (tmpDir) {
+      try {
+        for (const f of fs.readdirSync(tmpDir)) {
+          fs.unlinkSync(join(tmpDir, f));
+        }
+        fs.rmdirSync(tmpDir);
+      } catch { /* ignore */ }
+    }
   }
 }
 

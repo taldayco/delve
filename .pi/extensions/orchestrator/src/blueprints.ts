@@ -23,6 +23,7 @@ import {
   getCodebaseContext,
   resolveSubsystems,
   runShaderValidation,
+  applyFileBlocks,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
 } from "./tools.js";
@@ -60,31 +61,7 @@ export interface BlueprintContext {
   };
 }
 
-// ─── File Block Applier (shared with index.ts) ───────────────────────────────
-
-function applyFileBlocks(text: string): number {
-  const { writeFileSync, mkdirSync } = require("node:fs");
-  const { dirname, join } = require("node:path");
-  const cwd = process.cwd();
-
-  const regex = /###\s*FILE:\s*(\S+)\s*\n(?:####\s*ACTION:[^\n]*\n)?```[\w]*\n([\s\S]*?)```/g;
-  let match;
-  let count = 0;
-
-  while ((match = regex.exec(text)) !== null) {
-    const filePath = match[1];
-    const content = match[2];
-    const fullPath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
-    try {
-      mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, content, "utf-8");
-      count++;
-    } catch (e: any) {
-      console.error(`Failed to write ${fullPath}: ${e.message}`);
-    }
-  }
-  return count;
-}
+// applyFileBlocks is imported from tools.ts (shared line-by-line parser)
 
 function extractFilePaths(text: string): string[] {
   const regex = /\b([a-zA-Z0-9_.][a-zA-Z0-9_./+-]*\/[a-zA-Z0-9_./+-]*\.[a-zA-Z]{1,10})\b/g;
@@ -241,11 +218,23 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   commit_pr: async (ctx) => {
+    // Pre-flight gate: verify build+tests pass before shipping
+    const preflight_build = runBuild();
+    if (!preflight_build.ok) {
+      return { ok: false, output: "Pre-commit build check FAILED — aborting" };
+    }
+    const preflight_tests = runTests();
+    if (!preflight_tests.buildOk || !preflight_tests.testsOk) {
+      return { ok: false, output: "Pre-commit test check FAILED — aborting" };
+    }
+    ctx.data.buildOk = true;
+    ctx.data.testsOk = true;
+
     const result = gitCommitAndPr({
       prompt: ctx.prompt,
       branch: ctx.branch,
-      buildOk: ctx.data.buildOk ?? false,
-      testsOk: ctx.data.testsOk ?? false,
+      buildOk: true,
+      testsOk: true,
     });
     return { ok: result.ok, output: result.summary };
   },

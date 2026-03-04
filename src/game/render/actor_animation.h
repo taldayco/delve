@@ -1,15 +1,16 @@
 #pragma once
+#include "actor.h"
+#include "animation_log.h"
+#include "input/input.h"
+#include "camera/camera.h"
 #include <flecs.h>
-#include "../actor.h"
 
-class AnimationLogger;
-class InputSystem;
-
-// Register all 6 procedural animation ECS systems.
-// Called once from TopoGame::on_init() after the player entity is created.
+// Register all 6 animation ECS systems into the world.
+// Systems run in PostUpdate phase after input is processed.
+// player_entity must have: Transform, Velocity, AnimationState, ActorConfig,
+//                          ProceduralGait, LegState, SkeletonPose components.
 void register_animation_systems(
-    flecs::world   &ecs,
-    flecs::entity   player_entity,
-    InputSystem    &input,
-    AnimationLogger &anim_log
-);
+    flecs::world &ecs,
+    flecs::entity player_entity,
+    InputSystem &input,
+    AnimationLogger &anim_log);

@@ -52,58 +52,52 @@ inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; 
 inline float gait_step_height(const ProceduralGait &g) { return g.step_height; }
 
 // ---------------------------------------------------------------------------
-// New metrics for fluid animation features
+// New metric helpers for fluid animation tests (headless, no SDL)
 // ---------------------------------------------------------------------------
 
-// Simulate a critically-damped SmoothDamp for N steps.
-// Returns the residual |current - target| after all steps.
-inline float smooth_damp_residual(float start, float target,
-                                   float smooth_time, int steps, float dt) {
-    float vel     = 0.0f;
-    float current = start;
-    float omega   = 2.0f / smooth_time;
-    for (int i = 0; i < steps; ++i) {
-        float x      = omega * dt;
-        float ef     = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
-        float change = current - target;
-        float temp   = (vel + omega * change) * dt;
-        vel          = (vel - omega * temp) * ef;
-        current      = target + (change + temp) * ef;
-    }
-    return std::abs(current - target);
+// Mirrors the SmoothDamp from actor_animation.cpp for headless testing.
+inline float smooth_damp_test(float current, float target, float &vel,
+                               float smoothing_time, float dt) {
+    float omega   = 2.0f / smoothing_time;
+    float x       = omega * dt;
+    float exp_val = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float change  = current - target;
+    float temp    = (vel + omega * change) * dt;
+    vel           = (vel - omega * temp) * exp_val;
+    return target + (change + temp) * exp_val;
 }
 
-// True if phase_l and phase_r are approximately π apart (modulo 2π).
-inline bool arm_phases_antiphase(float phase_l, float phase_r) {
-    const float two_pi = 6.28318530f;
-    const float pi     = 3.14159265f;
-    float diff = std::abs(phase_l - phase_r);
-    // Fold into [0, 2π)
-    diff = diff - std::floor(diff / two_pi) * two_pi;
-    // Accept if within 0.5 rad of π
-    return std::abs(diff - pi) < 0.5f;
+// Ratio of smoothed speed to raw speed [0,1]. 1.0 = fully smoothed (idle is 1.0).
+inline float velocity_smoothness(float raw_speed, float smooth_speed) {
+    if (raw_speed < 1e-6f) return 1.0f;
+    return std::min(smooth_speed / raw_speed, 1.0f);
 }
 
-// True if the breathing amplitude is within the expected physiological range.
-inline bool breathing_amplitude_valid(float amp) {
-    return amp > 0.005f && amp < 0.05f;
+// Maximum forward projection of elbow from shoulder, for either arm.
+inline float arm_swing_amplitude(const SkeletonPose &pose, const Transform &t) {
+    using J = Joint;
+    float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+
+    auto project_fwd = [&](Joint elbow_j, Joint shoulder_j) {
+        const auto &e = pose.joints[(int)elbow_j];
+        const auto &s = pose.joints[(int)shoulder_j];
+        float dx = e.x - s.x, dy = e.y - s.y;
+        return dx * fwd_x + dy * fwd_y;
+    };
+
+    float l = std::abs(project_fwd(J::L_ELBOW, J::L_SHOULDER));
+    float r = std::abs(project_fwd(J::R_ELBOW, J::R_SHOULDER));
+    return std::max(l, r);
 }
 
-// One-foot-planted invariant: at most one foot may be airborne at a time.
-inline bool foot_planted_invariant(bool stepping_l, bool stepping_r) {
-    return !(stepping_l && stepping_r);
+// Returns the nominal breathing amplitude constant used in SkeletonFinaliseSystem.
+inline float breathing_amplitude() {
+    return 0.012f;
 }
 
-// True if a slower speed gives a longer step duration (speed-adaptive).
-inline bool adaptive_step_duration_decreases(float slow_dur, float fast_dur) {
-    return slow_dur > fast_dur;
-}
-
-// True if spine lean fractions form a strictly increasing chain
-// (successive breaking: spine < chest < neck).
-inline bool torso_lean_successive(float lean_spine_frac,
-                                   float lean_chest_frac,
-                                   float lean_neck_frac) {
-    return lean_spine_frac < lean_chest_frac
-        && lean_chest_frac < lean_neck_frac;
+// Returns the speed-adaptive step duration.
+// At speed=0: 0.45s, at speed=move_speed: 0.22s.
+inline float step_duration_at_speed(float speed, float move_speed) {
+    float speed_t = (move_speed > 1e-6f) ? std::min(speed / move_speed, 1.0f) : 0.0f;
+    return 0.45f - speed_t * (0.45f - 0.22f);
 }

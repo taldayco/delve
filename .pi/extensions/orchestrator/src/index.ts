@@ -32,6 +32,7 @@ import {
   slugify,
   elapsed,
   gitBranch,
+  cleanupWorktree,
   runBuild,
   runTests,
   gitCommitAndPr,
@@ -40,6 +41,8 @@ import {
   getCodebaseContext,
   resolveSubsystems,
   runShaderValidation,
+  cleanupMergedBranches,
+  applyFileBlocks,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
 } from "./tools.js";
@@ -70,6 +73,7 @@ interface MinionState {
   startTime: number;
   buildFixRound: number;
   testFixRound: number;
+  worktreePath?: string;
 }
 
 // ─── Extension Entry Point ─────────────────────────────────────────────────
@@ -359,6 +363,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // ── PHASE: Branch (deterministic) ─────────────────────────────
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
@@ -367,6 +374,8 @@ export default function (pi: ExtensionAPI) {
           state.phase = "failed";
           return;
         }
+        const wt = branchResult.worktreePath;
+        state.worktreePath = wt;
         ctx.ui.notify(branchResult.summary, "success");
 
         // ── DECISION 1: Route by subsystem count ─────────────────────
@@ -442,7 +451,7 @@ export default function (pi: ExtensionAPI) {
         }
 
         // Apply implementation changes directly by parsing FILE blocks
-        const appliedCount = applyFileBlocks(finalImplementation);
+        const appliedCount = applyFileBlocks(finalImplementation, wt);
         ctx.ui.notify(`Implementation applied (${appliedCount} files)`, "success");
 
         // ── DECISION 3: Build pass? ──────────────────────────────────
@@ -451,7 +460,7 @@ export default function (pi: ExtensionAPI) {
           state.buildFixRound = round + 1;
           setPhase("build", ctx);
 
-          const build = runBuild();
+          const build = runBuild(wt);
 
           if (build.ok) {
             ctx.ui.notify(`Build PASSED (round ${round + 1})`, "success");
@@ -469,7 +478,7 @@ export default function (pi: ExtensionAPI) {
             maxRounds: MAX_BUILD_FIX_ROUNDS,
           });
 
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
 
         if (!buildOk) {
@@ -480,14 +489,14 @@ export default function (pi: ExtensionAPI) {
 
         // ── PHASE: Write Tests ───────────────────────────────────────
         setPhase("write-tests", ctx);
-        const changedFiles = getChangedFiles();
+        const changedFiles = getChangedFiles(wt);
         const testCode = await askMetaTester({
           task: prompt,
           changedFiles,
           implementationSummary: implementation.slice(0, 2000),
         });
 
-        applyFileBlocks(testCode);
+        applyFileBlocks(testCode, wt);
         ctx.ui.notify("Tests written", "success");
 
         // ── DECISION 4: Tests pass? ──────────────────────────────────
@@ -496,7 +505,7 @@ export default function (pi: ExtensionAPI) {
           state.testFixRound = round + 1;
           setPhase("test", ctx);
 
-          const testResult = runTests();
+          const testResult = runTests(wt);
 
           if (testResult.buildOk && testResult.testsOk) {
             ctx.ui.notify(`Tests PASSED (round ${round + 1})`, "success");
@@ -519,7 +528,7 @@ export default function (pi: ExtensionAPI) {
             isBuildFailure,
           });
 
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
 
         // ── DECISION 5: Review approve? (max 2 rounds) ──────────────
@@ -527,7 +536,7 @@ export default function (pi: ExtensionAPI) {
 
         for (let reviewRound = 0; reviewRound < MAX_REVIEW_ROUNDS; reviewRound++) {
           setPhase("review", ctx);
-          const diff = getDiff();
+          const diff = getDiff(wt);
           const testResults = readState("test_results.json");
           const review = await askReviewer({
             task: prompt,
@@ -546,21 +555,21 @@ export default function (pi: ExtensionAPI) {
           const reviewFixAgent = getSubsystemAgent(subsystems[0] || "engine");
           const reviewFix = await reviewFixAgent({
             task: `Fix the following code review issues:\n\n${review}\n\nOriginal task: ${prompt}`,
-            files: getChangedFiles(),
+            files: getChangedFiles(wt),
           });
-          applyFileBlocks(reviewFix);
+          applyFileBlocks(reviewFix, wt);
 
           // Re-build after review fixes
           setPhase("build", ctx);
-          let fixBuild = runBuild();
+          let fixBuild = runBuild(wt);
           if (!fixBuild.ok) {
             const buildFix = await askBuildFixer({
               buildOutput: fixBuild.summary,
               round: 1,
               maxRounds: 1,
             });
-            applyFileBlocks(buildFix);
-            fixBuild = runBuild();
+            applyFileBlocks(buildFix, wt);
+            fixBuild = runBuild(wt);
             if (!fixBuild.ok) {
               ctx.ui.notify("Build failed during review loop", "warning");
             }
@@ -568,9 +577,30 @@ export default function (pi: ExtensionAPI) {
 
           // Re-test after review fixes
           setPhase("test", ctx);
-          const retest = runTests();
+          const retest = runTests(wt);
           testsOk = retest.buildOk && retest.testsOk;
         }
+
+        // ── GATE: Final build+test verification after review ─────────
+        setPhase("build", ctx);
+        const finalBuild = runBuild(wt);
+        if (!finalBuild.ok) {
+          state.phase = "failed";
+          ctx.ui.notify("Final build check FAILED after review — aborting pipeline", "error");
+          return;
+        }
+        ctx.ui.notify("Final build check PASSED", "success");
+
+        setPhase("test", ctx);
+        const finalTests = runTests(wt);
+        if (!finalTests.buildOk || !finalTests.testsOk) {
+          state.phase = "failed";
+          ctx.ui.notify("Final test check FAILED after review — aborting pipeline", "error");
+          return;
+        }
+        testsOk = true;
+        buildOk = true;
+        ctx.ui.notify("Final test check PASSED", "success");
 
         // ── PHASE: Commit + PR (deterministic) ───────────────────────
         setPhase("commit-pr", ctx);
@@ -579,6 +609,7 @@ export default function (pi: ExtensionAPI) {
           branch,
           buildOk,
           testsOk,
+          cwd: wt,
         });
 
         if (prResult.ok) {
@@ -600,6 +631,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Minion error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
       }
     },
   });
@@ -637,6 +670,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-quick started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // ── PHASE: Branch ────────────────────────────────────────────
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
@@ -751,6 +787,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-refactor started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
@@ -834,6 +873,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-bugfix started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
@@ -947,6 +989,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-shader started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
@@ -1026,6 +1071,9 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-meta started: ${prompt}`, "info");
 
       try {
+        // Silently clean up merged minion branches
+        cleanupMergedBranches();
+
         // Generate blueprint via AI
         setPhase("plan", ctx);
         ctx.ui.notify("Generating pipeline blueprint...", "info");
@@ -1081,6 +1129,16 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       }
+    },
+  });
+
+  // ── /minion-cleanup command ─────────────────────────────────────────────
+
+  pi.registerCommand("minion-cleanup", {
+    description: "Clean up remote minion/* branches that have been merged into main",
+    handler: async (_args, ctx) => {
+      const result = cleanupMergedBranches();
+      ctx.ui.notify(result.summary, result.deleted.length > 0 ? "success" : "info");
     },
   });
 
@@ -1318,39 +1376,7 @@ const MAX_REVIEW_ROUNDS = 2;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-/**
- * Parse ### FILE: blocks from agent output and write files directly.
- * Returns the number of files written.
- */
-function applyFileBlocks(text: string): number {
-  const { writeFileSync, mkdirSync } = require("node:fs");
-  const { dirname, join } = require("node:path");
-  const cwd = process.cwd();
-
-  // Match ### FILE: <path> followed by optional #### ACTION: line and code block.
-  // IMPORTANT: Only accepts ACTION (not CHANGE) — partial-patch CHANGE blocks
-  // would destroy files since we write the code block as the entire file content.
-  const regex = /###\s*FILE:\s*(\S+)\s*\n(?:####\s*ACTION:[^\n]*\n)?```[\w]*\n([\s\S]*?)```/g;
-  let match;
-  let count = 0;
-
-  while ((match = regex.exec(text)) !== null) {
-    const filePath = match[1];
-    const content = match[2];
-    const fullPath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
-
-    try {
-      mkdirSync(dirname(fullPath), { recursive: true });
-      writeFileSync(fullPath, content, "utf-8");
-      count++;
-    } catch (e: any) {
-      // Log but don't fail — some files may be in read-only locations
-      console.error(`Failed to write ${fullPath}: ${e.message}`);
-    }
-  }
-
-  return count;
-}
+// applyFileBlocks is imported from tools.ts (shared line-by-line parser)
 
 /**
  * Extract file paths from markdown text.

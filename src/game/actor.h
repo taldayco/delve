@@ -29,11 +29,11 @@ struct ActorConfig {
 };
 
 struct ProceduralGait {
-    float phase         = 0.0f;
-    float stride_len    = 0.60f;
-    float step_height   = 0.18f;
+    float phase       = 0.0f;
+    float stride_len  = 0.60f;
+    float step_height = 0.18f;
     float step_duration = 0.25f;
-    float move_speed    = 4.0f;
+    float move_speed  = 4.0f;
 };
 
 enum class Joint : uint8_t {
@@ -61,22 +61,27 @@ struct LegState {
     bool      stepping[2]  = {};
 };
 
-// Per-entity animation state — replaces static globals, ECS-copyable (plain floats)
 struct AnimationState {
-    // SmoothDamp spring state for velocity smoothing (critically-damped spring)
-    float smooth_vel_x  = 0.0f;   // spring velocity for vx smoothing
-    float smooth_vel_y  = 0.0f;   // spring velocity for vy smoothing
-    float smoothed_vx   = 0.0f;   // current smoothed velocity x
-    float smoothed_vy   = 0.0f;   // current smoothed velocity y
-    // Replaced static globals from topo_game.cpp
-    float sway_phase    = 0.0f;
-    float sway_amt      = 0.04f;
-    float lean_x        = 0.0f;
-    float lean_y        = 0.0f;
-    // Pendulum arm swing (antiphase: L=0, R=π)
+    // SmoothDamp velocity smoothing state
+    float smooth_vel_x   = 0.0f;
+    float smooth_vel_y   = 0.0f;
+    float vel_spring_x   = 0.0f;
+    float vel_spring_y   = 0.0f;
+
+    // Torso lean (acceleration-driven)
+    float lean_x         = 0.0f;
+    float lean_y         = 0.0f;
+
+    // Hip sway
+    float sway_phase     = 0.0f;
+    float sway_amt       = 0.04f;
+
+    // Pendulum arm swing
     float arm_phase[2]     = {0.0f, 3.14159265f};
-    float arm_delay_vel[2] = {0.0f, 0.0f};   // SmoothDamp spring vel for forearm lag
+    float arm_delay_vel[2] = {0.0f, 0.0f};
+    float arm_delay[2]     = {0.0f, 0.0f};
+
     // Idle micro-motion
-    float breath_phase  = 0.0f;
-    float weight_phase  = 0.0f;
+    float breath_phase   = 0.0f;
+    float weight_phase   = 0.0f;
 };

@@ -138,7 +138,6 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
         if (in.held[(int)Action::ZoomOut])
           camera_system.set_zoom(camera, camera.target_zoom - dt * 2.0f);
 
-        // Follow player if alive and no camera keys held.
         if (!cam_moved && player_entity.is_alive()) {
           const auto *t = player_entity.get<Transform>();
           if (t) camera_system.follow(camera, t->x, t->y);
@@ -159,7 +158,7 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<SkeletonPose>({})
       .set<AnimationState>({});
 
-  // Register all 6 animation systems from actor_animation.cpp.
+  // Register all 6 animation ECS systems.
   register_animation_systems(ecs, player_entity, input, anim_log);
 }
 
@@ -190,24 +189,16 @@ void TopoGame::on_render_tool(GpuContext &gpu, FrameContext &frame, flecs::world
 void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (!terrain_renderer.is_initialized()) return;
 
-  // Upload pending mesh first — this may transition has_mesh() from false to true.
   if (ready_mesh_pending) {
-    // No frame command buffer is open here, so SDL_WaitForGPUIdle inside
-    // upload_mesh is safe.
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
     auto *map_data = ecs.get_mut<MapData>();
     auto *contours = ecs.get_mut<ContourData>();
 
     if (map_data && ready_map_pending) {
-      // Destroy old data immediately on main thread (scope-based) rather than
-      // deferring to the single worker thread. Deferred destruction caused old
-      // MapData objects to pile up behind in-flight generations, compounding
-      // memory usage across rapid seed changes.
       {
         MapData old_map = std::move(*map_data);
         ContourData old_contours = contours ? std::move(*contours) : ContourData{};
-        // old_map and old_contours freed here at scope exit
       }
 
       *map_data = std::move(*ready_map_pending);
@@ -219,7 +210,6 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
     ready_map_pending.reset();
     ready_contours_pending.reset();
 
-    // Spawn player on new terrain.
     player_spawned = false;
     {
       const auto *md = ecs.get<MapData>();
@@ -237,7 +227,6 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
         if (player_entity.is_alive()) {
           player_entity.set<Transform>({wx, wy, wz, 0.0f});
 
-          // Initialise feet directly below hip sockets.
           LegState ls{};
           ls.foot[0] = {wx - 0.25f, wy, col.height};
           ls.foot[1] = {wx + 0.25f, wy, col.height};
@@ -255,15 +244,11 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
     }
   }
 
-  // Depth texture is rebuilt first (if needed), then clusters are sized to match.
-  // desired_depth_w/h are set by begin_render_pass from the validated swapchain size.
   bool needs_depth_rebuild = terrain_renderer.depth_needs_rebuild();
 
-  // Use the depth texture dimensions (post-rebuild) for cluster sizing.
-  // desired_depth_w/h reflect the last confirmed swapchain size from begin_render_pass.
   uint32_t target_w = terrain_renderer.depth_needs_rebuild()
-                      ? terrain_renderer.desired_depth_w  // will be built now
-                      : terrain_renderer.depth_width();    // already correct
+                      ? terrain_renderer.desired_depth_w
+                      : terrain_renderer.depth_width();
   uint32_t target_h = terrain_renderer.depth_needs_rebuild()
                       ? terrain_renderer.desired_depth_h
                       : terrain_renderer.depth_height();
@@ -277,10 +262,8 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   }
 
   if (needs_cluster_rebuild || needs_depth_rebuild) {
-    // Single wait covers both operations.
     SDL_WaitForGPUIdle(gpu.device);
 
-    // Rebuild depth texture first so target_w/h are correct for cluster sizing.
     terrain_renderer.prepare_frame_resources(gpu.device);
 
     if (needs_cluster_rebuild) {
@@ -325,16 +308,13 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
   auto *cache    = ecs.get_mut<NoiseCache>();
   auto *contours = ecs.get_mut<ContourData>();
 
-  // Debounce: tick down cooldown each frame (~16ms at 60 FPS).
   constexpr float REGEN_COOLDOWN_SEC = 0.2f;
   if (regen_cooldown > 0.0f) regen_cooldown -= 1.0f / 60.0f;
 
-  // If a regeneration is requested while one is in-flight, signal cancellation.
   if (ts && ts->need_regenerate && async_terrain.is_generating) {
     async_terrain.cancel_requested.store(true, std::memory_order_relaxed);
   }
 
-  // Kick off async generation when needed, not already running, and cooldown elapsed.
   if (ts && ts->need_regenerate && !async_terrain.is_generating) {
     if (regen_cooldown > 0.0f) {
       // Keep need_regenerate true; wait for cooldown to expire.
@@ -344,14 +324,12 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     async_terrain.cancel_requested.store(false, std::memory_order_relaxed);
     regen_cooldown = REGEN_COOLDOWN_SEC;
 
-    // Snapshot all ECS params by value — worker thread must not touch ECS.
     elev->map_scale = ts->map_scale;
     auto elev_snap   = *elev;
     auto river_snap  = *river;
     auto worley_snap = *worley;
     auto comp_snap   = *comp;
 
-    // Plain-data snapshot of TerrainState for use inside build_terrain_mesh.
     struct TsSnap {
       bool use_isometric;
       int  current_palette;
@@ -366,7 +344,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       SDL_Log("Async regen: started");
       auto t0 = SDL_GetTicks();
 
-      // Helper: check if we should bail out early.
       auto should_abort = [this]() {
         return g_emergency_shutdown.load(std::memory_order_relaxed)
             || async_terrain.cancel_requested.load(std::memory_order_relaxed);
@@ -375,7 +352,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       auto md = std::make_shared<MapData>();
       md->allocate(Config::MAP_WIDTH, Config::MAP_HEIGHT);
 
-      // NoiseCache is ECS-owned and not thread-safe — pass nullptr.
       compose_layers(*md, elev_snap, river_snap, worley_snap, comp_snap, nullptr);
       if (should_abort()) { async_terrain.is_generating = false; return; }
 
@@ -397,7 +373,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       simplify_contours(cd->contour_lines, 0.5f);
       if (should_abort()) { async_terrain.is_generating = false; return; }
 
-      // Reconstruct a TerrainState for build_terrain_mesh (reads only current_palette).
       TerrainState ts_for_build;
       ts_for_build.use_isometric   = ts_snap.use_isometric;
       ts_for_build.current_palette = ts_snap.current_palette;
@@ -408,7 +383,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       auto mesh = std::make_shared<TerrainMesh>(build_terrain_mesh(ts_for_build, *md, *cd));
       if (should_abort()) { async_terrain.is_generating = false; return; }
 
-      // Hand off results to main thread under the pending_mtx lock.
       {
         std::lock_guard<std::mutex> lk(async_terrain.pending_mtx);
         async_terrain.pending_mesh     = std::move(mesh);
@@ -419,13 +393,9 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
       SDL_Log("Async regen: done in %llu ms", (unsigned long long)(SDL_GetTicks() - t0));
     });
-    } // else (cooldown expired)
+    }
   }
 
-  // Main thread: pull completed async results out from under the mutex.
-  // Do NOT call upload_mesh here — it calls SDL_WaitForGPUIdle which must not
-  // run while a frame command buffer is open. The actual upload happens in
-  // on_pre_frame_game, which is called before gpu_acquire_game_frame.
   if (ts && !async_terrain.is_generating && !ready_mesh_pending) {
     std::lock_guard<std::mutex> lk(async_terrain.pending_mtx);
     ready_mesh_pending     = std::move(async_terrain.pending_mesh);
@@ -483,7 +453,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           uniforms, point_lights,
                           gpu.upload_manager);
 
-    // Actor pass — upload geometry before opening the render pass.
     if (actor_renderer.is_initialized()) {
       uint32_t actor_vert_count = actor_renderer.prepare(frame.cmd, ecs);
       if (actor_vert_count > 0) {
@@ -652,7 +621,7 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
       } catch (...) { save_status_timer = -1; }
     }
   }
-  if (save_status_timer > 0)    { ImGui::SameLine(); ImGui::Text("Saved!");  save_status_timer--; }
+  if (save_status_timer > 0)       { ImGui::SameLine(); ImGui::Text("Saved!");  save_status_timer--; }
   else if (save_status_timer < -1) { ImGui::SameLine(); ImGui::Text("Loaded!"); save_status_timer++; }
 
   ImGui::Separator();

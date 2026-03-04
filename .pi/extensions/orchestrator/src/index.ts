@@ -1106,42 +1106,197 @@ export default function (pi: ExtensionAPI) {
     return undefined;
   });
 
-  // ── Status line tracking ────────────────────────────────────────────────
+  // ── Live Status Display ─────────────────────────────────────────────────
 
-  let _agentStartListener: ((...args: any[]) => void) | null = null;
-  let _agentEndListener: ((...args: any[]) => void) | null = null;
+  const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+  const PHASE_ORDER: Phase[] = [
+    "branch", "plan", "diagnose", "implement", "build", "fix-build",
+    "write-tests", "test", "fix-tests", "review", "shader-validate", "commit-pr",
+  ];
+
+  // Display labels: group fix-* phases with their parent
+  const PHASE_LABELS: Record<string, string> = {
+    "branch": "branch",
+    "plan": "plan",
+    "diagnose": "diagnose",
+    "implement": "implement",
+    "build": "build",
+    "fix-build": "build",
+    "write-tests": "tests",
+    "test": "tests",
+    "fix-tests": "tests",
+    "review": "review",
+    "shader-validate": "shaders",
+    "commit-pr": "pr",
+  };
+
+  // Deduplicated display phases in order
+  function getDisplayPhases(pipelinePhases: Phase[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const p of pipelinePhases) {
+      const label = PHASE_LABELS[p] || p;
+      if (!seen.has(label)) {
+        seen.add(label);
+        result.push(label);
+      }
+    }
+    return result;
+  }
+
+  // Phase icons for breadcrumbs
+  const PHASE_ICONS = { done: "✓", current: "▸", pending: "○" };
+
+  class MinionDisplay {
+    private interval: ReturnType<typeof setInterval> | null = null;
+    private spinnerIdx = 0;
+    private agentName = "";
+    private agentModel = "";
+    private currentPhase: Phase = "idle";
+    private lastProgress = 0;
+    private pipelinePhases: Phase[] = [];
+    private completedPhases = new Set<string>();
+    private ctx: any = null;
+    private _onStart: ((...args: any[]) => void) | null = null;
+    private _onEnd: ((...args: any[]) => void) | null = null;
+    private _onProgress: ((...args: any[]) => void) | null = null;
+
+    start(ctx: any, minionState: MinionState, pipelinePhases?: Phase[]) {
+      this.stop();
+      this.ctx = ctx;
+      this.currentPhase = minionState.phase;
+      this.completedPhases.clear();
+      this.agentName = "";
+      this.agentModel = "";
+      this.lastProgress = Date.now();
+      this.pipelinePhases = pipelinePhases || PHASE_ORDER;
+
+      // Event listeners
+      this._onStart = ({ name, model }: { name: string; model?: string }) => {
+        this.agentName = name;
+        this.agentModel = model || "";
+        this.lastProgress = Date.now();
+      };
+      this._onEnd = () => {
+        this.agentName = "";
+        this.agentModel = "";
+      };
+      this._onProgress = () => {
+        this.lastProgress = Date.now();
+      };
+
+      agentEvents.on("agent:start", this._onStart);
+      agentEvents.on("agent:end", this._onEnd);
+      agentEvents.on("agent:progress", this._onProgress);
+
+      // Render loop at 500ms
+      this.interval = setInterval(() => this.render(minionState), 500);
+      this.render(minionState);
+    }
+
+    updatePhase(phase: Phase, minionState: MinionState) {
+      // Mark previous display label as completed
+      if (this.currentPhase !== "idle") {
+        this.completedPhases.add(PHASE_LABELS[this.currentPhase] || this.currentPhase);
+      }
+      this.currentPhase = phase;
+      minionState.phase = phase;
+      this.render(minionState);
+    }
+
+    stop() {
+      if (this.interval) {
+        clearInterval(this.interval);
+        this.interval = null;
+      }
+      if (this._onStart) {
+        agentEvents.removeListener("agent:start", this._onStart);
+        this._onStart = null;
+      }
+      if (this._onEnd) {
+        agentEvents.removeListener("agent:end", this._onEnd);
+        this._onEnd = null;
+      }
+      if (this._onProgress) {
+        agentEvents.removeListener("agent:progress", this._onProgress);
+        this._onProgress = null;
+      }
+      if (this.ctx) {
+        try {
+          this.ctx.ui.setWidget("minion", []);
+          this.ctx.ui.setStatus("minion", "");
+        } catch { /* ignore */ }
+        this.ctx = null;
+      }
+    }
+
+    private render(minionState: MinionState) {
+      if (!this.ctx || !minionState) return;
+
+      const spinner = SPINNER_FRAMES[this.spinnerIdx % SPINNER_FRAMES.length];
+      this.spinnerIdx++;
+
+      const elapsedStr = elapsed(minionState.startTime);
+      const phaseLabel = PHASE_LABELS[this.currentPhase] || this.currentPhase;
+
+      // Line 1: spinner + phase + agent + elapsed
+      let line1 = ` ${spinner} minion — ${phaseLabel}`;
+      if (this.agentName) {
+        line1 += `: ${this.agentName}`;
+        if (this.agentModel) {
+          line1 += ` (${this.agentModel})`;
+        }
+      }
+      // Activity indicator
+      const silentMs = Date.now() - this.lastProgress;
+      if (this.agentName && silentMs > 10_000) {
+        line1 += "  waiting...";
+      }
+      line1 += `        ${elapsedStr}`;
+
+      // Line 2: horizontal rule
+      const line2 = " " + "━".repeat(60);
+
+      // Line 3: phase breadcrumbs
+      const displayPhases = getDisplayPhases(this.pipelinePhases);
+      const breadcrumbs = displayPhases.map((label) => {
+        if (this.completedPhases.has(label)) {
+          return `${PHASE_ICONS.done} ${label}`;
+        } else if (label === phaseLabel) {
+          return `${PHASE_ICONS.current} ${label}`;
+        } else {
+          return `${PHASE_ICONS.pending} ${label}`;
+        }
+      });
+      const line3 = " " + breadcrumbs.join("  ");
+
+      try {
+        this.ctx.ui.setWidget("minion", [line1, line2, line3]);
+        // Footer status: compact one-liner
+        let footer = `${spinner} ${phaseLabel}`;
+        if (this.agentName) footer += `: ${this.agentName}`;
+        footer += ` — ${elapsedStr}`;
+        this.ctx.ui.setStatus("minion", footer);
+      } catch { /* ignore if API not available */ }
+    }
+  }
+
+  const display = new MinionDisplay();
 
   function attachAgentListeners(ctx: any) {
-    detachAgentListeners();
-    _agentStartListener = ({ name }: { name: string }) => {
-      if (state) {
-        ctx.ui.setStatus("minion", `${state.phase}: ${name} [${elapsed(state.startTime)}]`);
-      }
-    };
-    _agentEndListener = ({ name }: { name: string }) => {
-      if (state) {
-        ctx.ui.setStatus("minion", `${state.phase}: ${name} done [${elapsed(state.startTime)}]`);
-      }
-    };
-    agentEvents.on("agent:start", _agentStartListener);
-    agentEvents.on("agent:end", _agentEndListener);
+    if (state) {
+      display.start(ctx, state);
+    }
   }
 
   function detachAgentListeners() {
-    if (_agentStartListener) {
-      agentEvents.removeListener("agent:start", _agentStartListener);
-      _agentStartListener = null;
-    }
-    if (_agentEndListener) {
-      agentEvents.removeListener("agent:end", _agentEndListener);
-      _agentEndListener = null;
-    }
+    display.stop();
   }
 
   function setPhase(phase: Phase, ctx: any) {
     if (state) {
-      state.phase = phase;
-      ctx.ui.setStatus("minion", `${phase} [${elapsed(state.startTime)}]`);
+      display.updatePhase(phase, state);
     }
   }
 }

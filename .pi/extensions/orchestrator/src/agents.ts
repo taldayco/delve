@@ -359,6 +359,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       };
 
       proc.stdout.on("data", (data: Buffer) => {
+        agentEvents.emit("agent:progress", { name: agentName });
         buffer += data.toString();
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";

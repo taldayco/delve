@@ -1,0 +1,84 @@
+{
+  "name": "branching-full",
+  "description": "Full pipeline with conditional branching: build failures trigger fix loops, test failures trigger diagnose → fix, review failures trigger fix → rebuild cycle.",
+  "phases": [
+    {
+      "name": "branch",
+      "type": "deterministic",
+      "handler": "branch"
+    },
+    {
+      "name": "resolve_subsystem",
+      "type": "deterministic",
+      "handler": "resolve_subsystem"
+    },
+    {
+      "name": "plan",
+      "type": "agentic",
+      "handler": "plan"
+    },
+    {
+      "name": "implement",
+      "type": "agentic",
+      "handler": "implement"
+    },
+    {
+      "name": "build",
+      "type": "deterministic",
+      "handler": "build",
+      "on_failure": "fix_build"
+    },
+    {
+      "name": "fix_build",
+      "type": "agentic",
+      "handler": "fix_build",
+      "max_retries": 3,
+      "on_success": "build",
+      "on_failure": "commit_pr"
+    },
+    {
+      "name": "write_tests",
+      "type": "agentic",
+      "handler": "write_tests"
+    },
+    {
+      "name": "test",
+      "type": "deterministic",
+      "handler": "test",
+      "on_failure": "diagnose"
+    },
+    {
+      "name": "diagnose",
+      "type": "agentic",
+      "handler": "diagnose",
+      "on_success": "fix_tests"
+    },
+    {
+      "name": "fix_tests",
+      "type": "agentic",
+      "handler": "fix_tests",
+      "max_retries": 2,
+      "on_success": "test",
+      "on_failure": "review"
+    },
+    {
+      "name": "review",
+      "type": "agentic",
+      "handler": "review",
+      "optional": true,
+      "on_failure": "fix_review"
+    },
+    {
+      "name": "fix_review",
+      "type": "agentic",
+      "handler": "fix_review",
+      "max_retries": 2,
+      "on_success": "build"
+    },
+    {
+      "name": "commit_pr",
+      "type": "deterministic",
+      "handler": "commit_pr"
+    }
+  ]
+}

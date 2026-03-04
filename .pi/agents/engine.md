@@ -34,6 +34,17 @@ For each file that needs to change, produce a self-contained worker prompt that 
 }
 ```
 
+## Directories
+
+- Primary: `src/engine/` (app.h/cpp, gpu/, camera/, input/, ui/, render/, core/, ipc/)
+- Tests: `src/test/`
+- Config: `src/game/config.h`
+
+## State
+
+- Read plan from `.pi/state/plan.md` before starting
+- Write changes summary to `.pi/state/engine_changes.md` after completion
+
 ## Constraints
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be SELF-CONTAINED.

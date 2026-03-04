@@ -34,6 +34,17 @@ For each file that needs to change, produce a self-contained worker prompt that 
 }
 ```
 
+## Directories
+
+- Primary: `src/game/render/` (skeleton, IK, gait, proportions, animation)
+- Config: `src/game/config.h`
+- Tests: `src/test/`
+
+## State
+
+- Read plan from `.pi/state/plan.md` before starting
+- Write changes summary to `.pi/state/actor_changes.md` after completion
+
 ## Constraints
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be SELF-CONTAINED.

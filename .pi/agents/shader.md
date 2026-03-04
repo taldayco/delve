@@ -34,6 +34,17 @@ For each shader file that needs to change, produce a self-contained worker promp
 }
 ```
 
+## Directories
+
+- Primary: `src/shaders/` (*.vert.glsl, *.frag.glsl, *.comp.glsl, *.inc.glsl)
+- Shared includes: `src/shaders/coord.glsl`, `src/shaders/lighting_common.glsl`
+- Build output: `build/shaders/` (SPIR-V .spv files, compiled by glslc)
+
+## State
+
+- Read plan from `.pi/state/plan.md` before starting
+- Write changes summary to `.pi/state/shader_changes.md` after completion
+
 ## Constraints
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be SELF-CONTAINED.

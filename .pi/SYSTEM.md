@@ -21,8 +21,60 @@ You are a fully unattended development agent. The user is the **product owner** 
 ## Architecture
 
 Two layers:
-- `src/engine/` — Reusable framework: app lifecycle, GPU context, input, camera, ECS, UI, rendering
-- `src/game/` — Game-specific: terrain pipeline, actor system, game state
+- `src/engine/` — Reusable framework: app lifecycle (`app.h/cpp`), GPU context (`gpu/`), input (`input/`), camera (`camera/`), ECS, UI (`ui/`), rendering (`render/`), core services (`core/`), IPC (`ipc/`)
+- `src/game/` — Game-specific: terrain pipeline (`terrain/`), actor system (`render/`), game state
+
+### Orchestrator Extension Layout
+
+The `.pi/extensions/orchestrator/src/` directory is organized as modular subdirectories:
+
+```
+src/
+├── agents/          # Agent spawning, state, metrics, planners, implementers, etc.
+│   ├── types.ts     # Shared agent interfaces
+│   ├── events.ts    # agentEvents EventEmitter
+│   ├── spawn.ts     # spawnSubagent() with exponential backoff
+│   ├── state.ts     # writeState(), readState(), pruneStateHistory()
+│   ├── planners.ts  # askMetaPlanner(), askParallelPlanner()
+│   ├── implementers.ts  # askMetaImplementer(), subsystem agents
+│   ├── fixers.ts    # askBuildFixer(), askTestFixer(), askDecoupleAnalyst()
+│   └── index.ts     # barrel re-exports
+├── tools/           # Deterministic tools
+│   ├── shell.ts     # shell(), silentShell()
+│   ├── git.ts       # gitBranch(), cleanupWorktree(), cleanupStaleWorktrees()
+│   ├── build.ts     # runBuild(), runTests() (with cmake configure check)
+│   ├── context.ts   # getCodebaseContext(), SUBSYSTEM_DIRS (all engine subdirs mapped)
+│   ├── validation.ts # runSystemAudit(), detectFileSizeViolations()
+│   └── index.ts     # barrel re-exports
+├── blueprints/      # Pipeline engine
+│   ├── types.ts     # Blueprint, BlueprintPhase (with on_success/on_failure/max_retries)
+│   ├── executor.ts  # executeBlueprint() — graph traversal with branching
+│   ├── handlers.ts  # All PHASE_HANDLERS including fix_build, system_audit, etc.
+│   └── index.ts     # barrel re-exports
+├── commands/        # Extension commands
+│   ├── minion.ts    # /minion command
+│   ├── system.ts    # /minion-self-update, /minion-audit, /minion-cleanup
+│   └── ...
+└── index.ts         # Entry point (pi.extensions: ["./src"])
+```
+
+### Branching Pipeline Schema
+
+Blueprints support conditional edges:
+```json
+{
+  "name": "build",
+  "handler": "build",
+  "on_failure": "fix_build",
+  "max_retries": 3
+}
+```
+
+Fields: `on_success`, `on_failure`, `max_retries`, `skip_if`
+
+### Self-Updating
+
+The system monitors its own files. Any `.ts` file exceeding 500 lines triggers a warning during `rebuild_ext`. Run `/minion-self-update` to detect violations, modularize, and rebuild. Run `/minion-audit` for a full health report.
 
 ### Terrain Pipeline (6 stages)
 1. Noise generation (`noise.cpp`, `noise_layers.cpp`) — Perlin/Worley via FastNoiseLite

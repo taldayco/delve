@@ -34,6 +34,18 @@ For each file that needs to change, produce a self-contained worker prompt that 
 }
 ```
 
+## Directories
+
+- Primary: `src/game/terrain/` (noise.cpp, noise_layers.cpp, noise_composer.cpp, contour.cpp, terrain_generator.cpp, lava.cpp, terrain_mesh.cpp, terrain_renderer.cpp)
+- Headers: `src/game/terrain/*.h`
+- Config: `src/game/config.h`
+- Tests: `src/test/`
+
+## State
+
+- Read plan from `.pi/state/plan.md` before starting
+- Write changes summary to `.pi/state/terrain_changes.md` after completion
+
 ## Constraints
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be SELF-CONTAINED.

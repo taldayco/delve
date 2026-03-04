@@ -1,0 +1,57 @@
+{
+  "name": "self-audit",
+  "description": "System health audit: audit findings → autofix stale refs → measure complexity → detect size violations. Self-cleaning and self-reporting.",
+  "phases": [
+    {
+      "name": "system_audit",
+      "type": "deterministic",
+      "handler": "system_audit"
+    },
+    {
+      "name": "autofix_refs",
+      "type": "deterministic",
+      "handler": "autofix_refs"
+    },
+    {
+      "name": "measure_complexity",
+      "type": "deterministic",
+      "handler": "measure_complexity"
+    },
+    {
+      "name": "trigger_decouple",
+      "type": "agentic",
+      "handler": "trigger_decouple",
+      "skip_if": "no_overloaded_domains",
+      "optional": true
+    },
+    {
+      "name": "detect_file_size_violations",
+      "type": "deterministic",
+      "handler": "detect_file_size_violations"
+    },
+    {
+      "name": "automodularize",
+      "type": "agentic",
+      "handler": "automodularize",
+      "skip_if": "no_size_violations",
+      "optional": true
+    },
+    {
+      "name": "rebuild_ext",
+      "type": "deterministic",
+      "handler": "rebuild_ext",
+      "skip_if": "no_size_violations",
+      "optional": true
+    },
+    {
+      "name": "cleanup_stale_state",
+      "type": "deterministic",
+      "handler": "cleanup_stale_state"
+    },
+    {
+      "name": "cleanup_stale_worktrees",
+      "type": "deterministic",
+      "handler": "cleanup_stale_worktrees"
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cmath>
+#include <glm/glm.hpp>
 #include <SDL3/SDL_log.h>
 
 class AnimationLogger {
@@ -178,69 +179,6 @@ public:
             neck_off.x, neck_off.y, neck_off.z);
     }
 
-    // New overload: uses AnimationState fields from actor.h (smooth_velocity, sway_amount, etc.)
-    void log_dynamics(const AnimationState &anim, const Velocity &vel, float /*dt*/) {
-        if (!active || !file) return;
-        float smooth_speed = sqrtf(anim.smooth_velocity.x * anim.smooth_velocity.x +
-                                   anim.smooth_velocity.y * anim.smooth_velocity.y);
-        fprintf(file,
-            ",\"dynamics\":{"
-            "\"smooth_vel\":[%.4f,%.4f],"
-            "\"smooth_speed\":%.4f,"
-            "\"vel_spring\":[%.4f,%.4f],"
-            "\"lean\":[%.4f,%.4f],"
-            "\"sway_phase\":%.4f,"
-            "\"sway_amount\":%.4f,"
-            "\"raw_vel\":[%.4f,%.4f]}",
-            anim.smooth_velocity.x, anim.smooth_velocity.y,
-            smooth_speed,
-            anim.velocity_rate.x, anim.velocity_rate.y,
-            anim.lean_x, anim.lean_y,
-            anim.sway_phase,
-            anim.sway_amount,
-            vel.x, vel.y);
-    }
-
-    // New overload: arm swing from AnimationState pendulum fields
-    void log_arm_swing(const AnimationState &anim) {
-        if (!active || !file) return;
-        // Antiphase: left target and right target should have opposite sign when moving
-        float l_target = anim.l_arm_target;
-        float r_target = anim.r_arm_target;
-        fprintf(file,
-            ",\"arm_swing\":{"
-            "\"l_target\":%.4f,"
-            "\"r_target\":%.4f,"
-            "\"l_shoulder_smooth\":%.4f,"
-            "\"r_shoulder_smooth\":%.4f,"
-            "\"l_elbow_smooth\":%.4f,"
-            "\"r_elbow_smooth\":%.4f,"
-            "\"l_wrist_smooth\":%.4f,"
-            "\"r_wrist_smooth\":%.4f,"
-            "\"antiphase\":%s}",
-            l_target, r_target,
-            anim.l_shoulder_smooth, anim.r_shoulder_smooth,
-            anim.l_elbow_smooth,    anim.r_elbow_smooth,
-            anim.l_wrist_smooth,    anim.r_wrist_smooth,
-            (l_target * r_target < 0.0f) ? "true" : "false");
-    }
-
-    // New overload: grounding from AnimationState + LegState
-    void log_grounding(const AnimationState &anim, const LegState &legs) {
-        if (!active || !file) return;
-        bool both_stepping = legs.stepping[0] && legs.stepping[1];
-        bool both_planted  = !legs.stepping[0] && !legs.stepping[1];
-        fprintf(file,
-            ",\"grounding\":{"
-            "\"both_stepping\":%s,\"both_planted\":%s,"
-            "\"l_contact_vel\":%.4f,\"r_contact_vel\":%.4f,"
-            "\"l_progress\":%.4f,\"r_progress\":%.4f}",
-            both_stepping ? "true" : "false",
-            both_planted  ? "true" : "false",
-            anim.foot_contact_velocity[0], anim.foot_contact_velocity[1],
-            legs.progress[0], legs.progress[1]);
-    }
-
     void log_camera(const CameraState &cam) {
         if (!active || !file) return;
         fprintf(file,
@@ -270,7 +208,61 @@ public:
         frame_count++;
     }
 
+    void log_dynamics(const AnimationState &anim, const Velocity &vel, float dt) {
+        if (!active || !file) return;
+        glm::vec3 cur_vel(vel.x, vel.y, 0.0f);
+        glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - prev_velocity_log) / dt)
+                                       : glm::vec3(0.0f);
+        float jerk = (dt > 1e-6f) ? glm::length(accel - prev_accel_log) / dt : 0.0f;
+        prev_accel_log    = accel;
+        prev_velocity_log = cur_vel;
+
+        float com_offset = glm::length(glm::vec3(anim.smooth_velocity.x,
+                                                   anim.smooth_velocity.y, 0.0f)
+                                       - cur_vel);
+        fprintf(file,
+            ",\"dynamics\":{"
+            "\"jerk\":%.4f,\"com_offset\":%.4f,"
+            "\"lean_x\":%.4f,\"lean_y\":%.4f,"
+            "\"smooth_vel\":[%.4f,%.4f]}",
+            jerk, com_offset,
+            anim.lean_x, anim.lean_y,
+            anim.smooth_velocity.x, anim.smooth_velocity.y);
+    }
+
+    void log_arm_swing(const AnimationState &anim) {
+        if (!active || !file) return;
+        float l_shoulder_lag = fabsf(anim.l_arm_target - anim.l_shoulder_smooth);
+        float l_elbow_lag    = fabsf(anim.l_shoulder_smooth - anim.l_elbow_smooth);
+        float l_wrist_lag    = fabsf(anim.l_elbow_smooth - anim.l_wrist_smooth);
+        fprintf(file,
+            ",\"arm_swing\":{"
+            "\"l_target\":%.4f,\"r_target\":%.4f,"
+            "\"l_shoulder_lag\":%.4f,\"l_elbow_lag\":%.4f,\"l_wrist_lag\":%.4f,"
+            "\"r_shoulder_lag\":%.4f,\"r_elbow_lag\":%.4f,\"r_wrist_lag\":%.4f}",
+            anim.l_arm_target, anim.r_arm_target,
+            l_shoulder_lag, l_elbow_lag, l_wrist_lag,
+            fabsf(anim.r_arm_target - anim.r_shoulder_smooth),
+            fabsf(anim.r_shoulder_smooth - anim.r_elbow_smooth),
+            fabsf(anim.r_elbow_smooth - anim.r_wrist_smooth));
+    }
+
+    void log_grounding(const AnimationState &anim, const LegState &legs) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"grounding\":{"
+            "\"both_stepping\":%s,"
+            "\"l_contact_vel\":%.4f,\"r_contact_vel\":%.4f,"
+            "\"l_stepping\":%s,\"r_stepping\":%s}",
+            (legs.stepping[0] && legs.stepping[1]) ? "true" : "false",
+            anim.foot_contact_velocity[0], anim.foot_contact_velocity[1],
+            legs.stepping[0] ? "true" : "false",
+            legs.stepping[1] ? "true" : "false");
+    }
+
 private:
     FILE *file = nullptr;
     uint64_t frame_count = 0;
+    glm::vec3 prev_velocity_log{0.0f};
+    glm::vec3 prev_accel_log{0.0f};
 };

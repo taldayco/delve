@@ -19,6 +19,7 @@ inline glm::vec3 joint_direction(const glm::vec3 &from, const glm::vec3 &to) {
 }
 
 inline float pose_symmetry_score(const SkeletonPose &pose) {
+  // Compare left/right joint pairs
   struct Pair { Joint left; Joint right; };
   static const Pair pairs[] = {
     {Joint::L_SHOULDER, Joint::R_SHOULDER},
@@ -33,9 +34,11 @@ inline float pose_symmetry_score(const SkeletonPose &pose) {
   for (auto &p : pairs) {
     glm::vec3 l = pose.joints[(int)p.left];
     glm::vec3 r = pose.joints[(int)p.right];
+    // Mirror on X axis — left and right should be symmetric
     glm::vec3 mirrored_r = glm::vec3(-r.x, r.y, r.z);
     total_diff += glm::length(l - mirrored_r);
   }
+  // Normalize: perfect symmetry = 1.0, high asymmetry → 0
   return 1.0f / (1.0f + total_diff);
 }
 
@@ -49,55 +52,37 @@ inline float skeleton_height(const SkeletonPose &pose) {
 }
 
 inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; }
-inline float gait_step_height(const ProceduralGait &g) { return g.step_height; }
+inline float gait_step_height(const ProceduralGait &g)   { return g.step_height; }
 
-// ---------------------------------------------------------------------------
-// New metric helpers for fluid animation tests (headless, no SDL)
-// ---------------------------------------------------------------------------
+// --- New metrics for biomechanical animation ---
 
-// Mirrors the SmoothDamp from actor_animation.cpp for headless testing.
-inline float smooth_damp_test(float current, float target, float &vel,
-                               float smoothing_time, float dt) {
-    float omega   = 2.0f / smoothing_time;
-    float x       = omega * dt;
-    float exp_val = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
-    float change  = current - target;
-    float temp    = (vel + omega * change) * dt;
-    vel           = (vel - omega * temp) * exp_val;
-    return target + (change + temp) * exp_val;
+// Returns 1.0 if left arm and left leg are in anti-phase, 0.0 if in-phase.
+// l_arm_angle: arm swing angle (+ = forward). l_leg_forward: foot forward offset from hip.
+// Anti-phase: product is negative (opposite signs).
+inline float arm_phase_opposition(float l_arm_angle, float l_leg_forward) {
+  float product = l_arm_angle * l_leg_forward;
+  return product < 0.0f ? 1.0f : 0.0f;
 }
 
-// Ratio of smoothed speed to raw speed [0,1]. 1.0 = fully smoothed (idle is 1.0).
-inline float velocity_smoothness(float raw_speed, float smooth_speed) {
-    if (raw_speed < 1e-6f) return 1.0f;
-    return std::min(smooth_speed / raw_speed, 1.0f);
+// Returns wrist_lag / shoulder_lag. Should be > 1.0 (wrist lags more than shoulder).
+// Returns 1.0 if shoulder_lag is near zero (degenerate case).
+inline float joint_lag_ratio(float shoulder_lag, float wrist_lag) {
+  if (shoulder_lag < 1e-6f) return 1.0f;
+  return wrist_lag / shoulder_lag;
 }
 
-// Maximum forward projection of elbow from shoulder, for either arm.
-inline float arm_swing_amplitude(const SkeletonPose &pose, const Transform &t) {
-    using J = Joint;
-    float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
-
-    auto project_fwd = [&](Joint elbow_j, Joint shoulder_j) {
-        const auto &e = pose.joints[(int)elbow_j];
-        const auto &s = pose.joints[(int)shoulder_j];
-        float dx = e.x - s.x, dy = e.y - s.y;
-        return dx * fwd_x + dy * fwd_y;
-    };
-
-    float l = std::abs(project_fwd(J::L_ELBOW, J::L_SHOULDER));
-    float r = std::abs(project_fwd(J::R_ELBOW, J::R_SHOULDER));
-    return std::max(l, r);
+// Returns the foot contact velocity from AnimationState for the given leg (0=left, 1=right).
+// Lower is better: 0 = perfect plant, high values indicate skating.
+inline float foot_contact_velocity(const AnimationState &anim, int leg) {
+  return anim.foot_contact_velocity[leg];
 }
 
-// Returns the nominal breathing amplitude constant used in SkeletonFinaliseSystem.
-inline float breathing_amplitude() {
-    return 0.012f;
-}
-
-// Returns the speed-adaptive step duration.
-// At speed=0: 0.45s, at speed=move_speed: 0.22s.
-inline float step_duration_at_speed(float speed, float move_speed) {
-    float speed_t = (move_speed > 1e-6f) ? std::min(speed / move_speed, 1.0f) : 0.0f;
-    return 0.45f - speed_t * (0.45f - 0.22f);
+// Returns correlation in [0, 1] between lean magnitude and acceleration magnitude.
+// High correlation (> 0.7) means lean tracks acceleration well.
+// max_lean: the maximum expected lean magnitude in radians.
+inline float lean_acceleration_correlation(float lean_mag, float accel_mag, float max_lean) {
+  if (max_lean < 1e-6f) return 1.0f;
+  float expected = std::min(accel_mag * 0.015f, max_lean);
+  float error    = std::abs(lean_mag - expected);
+  return 1.0f - std::min(1.0f, error / max_lean);
 }

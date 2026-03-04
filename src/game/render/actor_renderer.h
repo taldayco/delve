@@ -3,6 +3,7 @@
 #include "gpu/gpu.h"                // UploadManager
 #include "core/asset_manager.h"
 #include "render/skeleton_mesh.h"   // SkeletonVertex, SkeletonMesh, BoneProfile, BoneProfileArray
+#include "config.h"
 #include <SDL3/SDL_gpu.h>
 #include <flecs.h>
 #include <glm/glm.hpp>
@@ -39,55 +40,85 @@ struct SegmentProfiles {
     bool dirty = false; // set to true when any parameter changes; cleared after mesh rebuild
 
     SegmentProfiles() {
-        // Torso (SPINE, CHEST_CORE)
-        for (int i : { (int)BoneSeg::SPINE, (int)BoneSeg::CHEST_CORE }) {
-            bones[i].radius_start = 0.12f;
-            bones[i].radius_end   = 0.10f;
-            bones[i].sides        = 6;
-            bones[i].color        = glm::vec3(0.25f, 0.25f, 0.30f);
-        }
+        // Anatomical radii derived from Config constants.
+        static constexpr float R_HEAD      = Config::ACTOR_HEAD_WIDTH_WU  / 2.0f;
+        static constexpr float R_SHOULDER  = Config::ACTOR_SHOULDER_WIDTH_WU / 2.0f;
+        static constexpr float R_HIP       = Config::ACTOR_HIP_WIDTH_WU   / 2.0f;
+        static constexpr float R_WAIST     = Config::ACTOR_WAIST_WIDTH_WU / 2.0f;
+        static constexpr float R_UPPER_ARM = Config::ACTOR_UPPER_ARM_WU   * 0.18f;
+        static constexpr float R_FOREARM   = Config::ACTOR_FOREARM_WU     * 0.15f;
+        static constexpr float R_UPPER_LEG = Config::ACTOR_UPPER_LEG_WU   * 0.22f;
+        static constexpr float R_LOWER_LEG = Config::ACTOR_LOWER_LEG_WU   * 0.16f;
+        static constexpr float R_NECK      = R_HEAD * 0.55f;
+
+        // SPINE: ROOT→SPINE (hip region, tapers to waist)
+        bones[(int)BoneSeg::SPINE].radius_start = R_HIP;
+        bones[(int)BoneSeg::SPINE].radius_end   = R_WAIST;
+        bones[(int)BoneSeg::SPINE].sides        = 6;
+        bones[(int)BoneSeg::SPINE].color        = glm::vec3(0.25f, 0.25f, 0.30f);
+
+        // CHEST_CORE: SPINE→CHEST (waist to shoulder width)
+        bones[(int)BoneSeg::CHEST_CORE].radius_start = R_WAIST;
+        bones[(int)BoneSeg::CHEST_CORE].radius_end   = R_SHOULDER;
+        bones[(int)BoneSeg::CHEST_CORE].sides        = 6;
+        bones[(int)BoneSeg::CHEST_CORE].color        = glm::vec3(0.25f, 0.25f, 0.30f);
+
         // Neck
-        bones[(int)BoneSeg::NECK_SEG].radius_start = 0.08f;
-        bones[(int)BoneSeg::NECK_SEG].radius_end   = 0.07f;
+        bones[(int)BoneSeg::NECK_SEG].radius_start = R_NECK;
+        bones[(int)BoneSeg::NECK_SEG].radius_end   = R_NECK;
         bones[(int)BoneSeg::NECK_SEG].sides        = 6;
         bones[(int)BoneSeg::NECK_SEG].color        = glm::vec3(0.35f, 0.30f, 0.28f);
+
         // Head
-        bones[(int)BoneSeg::HEAD_SEG].radius_start = 0.14f;
-        bones[(int)BoneSeg::HEAD_SEG].radius_end   = 0.14f;
+        bones[(int)BoneSeg::HEAD_SEG].radius_start = R_HEAD;
+        bones[(int)BoneSeg::HEAD_SEG].radius_end   = R_HEAD;
         bones[(int)BoneSeg::HEAD_SEG].sides        = 8;
         bones[(int)BoneSeg::HEAD_SEG].color        = glm::vec3(0.35f, 0.30f, 0.28f);
-        // Shoulder connectors + upper arms
-        for (int i : { (int)BoneSeg::L_SHOULDER_CONN, (int)BoneSeg::L_UPPER_ARM,
-                       (int)BoneSeg::R_SHOULDER_CONN, (int)BoneSeg::R_UPPER_ARM }) {
-            bones[i].radius_start = 0.07f;
-            bones[i].radius_end   = 0.06f;
+
+        // Shoulder connectors (CHEST→L/R_SHOULDER): taper from shoulder to upper-arm radius
+        for (int i : { (int)BoneSeg::L_SHOULDER_CONN, (int)BoneSeg::R_SHOULDER_CONN }) {
+            bones[i].radius_start = R_SHOULDER * 0.4f;
+            bones[i].radius_end   = R_UPPER_ARM;
             bones[i].sides        = 5;
             bones[i].color        = glm::vec3(0.20f, 0.22f, 0.28f);
         }
+
+        // Upper arms
+        for (int i : { (int)BoneSeg::L_UPPER_ARM, (int)BoneSeg::R_UPPER_ARM }) {
+            bones[i].radius_start = R_UPPER_ARM;
+            bones[i].radius_end   = R_UPPER_ARM * 0.85f;
+            bones[i].sides        = 5;
+            bones[i].color        = glm::vec3(0.20f, 0.22f, 0.28f);
+        }
+
         // Forearms
         for (int i : { (int)BoneSeg::L_FOREARM, (int)BoneSeg::R_FOREARM }) {
-            bones[i].radius_start = 0.06f;
-            bones[i].radius_end   = 0.04f;
+            bones[i].radius_start = R_FOREARM;
+            bones[i].radius_end   = R_FOREARM * 0.75f;
             bones[i].sides        = 4;
             bones[i].color        = glm::vec3(0.22f, 0.24f, 0.30f);
         }
-        // Hip connectors + upper legs
+
+        // Hip connectors (SPINE→L/R_HIP): taper from hip to upper-leg radius
         for (int i : { (int)BoneSeg::L_HIP_CONN, (int)BoneSeg::R_HIP_CONN }) {
-            bones[i].radius_start = 0.10f;
-            bones[i].radius_end   = 0.08f;
+            bones[i].radius_start = R_HIP * 0.5f;
+            bones[i].radius_end   = R_UPPER_LEG;
             bones[i].sides        = 6;
             bones[i].color        = glm::vec3(0.18f, 0.20f, 0.26f);
         }
+
+        // Upper legs
         for (int i : { (int)BoneSeg::L_UPPER_LEG, (int)BoneSeg::R_UPPER_LEG }) {
-            bones[i].radius_start = 0.10f;
-            bones[i].radius_end   = 0.08f;
+            bones[i].radius_start = R_UPPER_LEG;
+            bones[i].radius_end   = R_UPPER_LEG * 0.80f;
             bones[i].sides        = 6;
             bones[i].color        = glm::vec3(0.18f, 0.20f, 0.26f);
         }
+
         // Lower legs
         for (int i : { (int)BoneSeg::L_LOWER_LEG, (int)BoneSeg::R_LOWER_LEG }) {
-            bones[i].radius_start = 0.08f;
-            bones[i].radius_end   = 0.05f;
+            bones[i].radius_start = R_LOWER_LEG;
+            bones[i].radius_end   = R_LOWER_LEG * 0.70f;
             bones[i].sides        = 5;
             bones[i].color        = glm::vec3(0.16f, 0.18f, 0.24f);
         }

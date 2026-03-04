@@ -228,6 +228,8 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_skeleton_mesh.cpp
     src/test/tests/test_actor_mesh.cpp
     src/test/tests/actor_proportions_test.cpp
+    src/test/tests/test_actor_proportions_config.cpp
+    src/test/tests/test_config_proportions_wu.cpp
     src/game/terrain/map_util.cpp
     src/game/render/skeleton_mesh.cpp
     src/game/render/actor_mesh.cpp

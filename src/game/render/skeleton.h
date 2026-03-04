@@ -1,40 +1,47 @@
 #pragma once
 #include "actor.h"
+#include "config.h"
 
-// Natural bone segment lengths matching ActorConfig defaults (H=2.0 world units).
-// Total height: ankle(z=-0.92) to head crown(z≈1.06) ≈ 2.0 units.
-// Upper leg and lower leg are equal (0.46 each) for correct anatomy.
-// Arm reach: shoulder(0.28) + arm(0.30) + forearm(0.22) = 0.80 per side.
-// NOTE: This struct is scaffolding for future use; not yet wired into the runtime.
+// Natural bone segment lengths derived from Config::ACTOR_*_WU constants.
+// Total height from ankle(-z) to head crown(+z) ≈ Config::ACTOR_TOTAL_HEIGHT_WU.
+// Coordinate system: x=right, y=forward, z=up (matches world space).
+//
+// Rest pose layout (ROOT at z=0, legs descend in -z):
+//   - ROOT (pelvis)     at z=0
+//   - SPINE             at z= TORSO*0.6*0.5
+//   - CHEST             at z= TORSO*0.6
+//   - NECK              at z= TORSO*0.6 + NECK_HEIGHT
+//   - HEAD              at z= TORSO*0.6 + NECK_HEIGHT + HEAD_HEIGHT
+//   - L/R_SHOULDER      at x=±SHOULDER_WIDTH/2, z=CHEST_z
+//   - L/R_ELBOW         at x=±(SHOULDER/2 + UPPER_ARM), z=CHEST_z
+//   - L/R_WRIST         at x=±(SHOULDER/2 + UPPER_ARM + FOREARM), z=CHEST_z
+//   - L/R_HIP           at x=±HIP_WIDTH/2, z=0
+//   - L/R_KNEE          at x=±HIP_WIDTH/2, z=-UPPER_LEG
+//   - L/R_ANKLE         at x=±HIP_WIDTH/2, z=-(UPPER_LEG+LOWER_LEG)
+//
+// Total upward height (ROOT to HEAD) ≈ TORSO*0.6 + NECK + HEAD ≈ 3/8 * H
+// Total downward depth (ROOT to ANKLE) = UPPER_LEG + LOWER_LEG = 1/2 * H
+// Full span (ankle to head) ≈ ACTOR_TOTAL_HEIGHT_WU
 struct BoneNaturalLengths {
     // Torso
-    float spine      = 0.19f;  // ROOT → SPINE (torso_len * 0.5 = 0.19)
-    float chest_core = 0.19f;  // SPINE → CHEST (torso_len * 0.5 = 0.19)
-    float neck       = 0.30f;  // CHEST → NECK
-    float head       = 0.36f;  // NECK → HEAD (2 * head_radius = 0.36)
+    float chest_core    = Config::ACTOR_TORSO_HEIGHT_WU * 0.6f;
+    float neck          = Config::ACTOR_NECK_HEIGHT_WU;
+    float head          = Config::ACTOR_HEAD_HEIGHT_WU;
     // Arms (per side)
-    float shoulder_conn = 0.28f; // CHEST → SHOULDER
-    float upper_arm     = 0.30f; // SHOULDER → ELBOW
-    float forearm       = 0.22f; // ELBOW → WRIST
+    float shoulder_conn = Config::ACTOR_SHOULDER_WIDTH_WU * 0.5f;
+    float upper_arm     = Config::ACTOR_UPPER_ARM_WU;
+    float forearm       = Config::ACTOR_FOREARM_WU;
+    float hand          = Config::ACTOR_HAND_LEN_WU;
     // Legs (per side)
-    float hip_conn  = 0.20f;  // SPINE → HIP (hip_width offset)
-    float upper_leg = 0.46f;  // HIP → KNEE
-    float lower_leg = 0.46f;  // KNEE → ANKLE (equal to upper_leg)
+    float hip_conn      = Config::ACTOR_HIP_WIDTH_WU * 0.5f;
+    float upper_leg     = Config::ACTOR_UPPER_LEG_WU;
+    float lower_leg     = Config::ACTOR_LOWER_LEG_WU;
+    float foot          = Config::ACTOR_FOOT_LEN_WU;
 };
 
-// Build a rest pose using ActorConfig default proportions (H=2.0 world units).
-// Coordinate system: x=right, y=forward, z=up (matches world space).
-// - ROOT (hips)      at z=0
-// - SPINE (waist)    at z=0.19
-// - CHEST            at z=0.38
-// - NECK             at z=0.68
-// - HEAD             at z=1.04  (neck + 2*head_radius = 0.68+0.36)
-// - L/R_SHOULDER     at x=±0.28, z=0.38
-// - L/R_ELBOW        at x=±0.58, z=0.38
-// - L/R_WRIST        at x=±0.80, z=0.38
-// - L/R_HIP          at x=±0.20, z=0
-// - L/R_KNEE         at x=±0.20, z=-0.46
-// - L/R_ANKLE        at x=±0.20, z=-0.92
+// Build a rest pose using Config::ACTOR_*_WU proportions.
+// ROOT (pelvis) is at the origin; legs descend along -z; torso rises along +z.
+// Total chain height from ankle to head crown ≈ ACTOR_TOTAL_HEIGHT_WU.
 SkeletonPose make_rest_pose();
 
 // Passthrough: joint positions computed by compute_walk_pose/compute_idle_pose are

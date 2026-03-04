@@ -224,3 +224,113 @@ DELVE_TEST(skeleton_mesh_gpu_buffers_null_before_upload) {
     EXPECT_TRUE(mesh.index_buffer  == nullptr);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// Tests for new features: Skeleton alias, vector<BoneProfile> overload,
+// BoneProfile::color, SkeletonMesh::vertex_bone / vertex_bone_weight arrays.
+// ---------------------------------------------------------------------------
+
+DELVE_TEST(skeleton_alias_matches_skeleton_pose) {
+    // Skeleton is a typedef for SkeletonPose — they must be the same type.
+    static_assert(std::is_same<Skeleton, SkeletonPose>::value,
+                  "Skeleton must be an alias for SkeletonPose");
+    Skeleton s;
+    SkeletonPose p;
+    EXPECT_EQ(sizeof(s), sizeof(p));
+    return true;
+}
+
+DELVE_TEST(generate_skeleton_mesh_vector_overload_matches_array_overload) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray arr = make_default_profiles();
+
+    // Build a vector<BoneProfile> from the same array data.
+    std::vector<BoneProfile> vec(arr.begin(), arr.end());
+
+    SkeletonMesh m_arr = generate_skeleton_mesh(pose, arr);
+    SkeletonMesh m_vec = generate_skeleton_mesh(pose, vec);
+
+    EXPECT_EQ((int)m_arr.vertices.size(), (int)m_vec.vertices.size());
+    EXPECT_EQ((int)m_arr.indices.size(),  (int)m_vec.indices.size());
+    return true;
+}
+
+DELVE_TEST(generate_skeleton_mesh_vector_overload_short_vector) {
+    // Passing fewer profiles than NUM_BONE_PROFILES should not crash.
+    Skeleton pose = make_standing_pose();
+    std::vector<BoneProfile> profiles(4); // only 4 profiles
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, profiles);
+    EXPECT_GT((int)mesh.vertices.size(), 0);
+    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
+    return true;
+}
+
+DELVE_TEST(bone_profile_color_default_is_mid_grey) {
+    BoneProfile bp;
+    EXPECT_NEAR(bp.color.r, 0.5f, 1e-5f);
+    EXPECT_NEAR(bp.color.g, 0.5f, 1e-5f);
+    EXPECT_NEAR(bp.color.b, 0.5f, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(bone_profile_color_survives_roundtrip_through_array) {
+    BoneProfileArray arr = make_default_profiles();
+    arr[0].color = glm::vec3(1.0f, 0.0f, 0.0f);
+    arr[1].color = glm::vec3(0.0f, 1.0f, 0.0f);
+
+    std::vector<BoneProfile> vec(arr.begin(), arr.end());
+    EXPECT_NEAR(vec[0].color.r, 1.0f, 1e-5f);
+    EXPECT_NEAR(vec[1].color.g, 1.0f, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(skeleton_mesh_vertex_bone_array_populated) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    // vertex_bone must be parallel to vertices.
+    EXPECT_EQ((int)mesh.vertex_bone.size(), (int)mesh.vertices.size());
+    // All bone indices must be in valid range.
+    for (int bi : mesh.vertex_bone) {
+        EXPECT_RANGE(bi, 0, NUM_BONE_PROFILES - 1);
+    }
+    return true;
+}
+
+DELVE_TEST(skeleton_mesh_vertex_bone_weight_array_populated) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    // vertex_bone_weight must be parallel to vertices.
+    EXPECT_EQ((int)mesh.vertex_bone_weight.size(), (int)mesh.vertices.size());
+    // All weights in [0,1].
+    for (float w : mesh.vertex_bone_weight) {
+        EXPECT_RANGE(w, 0.0f, 1.0f);
+    }
+    return true;
+}
+
+DELVE_TEST(skeleton_mesh_vertex_bone_consistent_with_bone_index0) {
+    // vertex_bone[i] should match bone_index0 stored in the vertex.
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    int mismatches = 0;
+    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+        int from_vertex = (int)mesh.vertices[i].bone_index0;
+        int from_array  = mesh.vertex_bone[i];
+        if (from_vertex != from_array) ++mismatches;
+    }
+    EXPECT_EQ(mismatches, 0);
+    return true;
+}
+
+DELVE_TEST(bone_vertex_layout_size) {
+    // BoneVertex must be tightly-packed to a predictable size.
+    // vec3 pos (12) + vec3 normal (12) + ivec2 bone_index (8) + float weight (4) = 36
+    static_assert(sizeof(BoneVertex) == 36, "BoneVertex must be 36 bytes");
+    return true;
+}

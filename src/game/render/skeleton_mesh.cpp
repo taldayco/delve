@@ -103,6 +103,8 @@ SkeletonMesh generate_skeleton_mesh(const SkeletonPose     &bind_pose,
         sv.bone_index1 = (float)bi; // single-bone verts: secondary == primary
         mesh.vertices.push_back(sv);
         mesh.rest_positions.push_back(local_pos);
+        mesh.vertex_bone.push_back(bi);
+        mesh.vertex_bone_weight.push_back(weight);
         return idx;
     };
 
@@ -285,4 +287,15 @@ void deform_skeleton_mesh(SkeletonMesh &mesh, const SkeletonPose &pose) {
         if (len > 1e-6f)
             mesh.vertices[i].normal = accum[i] / len;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Overload: vector<BoneProfile> → convert to BoneProfileArray then delegate.
+// ---------------------------------------------------------------------------
+SkeletonMesh generate_skeleton_mesh(const Skeleton                 &skel,
+                                    const std::vector<BoneProfile> &profiles) {
+    BoneProfileArray arr;
+    for (int i = 0; i < NUM_BONE_PROFILES && i < (int)profiles.size(); ++i)
+        arr[(size_t)i] = profiles[(size_t)i];
+    return generate_skeleton_mesh(skel, arr);
 }

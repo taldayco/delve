@@ -101,3 +101,32 @@ inline bool foot_planted_invariant(const LegState &legs) {
 inline bool step_duration_adaptive(float dur_slow, float dur_fast) {
     return dur_fast < dur_slow;
 }
+
+// ── New metrics (Subtask 8) ───────────────────────────────────────────────
+
+// Returns 1.0 if left arm and left leg forward projection are in anti-phase
+// (product negative → opposite signs), 0.0 otherwise.
+inline float arm_phase_opposition(float l_arm_angle, float l_leg_forward) {
+    return (l_arm_angle * l_leg_forward < 0.0f) ? 1.0f : 0.0f;
+}
+
+// Returns wrist_lag / shoulder_lag ratio.
+// Should be > 1.0 (wrist lags more than shoulder).
+inline float joint_lag_ratio(float shoulder_lag, float wrist_lag) {
+    if (shoulder_lag < 1e-6f) return 1.0f;
+    return wrist_lag / shoulder_lag;
+}
+
+// Returns the recorded foot contact velocity for leg index.
+inline float foot_contact_velocity(const AnimationState &anim, int leg) {
+    return anim.foot_contact_velocity[leg];
+}
+
+// Returns a [0,1] correlation between lean magnitude and acceleration magnitude.
+// 1.0 = lean perfectly tracks expected value; 0.0 = maximum error.
+inline float lean_acceleration_correlation(float lean_mag, float accel_mag,
+                                            float max_lean) {
+    float expected = std::min(accel_mag * 0.01f, max_lean);
+    float error    = std::abs(lean_mag - expected);
+    return 1.0f - std::min(error / (max_lean + 1e-6f), 1.0f);
+}

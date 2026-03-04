@@ -160,7 +160,7 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<AnimationState>({});
 
   // Register all 6 animation systems from actor_animation.cpp.
-  register_animation_systems(ecs, player_entity, input, camera, anim_log);
+  register_animation_systems(ecs, player_entity, input, anim_log);
 }
 
 void TopoGame::on_event(const SDL_Event &event, flecs::world &ecs) {

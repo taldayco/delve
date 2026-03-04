@@ -5,7 +5,6 @@
 #include "terrain/map_data.h"
 #include "terrain/map_util.h"
 #include "input/input.h"
-#include "camera/camera.h"
 
 #include <flecs.h>
 #include <glm/glm.hpp>
@@ -30,7 +29,6 @@ static float smooth_damp(float current, float target, float& vel_ref,
 void register_animation_systems(flecs::world& ecs,
                                 flecs::entity& player_entity,
                                 InputSystem& input,
-                                CameraState& camera,
                                 AnimationLogger& anim_log) {
 
     // 1. PlayerMovementSystem — reads input, updates velocity + smooth_vel,
@@ -384,8 +382,10 @@ void register_animation_systems(flecs::world& ecs,
                 const float weight_amp = 0.008f;
                 float weight_shift = sinf(anim.weight_phase * glm::two_pi<float>())
                                    * weight_amp * idle_factor;
-                pose.joints[(int)J::ROOT].x  += weight_shift;
-                pose.joints[(int)J::SPINE].x += weight_shift;
+                pose.joints[(int)J::ROOT].x  += rght_x * weight_shift;
+                pose.joints[(int)J::ROOT].y  += rght_y * weight_shift;
+                pose.joints[(int)J::SPINE].x += rght_x * weight_shift;
+                pose.joints[(int)J::SPINE].y += rght_y * weight_shift;
             });
         });
 

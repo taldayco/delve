@@ -60,3 +60,26 @@ struct LegState {
     float     progress[2]  = {};
     bool      stepping[2]  = {};
 };
+
+struct AnimationState {
+    // Velocity smoothing (SmoothDamp state)
+    glm::vec2 smooth_vel      = {0.0f, 0.0f};
+    glm::vec2 vel_vel         = {0.0f, 0.0f}; // spring velocity for smooth_vel
+    glm::vec2 prev_smooth_vel = {0.0f, 0.0f};
+
+    // Torso lean driven by acceleration
+    float lean_x = 0.0f;
+    float lean_y = 0.0f;
+
+    // Hip sway
+    float sway_phase = 0.0f;
+    float sway_amt   = 0.04f;
+
+    // Pendulum arm swing
+    float arm_phase[2] = {0.0f, 0.5f};
+    float arm_delay[2] = {0.0f, 0.0f}; // SmoothDamp forearm lag state
+
+    // Idle micro-motion
+    float breath_phase = 0.0f;
+    float weight_phase = 0.0f;
+};

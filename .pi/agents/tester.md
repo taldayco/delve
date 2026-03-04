@@ -1,7 +1,7 @@
 ---
 name: tester
 description: Test engineer agent — writes quantitative visual tests for terrain, geometry, and animation
-tools: Read,Write,Edit,Bash,Glob,Grep
+tools: read,write,edit,bash
 model: anthropic/sonnet
 ---
 

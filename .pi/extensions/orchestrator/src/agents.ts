@@ -1058,7 +1058,7 @@ Diagnose the root cause of the test failures.`;
     prompt,
     systemPrompt,
     model: "anthropic/sonnet",
-    tools: ["Read", "Glob", "Grep"],
+    tools: ["read", "bash"],
     agentName: "diagnoser",
   });
 }
@@ -1156,13 +1156,13 @@ export function escalate(opts: {
       // Add write tools, upgrade model
       return {
         model: "anthropic/sonnet",
-        tools: [...new Set([...opts.currentTools, "Write", "Edit", "Bash"])],
+        tools: [...new Set([...opts.currentTools, "write", "edit", "bash"])],
       };
     case "context":
       // Same model but expand file reading tools
       return {
         model: opts.currentModel,
-        tools: [...new Set([...opts.currentTools, "Read", "Glob", "Grep"])],
+        tools: [...new Set([...opts.currentTools, "read", "bash"])],
       };
     default:
       return { model: "anthropic/sonnet", tools: opts.currentTools };

@@ -53,3 +53,47 @@ inline float skeleton_height(const SkeletonPose &pose) {
 
 inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; }
 inline float gait_step_height(const ProceduralGait &g) { return g.step_height; }
+
+// Simulate critically-damped spring: returns steps to reach 95% of target.
+// Returns -1 if not converged within max_steps.
+inline int smooth_velocity_convergence(float initial, float target,
+                                        float smooth_time, float dt,
+                                        int max_steps = 600) {
+    float current = initial;
+    float vel     = 0.f;
+    float threshold = std::abs(target - initial) * 0.05f + 1e-6f;
+    for (int i = 0; i < max_steps; ++i) {
+        float omega  = 2.f / smooth_time;
+        float x      = omega * dt;
+        float exp_x  = 1.f / (1.f + x + 0.48f * x * x + 0.235f * x * x * x);
+        float delta  = current - target;
+        float temp   = (vel + omega * delta) * dt;
+        vel     = (vel - omega * temp) * exp_x;
+        current = target + (delta + temp) * exp_x;
+        if (std::abs(current - target) <= threshold)
+            return i + 1;
+    }
+    return -1;
+}
+
+inline bool torso_lean_proportional(float lean_at_slow, float lean_at_fast) {
+    return std::abs(lean_at_fast) > std::abs(lean_at_slow);
+}
+
+inline bool arm_swing_antiphase(float left_phase, float right_phase,
+                                 float tolerance = 0.15f) {
+    float diff = std::fmod(std::abs(left_phase - right_phase), 1.f);
+    return std::abs(diff - 0.5f) <= tolerance;
+}
+
+inline bool breathing_amplitude_reasonable(float amplitude) {
+    return amplitude >= 0.001f && amplitude <= 0.05f;
+}
+
+inline bool foot_planted_invariant(const LegState &legs) {
+    return !(legs.stepping[0] && legs.stepping[1]);
+}
+
+inline bool step_duration_adaptive(float dur_slow, float dur_fast) {
+    return dur_fast < dur_slow;
+}

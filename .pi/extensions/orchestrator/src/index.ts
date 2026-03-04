@@ -58,6 +58,9 @@ import {
   detectMapCoverage,
   cleanupStaleState,
   getSubsystemCodebaseContext,
+  fixStaleAgentRefs,
+  fixBrokenRuleGlobs,
+  rebuildExtension,
 } from "./tools.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -1377,23 +1380,23 @@ export default function (pi: ExtensionAPI) {
   // ── /minion-audit command ───────────────────────────────────────────────
 
   pi.registerCommand("minion-audit", {
-    description: "Run a system audit: check for stale agents, broken rules, unmapped directories, domain overload, and orphaned state",
+    description: "Run a system audit: check for stale agents, broken rules, unmapped directories, domain overload, and orphaned state — then auto-fix what it can",
     handler: async (_args, ctx) => {
       cleanupMergedBranches();
 
       ctx.ui.notify("Running system audit...", "info");
       const report = runSystemAudit();
 
-      // Format findings as markdown
+      // Format initial findings as markdown
       const lines: string[] = [
         "# System Audit Report",
         "",
-        `**Summary:** ${report.summary}`,
+        `**Initial scan:** ${report.summary}`,
         "",
       ];
 
       if (report.findings.length > 0) {
-        lines.push("## Findings", "");
+        lines.push("## Initial Findings", "");
         for (const finding of report.findings) {
           const icon = finding.severity === "error" ? "ERROR" : "WARNING";
           lines.push(`- **[${icon}]** (${finding.category}) ${finding.message}`);
@@ -1401,6 +1404,92 @@ export default function (pi: ExtensionAPI) {
         lines.push("");
       }
 
+      // ── Auto-fix phase ──────────────────────────────────────────────────
+      const fixLines: string[] = ["## Auto-Fix Results", ""];
+      let totalFixed = 0;
+
+      // 1. Orphaned state
+      const stateResult = cleanupStaleState();
+      if (stateResult.deleted.length > 0) {
+        fixLines.push(`- **Orphaned state:** ${stateResult.summary}`);
+        totalFixed += stateResult.deleted.length;
+      }
+
+      // 2. Stale agent refs
+      const staleResult = fixStaleAgentRefs(report.findings);
+      if (staleResult.fixed > 0) {
+        fixLines.push(`- **Stale agent refs:** fixed ${staleResult.fixed}`);
+        for (const d of staleResult.details) fixLines.push(`  - ${d}`);
+        totalFixed += staleResult.fixed;
+      }
+
+      // 3. Broken rule globs
+      const globResult = fixBrokenRuleGlobs(report.findings);
+      if (globResult.fixed > 0) {
+        fixLines.push(`- **Broken rule globs:** fixed ${globResult.fixed}`);
+        for (const d of globResult.details) fixLines.push(`  - ${d}`);
+        totalFixed += globResult.fixed;
+      }
+
+      // 4. Unmapped directories — invoke map updater agent
+      const unmappedFindings = report.findings.filter((f) => f.category === "unmapped-directory");
+      if (unmappedFindings.length > 0) {
+        ctx.ui.notify(`Fixing ${unmappedFindings.length} unmapped directory(s)...`, "info");
+        const coverage = detectMapCoverage();
+        if (coverage.unmappedDirs.length > 0) {
+          const { readFileSync } = require("node:fs");
+          const { join } = require("node:path");
+          const toolsPath = join(process.cwd(), ".pi/extensions/orchestrator/src/tools.ts");
+          let toolsContent = "";
+          try {
+            const full = readFileSync(toolsPath, "utf-8");
+            const start = full.indexOf("const KEYWORD_SYNONYMS");
+            const end = full.indexOf("};", full.indexOf("const SUBSYSTEM_CANONICAL")) + 2;
+            if (start >= 0 && end > start) toolsContent = full.slice(start, end);
+          } catch { /* ignore */ }
+
+          const mapResult = await askMapUpdater({ coverageReport: coverage, currentToolsContent: toolsContent });
+          const appliedCount = applyFileBlocks(mapResult);
+          if (appliedCount > 0) {
+            fixLines.push(`- **Unmapped directories:** updated ${appliedCount} file(s)`);
+            totalFixed += appliedCount;
+            // Rebuild extension so new maps take effect
+            const buildResult = rebuildExtension();
+            fixLines.push(`- **Extension rebuild:** ${buildResult.summary}`);
+          }
+        }
+      }
+
+      // 5. Domain overload — report only
+      const overloadFindings = report.findings.filter((f) => f.category === "domain-overload");
+      if (overloadFindings.length > 0) {
+        fixLines.push(`- **Domain overload:** ${overloadFindings.length} domain(s) over threshold — run \`/minion-decouple\` to address`);
+      }
+
+      if (totalFixed === 0) {
+        fixLines.push("- No auto-fixable issues found");
+      }
+      fixLines.push("");
+
+      lines.push(...fixLines);
+
+      // ── Re-audit to verify ────────────────────────────────────────────
+      if (totalFixed > 0) {
+        ctx.ui.notify("Re-running audit to verify fixes...", "info");
+        const recheck = runSystemAudit();
+        lines.push("## Post-Fix Verification", "");
+        lines.push(`**Result:** ${recheck.summary}`);
+        if (recheck.findings.length > 0) {
+          lines.push("");
+          for (const finding of recheck.findings) {
+            const icon = finding.severity === "error" ? "ERROR" : "WARNING";
+            lines.push(`- **[${icon}]** (${finding.category}) ${finding.message}`);
+          }
+        }
+        lines.push("");
+      }
+
+      // Domain complexity (always shown)
       lines.push("## Domain Complexity", "");
       for (const domain of report.domainReports) {
         const flag = domain.exceedsThreshold ? " **OVER THRESHOLD**" : "";
@@ -1409,7 +1498,9 @@ export default function (pi: ExtensionAPI) {
 
       const markdown = lines.join("\n");
       writeState("audit_report.md", markdown);
-      ctx.ui.notify(report.summary, report.findings.length > 0 ? "warning" : "success");
+
+      const fixSummary = totalFixed > 0 ? ` | Auto-fixed ${totalFixed} issue(s)` : "";
+      ctx.ui.notify(`${report.summary}${fixSummary}`, report.findings.length > 0 ? "warning" : "success");
       ctx.ui.notify("Full report: .pi/state/audit_report.md", "info");
     },
   });
@@ -1588,7 +1679,23 @@ export default function (pi: ExtensionAPI) {
 
       const appliedCount = applyFileBlocks(result);
       if (appliedCount > 0) {
-        ctx.ui.notify(`Updated ${appliedCount} file(s). Rebuild the extension: cd .pi/extensions/orchestrator && npm run build`, "success");
+        ctx.ui.notify(`Updated ${appliedCount} file(s). Rebuilding extension...`, "info");
+
+        // Auto-rebuild extension
+        const buildResult = rebuildExtension();
+        if (buildResult.ok) {
+          ctx.ui.notify(buildResult.summary, "success");
+        } else {
+          ctx.ui.notify(buildResult.summary, "error");
+        }
+
+        // Re-verify coverage
+        const recheck = detectMapCoverage();
+        if (recheck.unmappedDirs.length === 0) {
+          ctx.ui.notify("Verification passed: all directories are now mapped", "success");
+        } else {
+          ctx.ui.notify(`Verification: ${recheck.unmappedDirs.length} directory(s) still unmapped: ${recheck.unmappedDirs.join(", ")}`, "warning");
+        }
       } else {
         writeState("map_update_suggestion.md", result);
         ctx.ui.notify("No file blocks produced. Suggestion written to .pi/state/map_update_suggestion.md", "warning");

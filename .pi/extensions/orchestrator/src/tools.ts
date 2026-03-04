@@ -620,6 +620,8 @@ export function runSystemAudit(): AuditReport {
       const content = readFileSync(join(agentsDir, file), "utf-8");
       const dirRefs = content.match(/src\/[a-zA-Z0-9_/]+/g) || [];
       for (const ref of dirRefs) {
+        // Skip template/placeholder paths used in agent prompt examples
+        if (ref.startsWith("src/path/")) continue;
         const refPath = join(cwd, ref);
         if (!existsSync(refPath)) {
           findings.push({
@@ -888,6 +890,106 @@ function writeFileBlock(
   } catch (e: any) {
     console.error(`Failed to write ${fullPath}: ${e.message}`);
   }
+}
+
+// ─── Auto-Fix: Stale Agent Refs ─────────────────────────────────────────────
+
+export function fixStaleAgentRefs(findings: AuditFinding[]): { fixed: number; details: string[] } {
+  const { readFileSync, writeFileSync, existsSync } = require("node:fs");
+  const { join, dirname } = require("node:path");
+  const cwd = process.cwd();
+  const agentsDir = join(cwd, ".pi/agents");
+  const details: string[] = [];
+  let fixed = 0;
+
+  const staleFindings = findings.filter((f) => f.category === "stale-agent");
+  for (const finding of staleFindings) {
+    // Extract agent file and stale path from message
+    const match = finding.message.match(/Agent (\S+) references non-existent directory: (src\/\S+)/);
+    if (!match) continue;
+    const [, agentFile, stalePath] = match;
+
+    // Walk up to find nearest valid parent directory
+    let candidate = stalePath;
+    let validParent = "";
+    while (candidate.includes("/")) {
+      candidate = candidate.replace(/\/[^/]+$/, "");
+      if (existsSync(join(cwd, candidate))) {
+        validParent = candidate;
+        break;
+      }
+    }
+    if (!validParent) continue;
+
+    const agentPath = join(agentsDir, agentFile);
+    try {
+      let content = readFileSync(agentPath, "utf-8");
+      if (content.includes(stalePath)) {
+        content = content.replaceAll(stalePath, validParent);
+        writeFileSync(agentPath, content, "utf-8");
+        details.push(`${agentFile}: ${stalePath} → ${validParent}`);
+        fixed++;
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { fixed, details };
+}
+
+// ─── Auto-Fix: Broken Rule Globs ────────────────────────────────────────────
+
+export function fixBrokenRuleGlobs(findings: AuditFinding[]): { fixed: number; details: string[] } {
+  const { readFileSync, writeFileSync, existsSync } = require("node:fs");
+  const { join } = require("node:path");
+  const cwd = process.cwd();
+  const rulesDir = join(cwd, ".pi/rules");
+  const details: string[] = [];
+  let fixed = 0;
+
+  const brokenFindings = findings.filter((f) => f.category === "broken-rule-glob");
+  for (const finding of brokenFindings) {
+    const match = finding.message.match(/Rule (\S+) has glob pointing to missing directory: (src\/\S+)/);
+    if (!match) continue;
+    const [, ruleFile, brokenBase] = match;
+
+    // Walk up to find nearest valid parent directory
+    let candidate = brokenBase;
+    let validParent = "";
+    while (candidate.includes("/")) {
+      candidate = candidate.replace(/\/[^/]+$/, "");
+      if (existsSync(join(cwd, candidate))) {
+        validParent = candidate;
+        break;
+      }
+    }
+    if (!validParent) continue;
+
+    const rulePath = join(rulesDir, ruleFile);
+    try {
+      let content = readFileSync(rulePath, "utf-8");
+      if (content.includes(brokenBase)) {
+        content = content.replaceAll(brokenBase, validParent);
+        writeFileSync(rulePath, content, "utf-8");
+        details.push(`${ruleFile}: ${brokenBase} → ${validParent}`);
+        fixed++;
+      }
+    } catch { /* ignore */ }
+  }
+
+  return { fixed, details };
+}
+
+// ─── Rebuild Extension ──────────────────────────────────────────────────────
+
+export function rebuildExtension(): { ok: boolean; summary: string } {
+  const extDir = require("node:path").join(process.cwd(), ".pi/extensions/orchestrator");
+  const result = shell("npm run build 2>&1", extDir);
+  return {
+    ok: result.ok,
+    summary: result.ok
+      ? "Extension rebuilt successfully"
+      : `Extension build failed: ${result.stderr || result.stdout}`,
+  };
 }
 
 // ─── PR Body Builder ───────────────────────────────────────────────────────

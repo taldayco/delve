@@ -78,8 +78,8 @@ DELVE_TEST(skeleton_mesh_has_valid_indices) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.indices.size(), 0);
-    // Line-list topology: indices come in pairs.
-    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
+    // Triangle-list topology: indices come in triples.
+    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
     return true;
 }
 
@@ -140,10 +140,11 @@ DELVE_TEST(skeleton_mesh_no_degenerate_edges) {
     BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    // Line-list topology: check no edge has identical endpoints.
+    // Triangle-list topology: check no triangle has two identical vertex indices.
     int degenerate = 0;
-    for (size_t i = 0; i + 1 < mesh.indices.size(); i += 2) {
-        if (mesh.indices[i] == mesh.indices[i + 1]) ++degenerate;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        uint32_t a = mesh.indices[i], b = mesh.indices[i+1], c = mesh.indices[i+2];
+        if (a == b || b == c || a == c) ++degenerate;
     }
     EXPECT_EQ(degenerate, 0);
     return true;
@@ -194,8 +195,8 @@ DELVE_TEST(skeleton_mesh_sides_3_valid_topology) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.vertices.size(), 0);
-    // Line-list topology: indices come in pairs.
-    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
+    // Triangle-list topology: indices come in triples.
+    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
     uint32_t vcount = (uint32_t)mesh.vertices.size();
     for (uint32_t idx : mesh.indices) EXPECT_LT((int)idx, (int)vcount);
     return true;
@@ -209,7 +210,7 @@ DELVE_TEST(skeleton_mesh_taper_reduces_end_radius) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.vertices.size(), 0);
-    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
+    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
     return true;
 }
 
@@ -343,12 +344,16 @@ DELVE_TEST(skeleton_wireframe_no_zero_length_edges) {
     BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    std::vector<glm::vec3> positions;
-    positions.reserve(mesh.vertices.size());
-    for (const auto &v : mesh.vertices) positions.push_back(v.position);
-
-    int zero_edges = count_zero_length_edges(mesh.indices, positions);
-    EXPECT_EQ(zero_edges, 0);
+    // Triangle-list: check no triangle has zero area (all three positions identical).
+    int zero_tris = 0;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const glm::vec3 &a = mesh.vertices[mesh.indices[i]].position;
+        const glm::vec3 &b = mesh.vertices[mesh.indices[i+1]].position;
+        const glm::vec3 &c = mesh.vertices[mesh.indices[i+2]].position;
+        glm::vec3 cross = glm::cross(b - a, c - a);
+        if (glm::dot(cross, cross) < 1e-12f) ++zero_tris;
+    }
+    EXPECT_EQ(zero_tris, 0);
     return true;
 }
 
@@ -373,14 +378,19 @@ DELVE_TEST(skeleton_wireframe_verts_near_joints) {
 DELVE_TEST(skeleton_wireframe_index_count_exact_mixed_profiles) {
     SkeletonPose pose = make_standing_pose();
     BoneProfileArray prof = make_default_profiles();
-    // Torso bones: 4 sides; limb bones: 6 sides — matches SegmentProfiles defaults.
+    // Torso bones: 4 sides; limb bones: 6 sides.
     for (int i = 0; i < 4; ++i)  prof[i].sides = 4;
     for (int i = 4; i < NUM_BONE_PROFILES; ++i) prof[i].sides = 6;
 
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    // Expected: 4 bones * 4 sides * 3 * 2  +  12 bones * 6 sides * 3 * 2
-    size_t expected = (size_t)(4 * 4 * 3 * 2) + (size_t)(12 * 6 * 3 * 2);
+    // Triangle-list: cylinder strips + caps + head sphere + root cap.
+    // Cylinder strips: 4 bones*4*6 + 12 bones*6*6 = 96 + 432 = 528
+    // Wrist caps (L_WRIST,R_WRIST at sides=6): 2*6*3 = 36
+    // Foot segs (L_ANKLE,R_ANKLE at sides=6): 2*(6*6+6*3) = 2*54 = 108
+    // HEAD sphere (sides=4): 3 connect rings * 4*6 + top fan 4*3 = 72+12 = 84
+    // Root cap (sides=4): 4*3 = 12
+    size_t expected = 528 + 36 + 108 + 84 + 12;
     EXPECT_EQ((int)mesh.indices.size(), (int)expected);
     return true;
 }
@@ -397,11 +407,15 @@ DELVE_TEST(skeleton_wireframe_deform_preserves_edge_nonzero_length) {
     posed.joints[(int)Joint::L_ELBOW].y += 0.2f;
     deform_skeleton_mesh(mesh, posed);
 
-    std::vector<glm::vec3> positions;
-    positions.reserve(mesh.vertices.size());
-    for (const auto &v : mesh.vertices) positions.push_back(v.position);
-
-    int zero_edges = count_zero_length_edges(mesh.indices, positions);
-    EXPECT_EQ(zero_edges, 0);
+    // Triangle-list: check no triangle collapses to zero area after deform.
+    int zero_tris = 0;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const glm::vec3 &a = mesh.vertices[mesh.indices[i]].position;
+        const glm::vec3 &b = mesh.vertices[mesh.indices[i+1]].position;
+        const glm::vec3 &c = mesh.vertices[mesh.indices[i+2]].position;
+        glm::vec3 cross = glm::cross(b - a, c - a);
+        if (glm::dot(cross, cross) < 1e-12f) ++zero_tris;
+    }
+    EXPECT_EQ(zero_tris, 0);
     return true;
 }

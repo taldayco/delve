@@ -12,7 +12,6 @@ import {
   parseSubtasks,
   writeState,
   readState,
-  generateWorkerPromptSync,
 } from "./agents.js";
 import {
   gitBranch,

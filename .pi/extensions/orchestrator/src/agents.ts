@@ -359,6 +359,22 @@ interface SpawnSubagentOpts {
  * Enforces context budget before spawning.
  */
 async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
+  try {
+    return await spawnSubagentOnce(opts);
+  } catch (err: any) {
+    // Retry once on spawn failures (ENOENT, EACCES, etc.) with a short delay
+    const isSpawnError = err?.code === "ENOENT" || err?.code === "EACCES" || err?.message?.includes("exited with code");
+    if (isSpawnError) {
+      const agentName = opts.agentName || "subagent";
+      agentEvents.emit("agent:retry", { name: agentName, error: err.message });
+      await new Promise((r) => setTimeout(r, 2000));
+      return await spawnSubagentOnce(opts);
+    }
+    throw err;
+  }
+}
+
+async function spawnSubagentOnce(opts: SpawnSubagentOpts): Promise<string> {
   let tmpDir: string | null = null;
   let tmpFile: string | null = null;
 
@@ -998,41 +1014,9 @@ export async function askWorker(opts: {
     systemPrompt: opts.systemPrompt,
     model: workerConfig.model || "anthropic/claude-haiku-4-5",
     thinking: workerConfig.thinking || "off",
+    tools: workerConfig.tools.length > 0 ? workerConfig.tools : undefined,
     agentName: "worker",
   });
-}
-
-// ─── Deterministic Worker Prompt Template ─────────────────────────────────────
-
-export function generateWorkerPromptSync(opts: {
-  taskType: string;
-  context: string;
-  constraints: string[];
-}): {
-  systemPrompt: string;
-  userPrompt: string;
-  requiredFiles: string[];
-} {
-  const systemPrompt = `You are a BUILD/TEST FIXER for a C++20 CMake project (Delve terrain generator).
-Task type: ${opts.taskType}
-${opts.constraints.map((c) => `- ${c}`).join("\n")}
-
-## Output Format
-For each file to fix, output the COMPLETE file:
-
-### FILE: <path>
-#### ACTION: MODIFY
-\`\`\`cpp
-[COMPLETE file content with fixes applied]
-\`\`\`
-
-CRITICAL: Output the ENTIRE file content, not just changed lines.`;
-
-  return {
-    systemPrompt,
-    userPrompt: opts.context,
-    requiredFiles: [],
-  };
 }
 
 // ─── Agent Tool: generate_worker_prompt (Sonnet) ────────────────────────────

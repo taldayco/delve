@@ -1448,9 +1448,19 @@ export default function (pi: ExtensionAPI) {
   }
 
   function recordFailure(phase: string, reason: string): void {
-    writeState("failure_report.md",
-      `# Pipeline Failure\n\n- **Phase:** ${phase}\n- **Reason:** ${reason}\n- **Time:** ${new Date().toISOString()}\n`
-    );
+    const timestamp = new Date().toISOString();
+    const report = `# Pipeline Failure\n\n- **Phase:** ${phase}\n- **Reason:** ${reason}\n- **Time:** ${timestamp}\n`;
+    // Write individual report (writeState archives previous version)
+    writeState("failure_report.md", report);
+    // Also append to running failure log for quick debugging
+    const logEntry = `- [${timestamp}] **${phase}**: ${reason}\n`;
+    try {
+      const { appendFileSync, mkdirSync } = require("node:fs");
+      const { join } = require("node:path");
+      const logPath = join(process.cwd(), ".pi/state/failure_log.md");
+      mkdirSync(join(process.cwd(), ".pi/state"), { recursive: true });
+      appendFileSync(logPath, logEntry, "utf-8");
+    } catch { /* ignore append failures */ }
   }
 }
 

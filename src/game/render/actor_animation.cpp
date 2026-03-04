@@ -1,35 +1,44 @@
 #include "actor_animation.h"
+#include "actor.h"
+#include "animation_log.h"
+#include "input/input.h"
+#include "camera/camera.h"
 #include "terrain/map_util.h"
 #include "game_state.h"
+#include <flecs.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <algorithm>
 
-// Critically damped spring SmoothDamp (GPG4 approximation).
-static float smooth_damp(float current, float target, float &vel_state,
+// Unity-style critically-damped spring smoother.
+// Smoothly moves 'current' toward 'target' over time.
+// 'velocity' is internal state that must persist across calls.
+// smooth_time: ~time to reach target (seconds)
+static float smooth_damp(float current, float target, float *velocity,
                           float smooth_time, float dt) {
     float omega = 2.0f / smooth_time;
-    float x = omega * dt;
-    float exp_factor = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
-    float change = current - target;
-    float temp = (vel_state + omega * change) * dt;
-    vel_state = (vel_state - omega * temp) * exp_factor;
-    return target + (change + temp) * exp_factor;
+    float x     = omega * dt;
+    float exp_f = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float delta = current - target;
+    float temp  = (*velocity + omega * delta) * dt;
+    *velocity   = (*velocity - omega * temp) * exp_f;
+    return target + (delta + temp) * exp_f;
 }
 
-void register_animation_systems(
-    flecs::world &ecs,
-    flecs::entity player_entity,
-    InputSystem &input,
-    AnimationLogger &anim_log)
-{
-    // -------------------------------------------------------------------------
-    // PlayerMovementSystem
-    // -------------------------------------------------------------------------
+void register_animation_systems(flecs::world &ecs,
+                                 InputSystem    &input,
+                                 CameraState    &camera,
+                                 AnimationLogger &anim_log,
+                                 flecs::entity   player_entity) {
+
+    // =========================================================================
+    // 1. PlayerMovementSystem
+    //    Input → SmoothDamp velocity → position update
+    // =========================================================================
     ecs.system("PlayerMovementSystem")
         .kind(flecs::PostUpdate)
-        .run([&ecs, player_entity, &input](flecs::iter &) {
+        .run([&input, &ecs, player_entity](flecs::iter &) {
             auto *phase = ecs.get<GamePhase>();
             if (!phase || phase->current != GamePhase::Playing) return;
             if (!player_entity.is_alive()) return;
@@ -43,12 +52,23 @@ void register_animation_systems(
             auto &in = input.state();
             float dt = ecs.delta_time();
 
-            vel->x = 0.0f;
-            vel->y = 0.0f;
-            if (in.held[(int)Action::MoveUp])    vel->y -= gait->move_speed;
-            if (in.held[(int)Action::MoveDown])  vel->y += gait->move_speed;
-            if (in.held[(int)Action::MoveLeft])  vel->x -= gait->move_speed;
-            if (in.held[(int)Action::MoveRight]) vel->x += gait->move_speed;
+            // Desired velocity from raw input.
+            float desired_x = 0.0f, desired_y = 0.0f;
+            if (in.held[(int)Action::MoveUp])    desired_y -= gait->move_speed;
+            if (in.held[(int)Action::MoveDown])  desired_y += gait->move_speed;
+            if (in.held[(int)Action::MoveLeft])  desired_x -= gait->move_speed;
+            if (in.held[(int)Action::MoveRight]) desired_x += gait->move_speed;
+
+            // SmoothDamp: critically-damped spring gives feeling of mass.
+            // smooth_time = 0.1s → reaches ~90% of target in ~0.2s.
+            const float smooth_time = 0.1f;
+            anim->smooth_velocity.x = smooth_damp(anim->smooth_velocity.x, desired_x,
+                                                    &anim->velocity_rate.x, smooth_time, dt);
+            anim->smooth_velocity.y = smooth_damp(anim->smooth_velocity.y, desired_y,
+                                                    &anim->velocity_rate.y, smooth_time, dt);
+
+            vel->x = anim->smooth_velocity.x;
+            vel->y = anim->smooth_velocity.y;
 
             t->x += vel->x * dt;
             t->y += vel->y * dt;
@@ -56,15 +76,12 @@ void register_animation_systems(
             float spd = sqrtf(vel->x * vel->x + vel->y * vel->y);
             if (spd > 0.001f)
                 t->facing = atan2f(vel->y, vel->x);
-
-            // Speed-adaptive step duration: fast movement = shorter steps.
-            float speed_t = std::min(spd / gait->move_speed, 1.0f);
-            gait->step_duration = 0.45f - speed_t * (0.45f - 0.22f);
         });
 
-    // -------------------------------------------------------------------------
-    // ActorGroundingSystem
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 2. ActorGroundingSystem
+    //    Snap actor Z to terrain height using adaptive spring.
+    // =========================================================================
     ecs.system("ActorGroundingSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -76,14 +93,17 @@ void register_animation_systems(
                 float target_z = sample_world_height(*map_data, t.x, t.y)
                                  + cfg.leg_len + cfg.shin_len;
                 float dist = fabsf(target_z - t.z);
+                // Stiffer spring when far from ground, softer when close.
                 float k = 8.0f + dist * 4.0f;
                 t.z = t.z + (target_z - t.z) * (1.0f - expf(-k * dt));
             });
         });
 
-    // -------------------------------------------------------------------------
-    // GaitSystem
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 3. GaitSystem
+    //    Procedural foot placement with one-foot-planted invariant.
+    //    Speed-adaptive step duration for natural cadence.
+    // =========================================================================
     ecs.system("GaitSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -93,9 +113,10 @@ void register_animation_systems(
             float dt = ecs.delta_time();
             ecs.each([&](ActorTag,
                          const Transform &t,
-                         const Velocity &vel,
-                         ProceduralGait &gait,
-                         LegState &legs,
+                         const Velocity   &vel,
+                         ProceduralGait   &gait,
+                         LegState         &legs,
+                         AnimationState   &anim,
                          const ActorConfig &cfg) {
 
                 float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
@@ -107,9 +128,16 @@ void register_animation_systems(
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
-                float hip_sign[2] = { -1.0f, 1.0f };
+                // Hip socket XY offsets (legs offset left/right of facing).
+                float hip_sign[2] = { -1.0f, 1.0f }; // left, right
+
+                // Speed-adaptive step duration: faster movement = quicker steps.
+                float speed_ratio      = std::max(0.2f, std::min(1.0f, speed / gait.move_speed));
+                float adaptive_duration = gait.step_duration / speed_ratio;
 
                 for (int leg = 0; leg < 2; ++leg) {
+                    int other_leg = 1 - leg;
+
                     float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
                     float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
 
@@ -120,14 +148,12 @@ void register_animation_systems(
                     float pred_z = sample_world_height(*map_data, pred_x, pred_y);
 
                     if (!legs.stepping[leg]) {
-                        // One-foot-planted invariant: never step both feet at once.
-                        int other = 1 - leg;
-                        bool other_planted = !legs.stepping[other];
-
-                        float dx = legs.foot[leg].x - pred_x;
-                        float dy = legs.foot[leg].y - pred_y;
+                        float dx   = legs.foot[leg].x - pred_x;
+                        float dy   = legs.foot[leg].y - pred_y;
                         float dist = sqrtf(dx * dx + dy * dy);
 
+                        // One-foot-planted invariant: only step if other foot is planted.
+                        bool other_planted = !legs.stepping[other_leg];
                         if (dist > gait.stride_len * 0.5f && other_planted) {
                             legs.stepping[leg]  = true;
                             legs.progress[leg]  = 0.0f;
@@ -137,8 +163,9 @@ void register_animation_systems(
                     }
 
                     if (legs.stepping[leg]) {
-                        legs.progress[leg] += dt / gait.step_duration;
+                        legs.progress[leg] += dt / adaptive_duration;
                         float progress = std::min(legs.progress[leg], 1.0f);
+                        // Cubic smoothstep.
                         float ts = progress * progress * (3.0f - 2.0f * progress);
 
                         legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
@@ -147,6 +174,10 @@ void register_animation_systems(
                                            + sinf(progress * glm::pi<float>()) * gait.step_height;
 
                         if (legs.progress[leg] >= 1.0f) {
+                            // Log contact velocity for grounding quality metrics.
+                            float step_dist = glm::length(legs.target[leg] - legs.prev_foot[leg]);
+                            anim.foot_contact_velocity[leg] = step_dist / adaptive_duration;
+
                             legs.stepping[leg] = false;
                             legs.foot[leg]     = legs.target[leg];
                         }
@@ -155,19 +186,22 @@ void register_animation_systems(
             });
         });
 
-    // -------------------------------------------------------------------------
-    // IKSystem
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 4. IKSystem
+    //    Two-bone analytical leg IK + pendulum arm swing with joint delay chain.
+    // =========================================================================
     ecs.system("IKSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
             float dt = ecs.delta_time();
             ecs.each([&](ActorTag,
-                         const Transform &t,
-                         const LegState &legs,
+                         const Transform  &t,
+                         const Velocity   &vel,
+                         const LegState   &legs,
                          const ActorConfig &cfg,
-                         AnimationState &anim,
-                         SkeletonPose &pose) {
+                         const ProceduralGait &gait,
+                         AnimationState   &anim,
+                         SkeletonPose     &pose) {
 
                 using J = Joint;
 
@@ -196,52 +230,94 @@ void register_animation_systems(
 
                 // Shoulder sockets.
                 glm::vec3 l_shoulder(chest.x - rght_x * cfg.shoulder_width,
-                                     chest.y - rght_y * cfg.shoulder_width, chest.z);
+                                      chest.y - rght_y * cfg.shoulder_width,
+                                      chest.z);
                 glm::vec3 r_shoulder(chest.x + rght_x * cfg.shoulder_width,
-                                     chest.y + rght_y * cfg.shoulder_width, chest.z);
+                                      chest.y + rght_y * cfg.shoulder_width,
+                                      chest.z);
                 pose.joints[(int)J::L_SHOULDER] = l_shoulder;
                 pose.joints[(int)J::R_SHOULDER] = r_shoulder;
 
-                // Pendulum arm swing: phases advance at fixed angular rate.
-                float arm_speed = 3.0f;
-                anim.arm_phase[0] += arm_speed * dt;
-                anim.arm_phase[1] += arm_speed * dt;
+                // ---- Pendulum arm swing ----
+                // Arm swing opposes the ipsilateral leg (anti-phase).
+                // Scale amplitude with speed.
+                float speed       = sqrtf(vel.x * vel.x + vel.y * vel.y);
+                float swing_amp   = std::min(1.0f, speed / gait.move_speed) * glm::radians(30.0f);
 
-                float swing_amp = 0.12f;
-                float l_swing = sinf(anim.arm_phase[0]) * swing_amp;
-                float r_swing = sinf(anim.arm_phase[1]) * swing_amp;
+                // Left arm opposes left leg (offset by pi).
+                float l_arm_target = sinf(gait.phase + glm::pi<float>()) * swing_amp;
+                float r_arm_target = sinf(gait.phase)                      * swing_amp;
+                anim.l_arm_target = l_arm_target;
+                anim.r_arm_target = r_arm_target;
 
-                // Forearm lag via SmoothDamp.
-                anim.arm_delay[0] = smooth_damp(anim.arm_delay[0], l_swing, anim.arm_delay_vel[0], 0.08f, dt);
-                anim.arm_delay[1] = smooth_damp(anim.arm_delay[1], r_swing, anim.arm_delay_vel[1], 0.08f, dt);
+                // Successive breaking (joint delay chain):
+                // Shoulder fast (0.02s), elbow medium (0.05s), wrist slowest (0.08s).
+                anim.l_shoulder_smooth = smooth_damp(anim.l_shoulder_smooth, l_arm_target,
+                                                      &anim.l_shoulder_rate, 0.02f, dt);
+                anim.l_elbow_smooth    = smooth_damp(anim.l_elbow_smooth, anim.l_shoulder_smooth,
+                                                      &anim.l_elbow_rate,    0.05f, dt);
+                anim.l_wrist_smooth    = smooth_damp(anim.l_wrist_smooth, anim.l_elbow_smooth,
+                                                      &anim.l_wrist_rate,    0.08f, dt);
 
-                // Elbow = shoulder + swing along facing direction.
-                glm::vec3 l_elbow = l_shoulder
-                    + glm::vec3(fwd_x * l_swing, fwd_y * l_swing, -cfg.arm_len * 0.8f);
-                glm::vec3 r_elbow = r_shoulder
-                    + glm::vec3(fwd_x * r_swing, fwd_y * r_swing, -cfg.arm_len * 0.8f);
+                anim.r_shoulder_smooth = smooth_damp(anim.r_shoulder_smooth, r_arm_target,
+                                                      &anim.r_shoulder_rate, 0.02f, dt);
+                anim.r_elbow_smooth    = smooth_damp(anim.r_elbow_smooth, anim.r_shoulder_smooth,
+                                                      &anim.r_elbow_rate,    0.05f, dt);
+                anim.r_wrist_smooth    = smooth_damp(anim.r_wrist_smooth, anim.r_elbow_smooth,
+                                                      &anim.r_wrist_rate,    0.08f, dt);
 
-                // Wrist: forearm lag applied to delayed swing.
-                glm::vec3 l_wrist = l_elbow
-                    + glm::vec3(fwd_x * anim.arm_delay[0] * 0.5f,
-                                fwd_y * anim.arm_delay[0] * 0.5f,
-                                -cfg.forearm_len * 0.8f);
-                glm::vec3 r_wrist = r_elbow
-                    + glm::vec3(fwd_x * anim.arm_delay[1] * 0.5f,
-                                fwd_y * anim.arm_delay[1] * 0.5f,
-                                -cfg.forearm_len * 0.8f);
+                // Apply arm swing: rotate "hang down" vector by swing angle around forward axis.
+                // right_axis is the local right direction of the character.
+                glm::vec3 right_axis(rght_x, rght_y, 0.0f);
+                glm::vec3 hang_down(0.0f, 0.0f, -1.0f);
 
-                pose.joints[(int)J::L_ELBOW] = l_elbow;
-                pose.joints[(int)J::L_WRIST] = l_wrist;
-                pose.joints[(int)J::R_ELBOW] = r_elbow;
-                pose.joints[(int)J::R_WRIST] = r_wrist;
+                auto swing_elbow_pos = [&](glm::vec3 shoulder, float shoulder_angle,
+                                            float elbow_angle, float arm_len) -> glm::vec3 {
+                    // Rotate hang_down around right_axis by shoulder_angle.
+                    // Using Rodrigues' rotation formula: v_rot = v*cos(a) + (k×v)*sin(a) + k*(k·v)*(1-cos(a))
+                    float ca = cosf(shoulder_angle);
+                    float sa = sinf(shoulder_angle);
+                    glm::vec3 k = right_axis;
+                    glm::vec3 v = hang_down;
+                    glm::vec3 shoulder_dir = v * ca + glm::cross(k, v) * sa + k * glm::dot(k, v) * (1.0f - ca);
+                    (void)elbow_angle;
+                    return shoulder + shoulder_dir * arm_len;
+                };
 
-                // Leg IK — two-bone analytical solver.
+                auto swing_wrist_pos = [&](glm::vec3 elbow_pos, float shoulder_angle,
+                                            float elbow_angle_add, float forearm_len) -> glm::vec3 {
+                    float total_angle = shoulder_angle + glm::radians(25.0f) + elbow_angle_add * 0.3f;
+                    float ca = cosf(total_angle);
+                    float sa = sinf(total_angle);
+                    glm::vec3 k = right_axis;
+                    glm::vec3 v = hang_down;
+                    glm::vec3 dir = v * ca + glm::cross(k, v) * sa + k * glm::dot(k, v) * (1.0f - ca);
+                    return elbow_pos + dir * forearm_len;
+                };
+
+                // Left arm.
+                glm::vec3 l_elbow_pos = swing_elbow_pos(l_shoulder, anim.l_shoulder_smooth,
+                                                          anim.l_elbow_smooth, cfg.arm_len);
+                glm::vec3 l_wrist_pos = swing_wrist_pos(l_elbow_pos, anim.l_shoulder_smooth,
+                                                          anim.l_wrist_smooth, cfg.forearm_len);
+                pose.joints[(int)J::L_ELBOW] = l_elbow_pos;
+                pose.joints[(int)J::L_WRIST] = l_wrist_pos;
+
+                // Right arm.
+                glm::vec3 r_elbow_pos = swing_elbow_pos(r_shoulder, anim.r_shoulder_smooth,
+                                                          anim.r_elbow_smooth, cfg.arm_len);
+                glm::vec3 r_wrist_pos = swing_wrist_pos(r_elbow_pos, anim.r_shoulder_smooth,
+                                                          anim.r_wrist_smooth, cfg.forearm_len);
+                pose.joints[(int)J::R_ELBOW] = r_elbow_pos;
+                pose.joints[(int)J::R_WRIST] = r_wrist_pos;
+
+                // ---- Leg IK — two-bone analytical solver ----
                 auto solve_leg = [&](glm::vec3 H, glm::vec3 foot_target,
                                      float a, float b,
                                      glm::vec3 pole,
                                      glm::vec3 &out_knee, glm::vec3 &out_ankle) {
                     out_ankle = foot_target;
+
                     glm::vec3 axis = foot_target - H;
                     float D = glm::length(axis);
                     float min_D = fabsf(a - b) + 0.001f;
@@ -269,12 +345,14 @@ void register_animation_systems(
                     out_knee = H + dir_to_knee * a;
                 };
 
+                // Left leg.
                 glm::vec3 l_pole = l_hip + glm::vec3(-rght_x * 0.5f, -rght_y * 0.5f, 0.2f);
                 glm::vec3 l_knee, l_ankle;
                 solve_leg(l_hip, legs.foot[0], cfg.leg_len, cfg.shin_len, l_pole, l_knee, l_ankle);
                 pose.joints[(int)J::L_KNEE]  = l_knee;
                 pose.joints[(int)J::L_ANKLE] = l_ankle;
 
+                // Right leg.
                 glm::vec3 r_pole = r_hip + glm::vec3(rght_x * 0.5f, rght_y * 0.5f, 0.2f);
                 glm::vec3 r_knee, r_ankle;
                 solve_leg(r_hip, legs.foot[1], cfg.leg_len, cfg.shin_len, r_pole, r_knee, r_ankle);
@@ -283,79 +361,110 @@ void register_animation_systems(
             });
         });
 
-    // -------------------------------------------------------------------------
-    // SkeletonFinaliseSystem
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 5. SkeletonFinaliseSystem
+    //    Hip sway, acceleration-driven torso lean (successive breaking), idle micro-motion.
+    // =========================================================================
     ecs.system("SkeletonFinaliseSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
             float dt = ecs.delta_time();
             ecs.each([&](ActorTag,
-                         const Transform &t,
-                         const Velocity &vel,
+                         const Transform  &t,
+                         const Velocity   &vel,
                          const ActorConfig &cfg,
-                         AnimationState &anim,
-                         SkeletonPose &pose) {
+                         AnimationState   &anim,
+                         SkeletonPose     &pose) {
 
                 using J = Joint;
-                float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
 
-                float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+                float speed   = sqrtf(vel.x * vel.x + vel.y * vel.y);
+                float rght_x  = -sinf(t.facing), rght_y = cosf(t.facing);
 
-                // --- Velocity SmoothDamp ---
-                anim.smooth_vel_x = smooth_damp(anim.smooth_vel_x, vel.x,
-                                                anim.vel_spring_x, 0.12f, dt);
-                anim.smooth_vel_y = smooth_damp(anim.smooth_vel_y, vel.y,
-                                                anim.vel_spring_y, 0.12f, dt);
-
-                // --- Torso lean ---
-                float lean_strength = 0.03f;
-                float lean_x = 0.0f, lean_y = 0.0f;
-                if (speed > 0.001f) {
-                    lean_x = vel.x / speed * lean_strength * speed;
-                    lean_y = vel.y / speed * lean_strength * speed;
-                }
-                anim.lean_x = lean_x;
-                anim.lean_y = lean_y;
-
-                // Successive spine breaking: SPINE 30%, CHEST 62%, NECK+HEAD 100%.
-                glm::vec3 lean_vec(lean_x, lean_y, 0.0f);
-                pose.joints[(int)J::SPINE] += lean_vec * 0.30f;
-                pose.joints[(int)J::CHEST] += lean_vec * 0.62f;
-                pose.joints[(int)J::NECK]  += lean_vec * 1.00f;
-                pose.joints[(int)J::HEAD]  += lean_vec * 1.00f;
-
-                // --- CoM hip sway ---
+                // ---- CoM hip sway ----
                 anim.sway_phase += speed * dt * 6.0f;
-                float sway = sinf(anim.sway_phase) * anim.sway_amt;
+                float sway = sinf(anim.sway_phase) * anim.sway_amount;
                 glm::vec3 sway_vec(rght_x * sway, rght_y * sway, 0.0f);
                 pose.joints[(int)J::ROOT]  += sway_vec;
                 pose.joints[(int)J::SPINE] += sway_vec;
                 pose.joints[(int)J::CHEST] += sway_vec;
 
-                // --- Idle breathing (fades at speed) ---
-                float idle_blend = std::max(0.0f, 1.0f - speed / 2.0f);
-                anim.breath_phase += 0.25f * glm::two_pi<float>() * dt;
-                float breath = cosf(anim.breath_phase) * 0.012f * idle_blend;
-                pose.joints[(int)J::CHEST].z += breath;
-                pose.joints[(int)J::NECK].z  += breath;
-                pose.joints[(int)J::HEAD].z  += breath;
+                // ---- Acceleration-driven torso lean ----
+                // Compute acceleration from velocity delta.
+                glm::vec3 cur_vel(vel.x, vel.y, 0.0f);
+                glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - anim.prev_velocity) / dt)
+                                               : glm::vec3(0.0f);
+                anim.prev_velocity = cur_vel;
 
-                // --- Idle weight-shift (fades at speed) ---
-                anim.weight_phase += 0.18f * glm::two_pi<float>() * dt;
-                float weight_sway = sinf(anim.weight_phase) * 0.015f * idle_blend;
-                glm::vec3 weight_vec(rght_x * weight_sway, rght_y * weight_sway, 0.0f);
-                pose.joints[(int)J::ROOT]  += weight_vec;
-                pose.joints[(int)J::SPINE] += weight_vec;
+                // Map acceleration to lean direction and magnitude.
+                float accel_len = glm::length(accel);
+                const float max_lean = glm::radians(8.0f);
+                float lean_factor = std::min(accel_len * 0.015f, max_lean);
+
+                glm::vec3 lean_dir{0.0f};
+                if (accel_len > 0.01f)
+                    lean_dir = glm::normalize(accel);
+
+                float target_lean_x = lean_dir.x * lean_factor;
+                float target_lean_y = lean_dir.y * lean_factor;
+
+                // Successive breaking: each segment gets smoother lean with increasing lag.
+                // Chest: fast response (0.05s), full lean
+                anim.chest_lean_x = smooth_damp(anim.chest_lean_x, target_lean_x,
+                                                 &anim.chest_lean_x_rate, 0.05f, dt);
+                anim.chest_lean_y = smooth_damp(anim.chest_lean_y, target_lean_y,
+                                                 &anim.chest_lean_y_rate, 0.05f, dt);
+
+                // Neck: medium lag (0.08s), 70% of chest lean
+                anim.neck_lean_x = smooth_damp(anim.neck_lean_x, anim.chest_lean_x * 0.7f,
+                                               &anim.neck_lean_x_rate, 0.08f, dt);
+                anim.neck_lean_y = smooth_damp(anim.neck_lean_y, anim.chest_lean_y * 0.7f,
+                                               &anim.neck_lean_y_rate, 0.08f, dt);
+
+                // Head: slowest lag (0.12s), 50% of chest lean
+                anim.head_lean_x = smooth_damp(anim.head_lean_x, anim.chest_lean_x * 0.5f,
+                                               &anim.head_lean_x_rate, 0.12f, dt);
+                anim.head_lean_y = smooth_damp(anim.head_lean_y, anim.chest_lean_y * 0.5f,
+                                               &anim.head_lean_y_rate, 0.12f, dt);
+
+                // Also update the legacy lean_x/lean_y for log_finalize compatibility.
+                anim.lean_x = anim.chest_lean_x;
+                anim.lean_y = anim.chest_lean_y;
+
+                // Apply per-segment lean as position offsets.
+                pose.joints[(int)J::CHEST] += glm::vec3(anim.chest_lean_x, anim.chest_lean_y, 0.0f);
+                pose.joints[(int)J::NECK]  += glm::vec3(anim.neck_lean_x,  anim.neck_lean_y,  0.0f);
+                pose.joints[(int)J::HEAD]  += glm::vec3(anim.head_lean_x,  anim.head_lean_y,  0.0f);
+
+                // ---- Idle micro-motion ----
+                // Fade out based on speed (smooth transition, no pop).
+                float idle_blend = 1.0f - std::min(1.0f, speed / 0.2f);
+
+                // Breathing: ~0.6 Hz sine wave on chest/neck/head Z.
+                anim.breath_phase += dt * glm::two_pi<float>() * 0.6f;
+                float breath_offset = sinf(anim.breath_phase) * 0.008f * idle_blend;
+                pose.joints[(int)J::CHEST].z += breath_offset;
+                pose.joints[(int)J::NECK].z  += breath_offset * 0.6f;
+                pose.joints[(int)J::HEAD].z  += breath_offset * 0.4f;
+
+                // Idle weight-shift: ~0.15 Hz lateral sway on root/spine.
+                anim.idle_sway_phase += dt * glm::two_pi<float>() * 0.15f;
+                float idle_sway = sinf(anim.idle_sway_phase) * 0.01f * idle_blend;
+                glm::vec3 idle_sway_vec(rght_x * idle_sway, rght_y * idle_sway, 0.0f);
+                pose.joints[(int)J::ROOT]  += idle_sway_vec;
+                pose.joints[(int)J::SPINE] += idle_sway_vec;
+
+                (void)cfg;
             });
         });
 
-    // -------------------------------------------------------------------------
-    // AnimationLogSystem
-    // -------------------------------------------------------------------------
+    // =========================================================================
+    // 6. AnimationLogSystem
+    //    JSONL frame telemetry — runs after SkeletonFinaliseSystem.
+    // =========================================================================
     ecs.system("AnimationLogSystem")
         .kind(flecs::PostUpdate)
-        .run([&ecs, player_entity, &anim_log](flecs::iter &) {
+        .run([&anim_log, &ecs, &camera, player_entity](flecs::iter &) {
             if (!anim_log.active) return;
             if (!player_entity.is_alive()) return;
 
@@ -374,10 +483,12 @@ void register_animation_systems(
             anim_log.log_gait(*gait);
             anim_log.log_legs(*legs, *t, *cfg);
             anim_log.log_joints(*pose, *t);
-            anim_log.log_dynamics(*anim);
-            anim_log.log_arm_swing(*pose, *t, *anim);
-            anim_log.log_grounding(*legs, *t);
-            anim_log.log_finalize(anim->sway_phase, anim->sway_amt, anim->lean_x, anim->lean_y);
+            anim_log.log_finalize(anim->sway_phase, anim->sway_amount,
+                                   anim->lean_x, anim->lean_y);
+            anim_log.log_camera(camera);
+            anim_log.log_dynamics(*anim, *vel, dt);
+            anim_log.log_arm_swing(*anim);
+            anim_log.log_grounding(*anim, *legs);
             anim_log.end_frame();
         });
 }

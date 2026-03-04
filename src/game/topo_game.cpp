@@ -481,7 +481,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                 frame.cmd, frame.swapchain,
                 frame.swapchain_w, frame.swapchain_h);
         if (actor_pass) {
-          if (actor_vert_count > 0)
+          if (actor_vert_count > 0 && !skel_ready)
             actor_renderer.draw(actor_pass, frame.cmd, uniforms,
                                 terrain_renderer.get_point_light_ssbo(),
                                 actor_vert_count);

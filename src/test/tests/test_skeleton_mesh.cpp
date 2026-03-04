@@ -1,4 +1,5 @@
 #include "test_harness.h"
+#include "geometry_metrics.h"
 #include "actor.h"
 #include "render/skeleton_mesh.h"
 #include <glm/glm.hpp>
@@ -77,7 +78,8 @@ DELVE_TEST(skeleton_mesh_has_valid_indices) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.indices.size(), 0);
-    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
+    // Line-list topology: indices come in pairs.
+    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
     return true;
 }
 
@@ -133,21 +135,17 @@ DELVE_TEST(skeleton_mesh_bone_weights_in_range) {
     return true;
 }
 
-DELVE_TEST(skeleton_mesh_no_degenerate_triangles) {
+DELVE_TEST(skeleton_mesh_no_degenerate_edges) {
     SkeletonPose pose = make_standing_pose();
     BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
+    // Line-list topology: check no edge has identical endpoints.
     int degenerate = 0;
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        const glm::vec3 &p0 = mesh.vertices[mesh.indices[i]].position;
-        const glm::vec3 &p1 = mesh.vertices[mesh.indices[i + 1]].position;
-        const glm::vec3 &p2 = mesh.vertices[mesh.indices[i + 2]].position;
-        glm::vec3 cross = glm::cross(p1 - p0, p2 - p0);
-        if (glm::length(cross) < 1e-8f) ++degenerate;
+    for (size_t i = 0; i + 1 < mesh.indices.size(); i += 2) {
+        if (mesh.indices[i] == mesh.indices[i + 1]) ++degenerate;
     }
-    int total_tris = (int)(mesh.indices.size() / 3);
-    EXPECT_LT(degenerate, total_tris / 50 + 1);
+    EXPECT_EQ(degenerate, 0);
     return true;
 }
 
@@ -196,7 +194,8 @@ DELVE_TEST(skeleton_mesh_sides_3_valid_topology) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.vertices.size(), 0);
-    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
+    // Line-list topology: indices come in pairs.
+    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
     uint32_t vcount = (uint32_t)mesh.vertices.size();
     for (uint32_t idx : mesh.indices) EXPECT_LT((int)idx, (int)vcount);
     return true;
@@ -210,7 +209,7 @@ DELVE_TEST(skeleton_mesh_taper_reduces_end_radius) {
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.vertices.size(), 0);
-    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
+    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
     return true;
 }
 
@@ -261,7 +260,7 @@ DELVE_TEST(generate_skeleton_mesh_vector_overload_short_vector) {
     std::vector<BoneProfile> profiles(4); // only 4 profiles
     SkeletonMesh mesh = generate_skeleton_mesh(pose, profiles);
     EXPECT_GT((int)mesh.vertices.size(), 0);
-    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
+    EXPECT_EQ((int)(mesh.indices.size() % 2), 0);
     return true;
 }
 
@@ -332,5 +331,77 @@ DELVE_TEST(bone_vertex_layout_size) {
     // BoneVertex must be tightly-packed to a predictable size.
     // vec3 pos (12) + vec3 normal (12) + ivec2 bone_index (8) + float weight (4) = 36
     static_assert(sizeof(BoneVertex) == 36, "BoneVertex must be 36 bytes");
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Wireframe visual quality tests
+// ---------------------------------------------------------------------------
+
+DELVE_TEST(skeleton_wireframe_no_zero_length_edges) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    std::vector<glm::vec3> positions;
+    positions.reserve(mesh.vertices.size());
+    for (const auto &v : mesh.vertices) positions.push_back(v.position);
+
+    int zero_edges = count_zero_length_edges(mesh.indices, positions);
+    EXPECT_EQ(zero_edges, 0);
+    return true;
+}
+
+DELVE_TEST(skeleton_wireframe_verts_near_joints) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    std::vector<glm::vec3> positions;
+    positions.reserve(mesh.vertices.size());
+    for (const auto &v : mesh.vertices) positions.push_back(v.position);
+
+    std::vector<glm::vec3> joints(pose.joints, pose.joints + (int)Joint::COUNT);
+
+    // All wireframe vertices must be within limb_radius (0.06) + half a limb length
+    // of the nearest joint. Use a generous bound of 0.5 world units.
+    bool all_near = all_wireframe_verts_near_skeleton(positions, joints, 0.5f);
+    EXPECT_TRUE(all_near);
+    return true;
+}
+
+DELVE_TEST(skeleton_wireframe_index_count_exact_mixed_profiles) {
+    SkeletonPose pose = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    // Torso bones: 4 sides; limb bones: 6 sides — matches SegmentProfiles defaults.
+    for (int i = 0; i < 4; ++i)  prof[i].sides = 4;
+    for (int i = 4; i < NUM_BONE_PROFILES; ++i) prof[i].sides = 6;
+
+    SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
+
+    // Expected: 4 bones * 4 sides * 3 * 2  +  12 bones * 6 sides * 3 * 2
+    size_t expected = (size_t)(4 * 4 * 3 * 2) + (size_t)(12 * 6 * 3 * 2);
+    EXPECT_EQ((int)mesh.indices.size(), (int)expected);
+    return true;
+}
+
+DELVE_TEST(skeleton_wireframe_deform_preserves_edge_nonzero_length) {
+    SkeletonPose bind = make_standing_pose();
+    BoneProfileArray prof = make_default_profiles();
+    SkeletonMesh mesh = generate_skeleton_mesh(bind, prof);
+
+    // Apply a significant pose change.
+    SkeletonPose posed = bind;
+    posed.joints[(int)Joint::L_KNEE].z -= 0.3f;
+    posed.joints[(int)Joint::R_KNEE].z -= 0.3f;
+    posed.joints[(int)Joint::L_ELBOW].y += 0.2f;
+    deform_skeleton_mesh(mesh, posed);
+
+    std::vector<glm::vec3> positions;
+    positions.reserve(mesh.vertices.size());
+    for (const auto &v : mesh.vertices) positions.push_back(v.position);
+
+    int zero_edges = count_zero_length_edges(mesh.indices, positions);
+    EXPECT_EQ(zero_edges, 0);
     return true;
 }

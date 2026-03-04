@@ -98,7 +98,7 @@ void ActorRenderer::init_skel_pipeline(SDL_GPUDevice *device,
     SDL_GPUShader *frag = asset_manager->load_shader(
         "actor_skel.frag",
         shader_dir + "/actor_skel.frag.glsl.spv",
-        SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 0);
+        SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
 
     if (!vert || !frag) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -108,7 +108,7 @@ void ActorRenderer::init_skel_pipeline(SDL_GPUDevice *device,
         return;
     }
 
-    SDL_GPUTextureFormat swapchain_fmt = SDL_GetGPUSwapchainTextureFormat(device, window);
+    SDL_GPUTextureFormat swapchain_fmt = SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM;
 
     // Vertex layout: matches SkeletonVertex (36 bytes).
     // position(vec3) @ 0, normal(vec3) @ 12, bone_index0(float) @ 24,
@@ -139,7 +139,7 @@ void ActorRenderer::init_skel_pipeline(SDL_GPUDevice *device,
     pi.vertex_input_state.vertex_attributes          = attrs;
     pi.vertex_input_state.num_vertex_attributes      = 5;
 
-    pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pi.primitive_type = SDL_GPU_PRIMITIVETYPE_LINELIST;
 
     pi.rasterizer_state.fill_mode  = SDL_GPU_FILLMODE_FILL;
     pi.rasterizer_state.cull_mode  = SDL_GPU_CULLMODE_BACK;
@@ -469,8 +469,6 @@ void ActorRenderer::draw_skel(SDL_GPURenderPass *pass,
     // No bone matrices — CPU LBS already wrote world-space positions.
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
 
-    // Fragment uniforms: slot 0 = BoneColors (per-bone tint).
-    SDL_PushGPUFragmentUniformData(cmd, 0, skel_bone_colors, sizeof(skel_bone_colors));
 
     SDL_GPUBufferBinding vbind = { skel_vbo, 0 };
     SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);

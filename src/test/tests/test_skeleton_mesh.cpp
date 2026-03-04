@@ -14,7 +14,6 @@ static SkeletonPose make_standing_pose() {
     ActorConfig c;
     SkeletonPose p;
 
-    // Root at origin, spine above, chest above spine, etc.
     p.joints[(int)Joint::ROOT]       = { 0.0f, 0.0f, 0.0f };
     p.joints[(int)Joint::SPINE]      = { 0.0f, 0.0f, c.torso_len * 0.5f };
     p.joints[(int)Joint::CHEST]      = { 0.0f, 0.0f, c.torso_len };
@@ -40,12 +39,12 @@ static SkeletonPose make_standing_pose() {
     return p;
 }
 
-static BoneProfiles make_default_profiles() {
-    BoneProfiles p;
+static BoneProfileArray make_default_profiles() {
+    BoneProfileArray p;
     for (auto &bp : p) {
-        bp.radius = 0.06f;
-        bp.taper  = 0.0f;
-        bp.sides  = 6;
+        bp.radius_start = 0.06f;
+        bp.radius_end   = 0.06f;
+        bp.sides        = 6;
     }
     return p;
 }
@@ -56,7 +55,7 @@ static BoneProfiles make_default_profiles() {
 
 DELVE_TEST(skeleton_mesh_generates_vertices) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.vertices.size(), 0);
@@ -65,7 +64,7 @@ DELVE_TEST(skeleton_mesh_generates_vertices) {
 
 DELVE_TEST(skeleton_mesh_vertex_budget_under_500) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_LT((int)mesh.vertices.size(), 500);
@@ -74,18 +73,17 @@ DELVE_TEST(skeleton_mesh_vertex_budget_under_500) {
 
 DELVE_TEST(skeleton_mesh_has_valid_indices) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_GT((int)mesh.indices.size(), 0);
-    // Indices must be a multiple of 3 (triangles).
     EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
     return true;
 }
 
 DELVE_TEST(skeleton_mesh_index_in_vertex_range) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     uint32_t vcount = (uint32_t)mesh.vertices.size();
@@ -97,7 +95,7 @@ DELVE_TEST(skeleton_mesh_index_in_vertex_range) {
 
 DELVE_TEST(skeleton_mesh_rest_positions_match_vertex_count) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_EQ((int)mesh.rest_positions.size(), (int)mesh.vertices.size());
@@ -106,7 +104,7 @@ DELVE_TEST(skeleton_mesh_rest_positions_match_vertex_count) {
 
 DELVE_TEST(skeleton_mesh_normals_are_unit_length) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     int bad = 0;
@@ -114,7 +112,6 @@ DELVE_TEST(skeleton_mesh_normals_are_unit_length) {
         float len = glm::length(v.normal);
         if (len < 0.9f || len > 1.1f) ++bad;
     }
-    // Allow up to 5% degenerate normals.
     int total = (int)mesh.vertices.size();
     EXPECT_LT(bad, total / 20 + 1);
     return true;
@@ -122,20 +119,23 @@ DELVE_TEST(skeleton_mesh_normals_are_unit_length) {
 
 DELVE_TEST(skeleton_mesh_bone_weights_in_range) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     for (const auto &v : mesh.vertices) {
         EXPECT_RANGE(v.bone_weight, 0.0f, 1.0f);
-        EXPECT_RANGE(v.bone_indices[0], 0, (int)Joint::COUNT - 1);
-        EXPECT_RANGE(v.bone_indices[1], 0, (int)Joint::COUNT - 1);
+        // bone_index0/1 are stored as float but represent integer bone indices.
+        int bi0 = (int)v.bone_index0;
+        int bi1 = (int)v.bone_index1;
+        EXPECT_RANGE(bi0, 0, NUM_BONE_PROFILES - 1);
+        EXPECT_RANGE(bi1, 0, NUM_BONE_PROFILES - 1);
     }
     return true;
 }
 
 DELVE_TEST(skeleton_mesh_no_degenerate_triangles) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     int degenerate = 0;
@@ -147,19 +147,17 @@ DELVE_TEST(skeleton_mesh_no_degenerate_triangles) {
         if (glm::length(cross) < 1e-8f) ++degenerate;
     }
     int total_tris = (int)(mesh.indices.size() / 3);
-    // Allow up to 2% degenerate triangles.
     EXPECT_LT(degenerate, total_tris / 50 + 1);
     return true;
 }
 
 DELVE_TEST(skeleton_mesh_deform_preserves_vertex_count) {
     SkeletonPose bind = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(bind, prof);
 
     size_t before = mesh.vertices.size();
 
-    // Move both feet forward slightly for deformation.
     SkeletonPose posed = bind;
     posed.joints[(int)Joint::L_ANKLE].x += 0.1f;
     posed.joints[(int)Joint::R_ANKLE].x -= 0.1f;
@@ -171,14 +169,12 @@ DELVE_TEST(skeleton_mesh_deform_preserves_vertex_count) {
 
 DELVE_TEST(skeleton_mesh_deform_changes_positions) {
     SkeletonPose bind = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(bind, prof);
 
-    // Record original positions.
     std::vector<glm::vec3> original;
     for (const auto &v : mesh.vertices) original.push_back(v.position);
 
-    // Apply a non-trivial pose change.
     SkeletonPose posed = bind;
     posed.joints[(int)Joint::L_KNEE].z -= 0.2f;
     posed.joints[(int)Joint::R_KNEE].z -= 0.2f;
@@ -189,14 +185,13 @@ DELVE_TEST(skeleton_mesh_deform_changes_positions) {
         if (glm::length(mesh.vertices[i].position - original[i]) > 1e-4f)
             ++changed;
     }
-    // At least some vertices must have moved.
     EXPECT_GT(changed, 0);
     return true;
 }
 
 DELVE_TEST(skeleton_mesh_sides_3_valid_topology) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     for (auto &bp : prof) bp.sides = 3;
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
@@ -209,12 +204,11 @@ DELVE_TEST(skeleton_mesh_sides_3_valid_topology) {
 
 DELVE_TEST(skeleton_mesh_taper_reduces_end_radius) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
-    // Full taper on all bones: end radius should be ~0.
-    for (auto &bp : prof) bp.taper = 1.0f;
+    BoneProfileArray prof = make_default_profiles();
+    // Full taper: set end radius to ~0.
+    for (auto &bp : prof) bp.radius_end = 0.001f;
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    // Mesh should still have valid vertices and indices.
     EXPECT_GT((int)mesh.vertices.size(), 0);
     EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
     return true;
@@ -222,7 +216,7 @@ DELVE_TEST(skeleton_mesh_taper_reduces_end_radius) {
 
 DELVE_TEST(skeleton_mesh_gpu_buffers_null_before_upload) {
     SkeletonPose pose = make_standing_pose();
-    BoneProfiles prof = make_default_profiles();
+    BoneProfileArray prof = make_default_profiles();
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
     EXPECT_FALSE(mesh.is_uploaded());

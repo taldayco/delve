@@ -69,9 +69,13 @@ void ActorRenderer::init(SDL_GPUDevice *device,
         if (skel_transfer) { SDL_ReleaseGPUTransferBuffer(device, skel_transfer); skel_transfer = nullptr; }
     }
 
-    // Default bone colors (neutral grey).
-    for (int i = 0; i < 18; ++i)
-        skel_bone_colors[i] = glm::vec4(0.55f, 0.52f, 0.48f, 1.0f);
+    // Default bone colors per BoneSeg.
+    glm::vec4 torso_color(0.45f, 0.42f, 0.38f, 1.0f);
+    glm::vec4 limb_color (0.55f, 0.52f, 0.48f, 1.0f);
+    for (int i = 0; i < (int)BoneSeg::COUNT; ++i) {
+        bool torso = (i <= (int)BoneSeg::HEAD_SEG);
+        skel_bone_colors[i] = torso ? torso_color : limb_color;
+    }
 
     initialized = true;
     SDL_Log("ActorRenderer: Initialized (VBO capacity: %u vertices)", MAX_ACTOR_VERTICES);
@@ -84,10 +88,13 @@ void ActorRenderer::init_skel_pipeline(SDL_GPUDevice *device,
 
     std::string shader_dir = SHADER_DIR;
 
+    // Vertex shader: 1 uniform buffer (SceneUniforms at slot 0 = set1,binding0).
+    // No bone matrices — CPU LBS writes world-space positions before upload.
     SDL_GPUShader *vert = asset_manager->load_shader(
         "actor_skel.vert",
         shader_dir + "/actor_skel.vert.glsl.spv",
-        SDL_GPU_SHADERSTAGE_VERTEX, 2, 0);
+        SDL_GPU_SHADERSTAGE_VERTEX, 1, 0);
+    // Fragment shader: 1 uniform buffer (BoneColors at slot 0).
     SDL_GPUShader *frag = asset_manager->load_shader(
         "actor_skel.frag",
         shader_dir + "/actor_skel.frag.glsl.spv",
@@ -103,17 +110,25 @@ void ActorRenderer::init_skel_pipeline(SDL_GPUDevice *device,
 
     SDL_GPUTextureFormat swapchain_fmt = SDL_GetGPUSwapchainTextureFormat(device, window);
 
+    // Vertex layout: matches SkeletonVertex (36 bytes).
+    // position(vec3) @ 0, normal(vec3) @ 12, bone_index0(float) @ 24,
+    // bone_weight(float) @ 28, bone_index1(float) @ 32.
     SDL_GPUVertexBufferDescription vbuf = {};
     vbuf.slot       = 0;
     vbuf.pitch      = sizeof(SkeletonVertex);
     vbuf.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
     SDL_GPUVertexAttribute attrs[5] = {};
-    attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(SkeletonVertex, pos_x)      };
-    attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(SkeletonVertex, nx)          };
-    attrs[2] = { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,  (Uint32)offsetof(SkeletonVertex, bone_index)  };
-    attrs[3] = { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,  (Uint32)offsetof(SkeletonVertex, bone_weight) };
-    attrs[4] = { 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,  (Uint32)offsetof(SkeletonVertex, bone_index2) };
+    attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                 (Uint32)offsetof(SkeletonVertex, position)    };
+    attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,
+                 (Uint32)offsetof(SkeletonVertex, normal)      };
+    attrs[2] = { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
+                 (Uint32)offsetof(SkeletonVertex, bone_index0) };
+    attrs[3] = { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
+                 (Uint32)offsetof(SkeletonVertex, bone_weight) };
+    attrs[4] = { 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,
+                 (Uint32)offsetof(SkeletonVertex, bone_index1) };
 
     SDL_GPUGraphicsPipelineCreateInfo pi = {};
     pi.vertex_shader   = vert;
@@ -159,7 +174,6 @@ void ActorRenderer::cleanup(SDL_GPUDevice *device) {
     if (skel_ibo)     { SDL_ReleaseGPUBuffer(device, skel_ibo);            skel_ibo     = nullptr; }
     if (skel_transfer){ SDL_ReleaseGPUTransferBuffer(device, skel_transfer); skel_transfer = nullptr; }
     if (skel_pipeline){ SDL_ReleaseGPUGraphicsPipeline(device, skel_pipeline); skel_pipeline = nullptr; }
-    // pipeline and dummy_ssbo_ are borrowed — not released here.
     pipeline    = nullptr;
     dummy_ssbo_ = nullptr;
     initialized = false;
@@ -187,7 +201,6 @@ void ActorRenderer::emit_cylinder_ex(const glm::vec3 &a, const glm::vec3 &b,
     else
         right = glm::normalize(glm::cross(up, glm::vec3(1.0f, 0.0f, 0.0f)));
 
-    // Apply twist: rotate right around up axis.
     if (fabsf(twist_rad) > 1e-5f) {
         float c = cosf(twist_rad), s = sinf(twist_rad);
         glm::vec3 fwd_tmp = glm::cross(up, right);
@@ -231,7 +244,7 @@ void ActorRenderer::emit_cylinder_ex(const glm::vec3 &a, const glm::vec3 &b,
     }
 }
 
-void ActorRenderer::regenerate(const SkeletonPose &pose, BoneProfiles &profiles) {
+void ActorRenderer::regenerate(const SkeletonPose &pose, SegmentProfiles &profiles) {
     using J = Joint;
     auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 
@@ -240,25 +253,24 @@ void ActorRenderer::regenerate(const SkeletonPose &pose, BoneProfiles &profiles)
     std::vector<BasaltVertex> verts;
     verts.reserve(regen_verts_.capacity() > 0 ? regen_verts_.capacity() : 512);
 
-    // Emit one cylinder per BoneSeg in declaration order.
     struct SegDef { J a; J b; BoneSeg seg; };
     static const SegDef segs[] = {
-        { J::ROOT,       J::SPINE,       BoneSeg::SPINE          },
-        { J::SPINE,      J::CHEST,       BoneSeg::CHEST_CORE     },
-        { J::CHEST,      J::NECK,        BoneSeg::NECK_SEG       },
-        { J::NECK,       J::HEAD,        BoneSeg::HEAD_SEG       },
+        { J::ROOT,       J::SPINE,       BoneSeg::SPINE           },
+        { J::SPINE,      J::CHEST,       BoneSeg::CHEST_CORE      },
+        { J::CHEST,      J::NECK,        BoneSeg::NECK_SEG        },
+        { J::NECK,       J::HEAD,        BoneSeg::HEAD_SEG        },
         { J::CHEST,      J::L_SHOULDER,  BoneSeg::L_SHOULDER_CONN },
-        { J::L_SHOULDER, J::L_ELBOW,     BoneSeg::L_UPPER_ARM    },
-        { J::L_ELBOW,    J::L_WRIST,     BoneSeg::L_FOREARM      },
+        { J::L_SHOULDER, J::L_ELBOW,     BoneSeg::L_UPPER_ARM     },
+        { J::L_ELBOW,    J::L_WRIST,     BoneSeg::L_FOREARM       },
         { J::CHEST,      J::R_SHOULDER,  BoneSeg::R_SHOULDER_CONN },
-        { J::R_SHOULDER, J::R_ELBOW,     BoneSeg::R_UPPER_ARM    },
-        { J::R_ELBOW,    J::R_WRIST,     BoneSeg::R_FOREARM      },
-        { J::ROOT,       J::L_HIP,       BoneSeg::L_HIP_CONN     },
-        { J::L_HIP,      J::L_KNEE,      BoneSeg::L_UPPER_LEG    },
-        { J::L_KNEE,     J::L_ANKLE,     BoneSeg::L_LOWER_LEG    },
-        { J::ROOT,       J::R_HIP,       BoneSeg::R_HIP_CONN     },
-        { J::R_HIP,      J::R_KNEE,      BoneSeg::R_UPPER_LEG    },
-        { J::R_KNEE,     J::R_ANKLE,     BoneSeg::R_LOWER_LEG    },
+        { J::R_SHOULDER, J::R_ELBOW,     BoneSeg::R_UPPER_ARM     },
+        { J::R_ELBOW,    J::R_WRIST,     BoneSeg::R_FOREARM       },
+        { J::ROOT,       J::L_HIP,       BoneSeg::L_HIP_CONN      },
+        { J::L_HIP,      J::L_KNEE,      BoneSeg::L_UPPER_LEG     },
+        { J::L_KNEE,     J::L_ANKLE,     BoneSeg::L_LOWER_LEG     },
+        { J::ROOT,       J::R_HIP,       BoneSeg::R_HIP_CONN      },
+        { J::R_HIP,      J::R_KNEE,      BoneSeg::R_UPPER_LEG     },
+        { J::R_KNEE,     J::R_ANKLE,     BoneSeg::R_LOWER_LEG     },
     };
 
     for (const auto &s : segs) {
@@ -292,7 +304,7 @@ void ActorRenderer::draw_ui(const SkeletonPose &pose) {
     bool any_changed = false;
 
     for (int i = 0; i < (int)BoneSeg::COUNT; ++i) {
-        BoneProfile &bp = bone_profiles.bones[i];
+        BoneProfile &bp = segment_profiles.bones[i];
 
         ImGui::PushID(i);
         if (ImGui::TreeNodeEx(seg_names[i], ImGuiTreeNodeFlags_None)) {
@@ -308,14 +320,15 @@ void ActorRenderer::draw_ui(const SkeletonPose &pose) {
         ImGui::PopID();
     }
 
-    if (any_changed)
-        regenerate(pose, bone_profiles);
+    if (any_changed) {
+        regenerate(pose, segment_profiles);
+        skel_profiles_dirty_ = true;
+    }
 }
 
 uint32_t ActorRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     if (!initialized || !actor_vbo || !transfer_buf) return 0;
 
-    // If regenerate() was called, upload the prebuilt verts instead of ECS traversal.
     if (regen_dirty_ && regen_vertex_count_ > 0) {
         regen_dirty_ = false;
 
@@ -417,12 +430,6 @@ void ActorRenderer::upload_mesh(SDL_GPUCommandBuffer *cmd, const SkeletonMesh &m
     SDL_EndGPUCopyPass(cp);
 
     skel_index_count = ic;
-
-    // Cache bone data for draw.
-    for (int i = 0; i < 18; ++i) {
-        skel_bone_matrices[i] = mesh.bone_matrices[i];
-        skel_bone_colors[i]   = glm::vec4(mesh.bone_colors[i], 1.0f);
-    }
 }
 
 void ActorRenderer::draw(SDL_GPURenderPass *pass,
@@ -458,12 +465,12 @@ void ActorRenderer::draw_skel(SDL_GPURenderPass *pass,
 
     SDL_BindGPUGraphicsPipeline(pass, skel_pipeline);
 
-    // Vertex uniforms: slot 0 = SceneUniforms, slot 1 = BoneMatrices.
-    SDL_PushGPUVertexUniformData(cmd, 0, &uniforms,           sizeof(SceneUniforms));
-    SDL_PushGPUVertexUniformData(cmd, 1, skel_bone_matrices,  sizeof(skel_bone_matrices));
+    // Vertex uniforms: slot 0 = SceneUniforms (view/projection).
+    // No bone matrices — CPU LBS already wrote world-space positions.
+    SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
 
-    // Fragment uniforms: slot 0 = BoneColors.
-    SDL_PushGPUFragmentUniformData(cmd, 0, skel_bone_colors,  sizeof(skel_bone_colors));
+    // Fragment uniforms: slot 0 = BoneColors (per-bone tint).
+    SDL_PushGPUFragmentUniformData(cmd, 0, skel_bone_colors, sizeof(skel_bone_colors));
 
     SDL_GPUBufferBinding vbind = { skel_vbo, 0 };
     SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);

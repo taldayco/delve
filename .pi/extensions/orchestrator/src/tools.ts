@@ -294,14 +294,14 @@ export function getDiff(cwd?: string): string {
 
 // ─── Deterministic Tool: get_codebase_context ──────────────────────────────
 
-export function getCodebaseContext(task: string): string {
+export function getCodebaseContext(task: string, baseCwd?: string): string {
   // Gather relevant context based on task keywords
   const sections: string[] = [];
 
   // Always include project overview
   const { readFileSync, existsSync } = require("node:fs");
   const { join } = require("node:path");
-  const cwd = process.cwd();
+  const cwd = baseCwd || process.cwd();
 
   // Read config.h for constants
   const configPath = join(cwd, "src/game/config.h");
@@ -330,7 +330,7 @@ export function getCodebaseContext(task: string): string {
     for (const dir of dirs) {
       if (listedDirs.has(dir)) continue;
       listedDirs.add(dir);
-      const ls = shell(`find ${dir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) | sort 2>/dev/null`);
+      const ls = shell(`find ${dir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) | sort 2>/dev/null`, cwd);
       if (ls.ok && ls.stdout.trim()) {
         sections.push(`### Files in ${dir}\n${ls.stdout.trim()}`);
       }
@@ -339,7 +339,7 @@ export function getCodebaseContext(task: string): string {
 
   // If no specific subsystem matched, show the main terrain and game dirs
   if (listedDirs.size === 0) {
-    const ls = shell("find src/game -type f -name '*.h' | sort 2>/dev/null");
+    const ls = shell("find src/game -type f -name '*.h' | sort 2>/dev/null", cwd);
     if (ls.ok) {
       sections.push(`### Header files in src/game\n${ls.stdout.trim()}`);
     }
@@ -352,10 +352,10 @@ export function getCodebaseContext(task: string): string {
  * Get codebase context scoped to a single canonical subsystem.
  * Returns config.h + file listings only for that subsystem's directories.
  */
-export function getSubsystemCodebaseContext(subsystem: string): string {
+export function getSubsystemCodebaseContext(subsystem: string, baseCwd?: string): string {
   const { readFileSync, existsSync } = require("node:fs");
   const { join } = require("node:path");
-  const cwd = process.cwd();
+  const cwd = baseCwd || process.cwd();
   const sections: string[] = [];
 
   // Always include project overview
@@ -376,7 +376,7 @@ export function getSubsystemCodebaseContext(subsystem: string): string {
     for (const dir of dirs) {
       if (listedDirs.has(dir)) continue;
       listedDirs.add(dir);
-      const ls = shell(`find ${dir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) | sort 2>/dev/null`);
+      const ls = shell(`find ${dir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) | sort 2>/dev/null`, cwd);
       if (ls.ok && ls.stdout.trim()) {
         sections.push(`### Files in ${dir}\n${ls.stdout.trim()}`);
       }

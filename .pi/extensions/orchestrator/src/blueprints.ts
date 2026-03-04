@@ -98,8 +98,9 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   resolve_subsystem: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     const subsystems = resolveSubsystems(ctx.prompt);
-    const codebaseContext = getCodebaseContext(ctx.prompt);
+    const codebaseContext = getCodebaseContext(ctx.prompt, wt);
     const contextFiles = extractFilePaths(codebaseContext);
     ctx.data.subsystems = subsystems;
     ctx.data.contextFiles = contextFiles;
@@ -107,6 +108,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   plan: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     const subsystems = ctx.data.subsystems || resolveSubsystems(ctx.prompt);
     let plan: string;
 
@@ -114,13 +116,13 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       // Parallel planning for multi-subsystem tasks
       const subsystemContexts: Record<string, string> = {};
       for (const sub of subsystems) {
-        subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+        subsystemContexts[sub] = getSubsystemCodebaseContext(sub, wt);
       }
-      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts });
+      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts, cwd: wt });
     } else {
       // Single-agent planning for single-subsystem tasks
-      const codebaseContext = getCodebaseContext(ctx.prompt);
-      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext });
+      const codebaseContext = getCodebaseContext(ctx.prompt, wt);
+      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext, cwd: wt });
     }
 
     ctx.data.plan = plan;
@@ -128,6 +130,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   implement: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     const subsystems = ctx.data.subsystems || resolveSubsystems(ctx.prompt);
     const contextFiles = ctx.data.contextFiles || [];
     const taskWithDiagnosis = ctx.data.diagnosis
@@ -141,10 +144,11 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
       // Retry planner with format correction if no subtasks parsed
       if (subtasks.length === 0) {
-        const codebaseContext = getCodebaseContext(ctx.prompt);
+        const codebaseContext = getCodebaseContext(ctx.prompt, wt);
         const correctedPlan = await askMetaPlanner({
           task: `Your previous output was:\n\n${ctx.data.plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
           codebaseContext: "",
+          cwd: wt,
         });
         subtasks = parseSubtasks(correctedPlan);
       }
@@ -154,7 +158,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         for (const sub of subtasks) {
           const agent = getSubsystemAgent(sub.subsystem);
           const subFiles = extractFilePaths(sub.task).concat(contextFiles);
-          implementations.push(await agent({ task: sub.task, files: subFiles }));
+          implementations.push(await agent({ task: sub.task, files: subFiles, cwd: wt }));
         }
         implementation = implementations.join("\n\n");
       } else {
@@ -163,12 +167,13 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
           task: taskWithDiagnosis,
           files: contextFiles,
           subsystems: subsystems,
+          cwd: wt,
         });
       }
     } else {
       const targetSubsystem = subsystems[0] || "engine";
       const agent = getSubsystemAgent(targetSubsystem);
-      implementation = await agent({ task: taskWithDiagnosis, files: contextFiles });
+      implementation = await agent({ task: taskWithDiagnosis, files: contextFiles, cwd: wt });
     }
 
     const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
@@ -176,7 +181,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       return { ok: false, output: "No FILE blocks produced" };
     }
 
-    applyFileBlocks(implementation, ctx.data.worktreePath);
+    applyFileBlocks(implementation, wt);
     ctx.data.implementation = implementation;
     return { ok: true, output: `Applied ${fileBlockCount} files` };
   },
@@ -192,6 +197,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         buildOutput: build.summary,
         round: round + 1,
         maxRounds: MAX_BUILD_FIX_ROUNDS,
+        cwd: wt,
       });
       applyFileBlocks(fix, wt);
     }
@@ -206,6 +212,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       task: ctx.prompt,
       changedFiles,
       implementationSummary: (ctx.data.implementation || "").slice(0, 2000),
+      cwd: wt,
     });
     applyFileBlocks(testCode, wt);
     return { ok: true, output: "Tests written" };
@@ -223,6 +230,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         round: round + 1,
         maxRounds: MAX_TEST_FIX_ROUNDS,
         isBuildFailure: !testResult.buildOk,
+        cwd: wt,
       });
       applyFileBlocks(fix, wt);
     }
@@ -231,12 +239,14 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   review: async (ctx) => {
-    const diff = getDiff(ctx.data.worktreePath);
+    const wt = ctx.data.worktreePath;
+    const diff = getDiff(wt);
     const testResults = readState("test_results.json");
     const review = await askReviewer({
       task: ctx.prompt,
       diff,
       testResults: ctx.data.testsOk ? "All tests PASSED." : `Tests FAILED.\n${testResults}`,
+      cwd: wt,
     });
 
     const decision = /\bAPPROVE\b/.test(review) && !/\bREQUEST_CHANGES\b/.test(review)
@@ -281,6 +291,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       task: ctx.prompt,
       testOutput: testResult.summary,
       recentCommits,
+      cwd: ctx.data.worktreePath,
     });
     ctx.data.diagnosis = diagnosis;
     writeState("diagnosis.md", diagnosis);

@@ -173,6 +173,7 @@ add_executable(topogen
     src/game/terrain/map_util.cpp
     src/game/render/actor_renderer.cpp
     src/game/render/actor_animation.cpp
+    src/game/render/skeleton_mesh.cpp
 )
 
 target_include_directories(topogen PRIVATE

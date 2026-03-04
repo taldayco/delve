@@ -199,14 +199,15 @@ let metricsRunCounter = 0;
 
 // ─── File Content Loader ───────────────────────────────────────────────────
 
-function loadFileContents(files: string[], budgetChars?: number): string {
+function loadFileContents(files: string[], budgetChars?: number, cwd?: string): string {
+  const basePath = cwd || PROJECT_ROOT;
   const perFile = budgetChars
     ? Math.floor(budgetChars / Math.max(files.length, 1))
     : 8000;
 
   const sections: string[] = [];
   for (const f of files) {
-    const fullPath = f.startsWith("/") ? f : join(PROJECT_ROOT, f);
+    const fullPath = f.startsWith("/") ? f : join(basePath, f);
     if (existsSync(fullPath) && statSync(fullPath).isFile()) {
       const content = readFileSync(fullPath, "utf-8");
       const truncated = content.length > perFile
@@ -396,6 +397,7 @@ interface SpawnSubagentOpts {
   signal?: AbortSignal;
   agentName?: string;
   timeoutMs?: number;
+  cwd?: string;
 }
 
 /**
@@ -474,7 +476,7 @@ async function spawnSubagentOnce(opts: SpawnSubagentOpts): Promise<string> {
     const SUBAGENT_TIMEOUT_MS = opts.timeoutMs ?? 3_600_000; // 1 hour
 
     const proc = spawn("pi", args, {
-      cwd: PROJECT_ROOT,
+      cwd: opts.cwd || PROJECT_ROOT,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -683,6 +685,7 @@ For each file change, output:
 interface SubsystemAgentOpts {
   task: string;
   files: string[];
+  cwd?: string;
 }
 
 async function callSubsystemAgent(
@@ -702,7 +705,7 @@ async function callSubsystemAgent(
   const systemTokens = estimateTokens(systemPrompt);
   const remainingChars = Math.max((budgetTokens - systemTokens) * 4 - 2000, 8000);
 
-  const fileContents = loadFileContents(opts.files, remainingChars);
+  const fileContents = loadFileContents(opts.files, remainingChars, opts.cwd);
 
   const prompt = `## Task\n${opts.task}\n\n## Current File Contents\n${fileContents}`;
 
@@ -714,6 +717,7 @@ async function callSubsystemAgent(
     thinking: agentConfig.thinking || "low",
     tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
     agentName: `${subsystem}-meta`,
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -730,6 +734,7 @@ async function callSubsystemAgent(
       tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
       expectFileBlocks: true,
       agentName: subsystem,
+      cwd: opts.cwd,
     });
     writeState(`${subsystem}_changes.md`, fallbackResult);
     return fallbackResult;
@@ -737,7 +742,7 @@ async function callSubsystemAgent(
 
   // Step 2: Delegate to Haiku workers in parallel
   console.error(`[meta-${subsystem}] Decomposed into ${parsed.subtasks.length} worker subtasks`);
-  const result = await delegateToWorkers(parsed, subsystem);
+  const result = await delegateToWorkers(parsed, subsystem, opts.cwd);
 
   writeState(`${subsystem}_changes.md`, result);
   return result;
@@ -780,6 +785,7 @@ async function askSubsystemPlanner(opts: {
   task: string;
   subsystem: string;
   codebaseContext: string;
+  cwd?: string;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -823,6 +829,7 @@ ${opts.codebaseContext}`;
     thinking: plannerConfig.thinking || "medium",
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
     agentName: `planner-${opts.subsystem}`,
+    cwd: opts.cwd,
   });
 }
 
@@ -835,6 +842,7 @@ ${opts.codebaseContext}`;
 export async function askParallelPlanner(opts: {
   task: string;
   subsystemContexts: Record<string, string>;
+  cwd?: string;
 }): Promise<string> {
   const subsystems = Object.keys(opts.subsystemContexts);
 
@@ -844,6 +852,7 @@ export async function askParallelPlanner(opts: {
       task: opts.task,
       subsystem,
       codebaseContext: opts.subsystemContexts[subsystem],
+      cwd: opts.cwd,
     })
   );
 
@@ -881,6 +890,7 @@ export async function askParallelPlanner(opts: {
 export async function askMetaPlanner(opts: {
   task: string;
   codebaseContext: string;
+  cwd?: string;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -931,6 +941,7 @@ ${opts.codebaseContext}`;
     thinking: plannerConfig.thinking || "medium",
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
     agentName: "planner",
+    cwd: opts.cwd,
   });
 
   writeState("plan.md", plan);
@@ -1108,19 +1119,21 @@ worker subtasks that Haiku-tier workers can execute independently.
 async function delegateToWorkers(
   decomposition: MetaDecomposition,
   subsystem: string,
+  cwd?: string,
 ): Promise<string> {
+  const basePath = cwd || PROJECT_ROOT;
   const workerConfig = loadAgentConfig("worker");
   const workerModel = workerConfig.model || "anthropic/claude-haiku-4-5";
 
   const workerPromises = decomposition.subtasks.map(async (st) => {
     // Load the target file and any context files
     const fileContents: Record<string, string> = {};
-    const targetPath = st.file.startsWith("/") ? st.file : join(PROJECT_ROOT, st.file);
+    const targetPath = st.file.startsWith("/") ? st.file : join(basePath, st.file);
     if (existsSync(targetPath) && statSync(targetPath).isFile()) {
       fileContents[st.file] = readFileSync(targetPath, "utf-8");
     }
     for (const dep of st.context_files.slice(0, 3)) {
-      const depPath = dep.startsWith("/") ? dep : join(PROJECT_ROOT, dep);
+      const depPath = dep.startsWith("/") ? dep : join(basePath, dep);
       if (existsSync(depPath) && statSync(depPath).isFile()) {
         const content = readFileSync(depPath, "utf-8");
         fileContents[dep] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
@@ -1147,6 +1160,7 @@ You receive a single file to modify and focused instructions.
       systemPrompt: workerSystemPrompt,
       task: st.worker_prompt,
       fileContents,
+      cwd,
     });
   });
 
@@ -1161,6 +1175,7 @@ export async function askMetaImplementer(opts: {
   task: string;
   files: string[];
   subsystems?: string[];
+  cwd?: string;
 }): Promise<string> {
   const skillNames = opts.subsystems || ["terrain", "engine", "shader", "actor"];
   const skillSections = skillNames
@@ -1216,7 +1231,7 @@ For each file that needs to change, produce a self-contained worker prompt that 
   const budgetTokens = Math.floor(limit * CONTEXT_BUDGET_RATIO);
   const systemTokens = estimateTokens(systemPrompt);
   const remainingChars = Math.max((budgetTokens - systemTokens) * 4 - 2000, 8000);
-  const fileContents = loadFileContents(opts.files, remainingChars);
+  const fileContents = loadFileContents(opts.files, remainingChars, opts.cwd);
 
   const prompt = `## Task
 ${opts.task}
@@ -1235,6 +1250,7 @@ ${fileContents}`;
     thinking: implementerConfig.thinking || "low",
     tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
     agentName: "implementer-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1251,6 +1267,7 @@ ${fileContents}`;
       tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
       expectFileBlocks: true,
       agentName: "implementer",
+      cwd: opts.cwd,
     });
     writeState("changes.md", fallbackResult);
     return fallbackResult;
@@ -1258,7 +1275,7 @@ ${fileContents}`;
 
   // Step 2: Delegate to Haiku workers in parallel
   console.error(`[meta-implementer] Decomposed into ${parsed.subtasks.length} worker subtasks`);
-  const result = await delegateToWorkers(parsed, "implementer");
+  const result = await delegateToWorkers(parsed, "implementer", opts.cwd);
 
   writeState("changes.md", result);
   return result;
@@ -1270,6 +1287,7 @@ export async function askMetaTester(opts: {
   task: string;
   changedFiles: string[];
   implementationSummary: string;
+  cwd?: string;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -1323,7 +1341,7 @@ that includes:
   const budgetTokens = Math.floor(limit * CONTEXT_BUDGET_RATIO);
   const systemTokens = estimateTokens(systemPrompt);
   const remainingChars = Math.max((budgetTokens - systemTokens) * 4 - 2000, 8000);
-  const fileContents = loadFileContents(opts.changedFiles, remainingChars);
+  const fileContents = loadFileContents(opts.changedFiles, remainingChars, opts.cwd);
 
   const prompt = `## Original Task
 ${opts.task}
@@ -1342,6 +1360,7 @@ ${fileContents}`;
     thinking: testerConfig.thinking || "low",
     tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
     agentName: "tester-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1357,13 +1376,14 @@ ${fileContents}`;
       thinking: testerConfig.thinking || "low",
       tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
       agentName: "tester",
+      cwd: opts.cwd,
     });
     return fallbackResult;
   }
 
   // Step 2: Delegate to Haiku workers in parallel
   console.error(`[meta-tester] Decomposed into ${parsed.subtasks.length} worker subtasks`);
-  const result = await delegateToWorkers(parsed, "tester");
+  const result = await delegateToWorkers(parsed, "tester", opts.cwd);
 
   return result;
 }
@@ -1374,6 +1394,7 @@ export async function askReviewer(opts: {
   task: string;
   diff: string;
   testResults: string;
+  cwd?: string;
 }): Promise<string> {
   const reviewerConfig = loadAgentConfig("reviewer");
   const model = reviewerConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1434,6 +1455,7 @@ ${opts.testResults}`;
     thinking: "low",
     tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
     agentName: "reviewer-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1472,6 +1494,7 @@ You are a CODE REVIEWER. Return APPROVE or REQUEST_CHANGES. No middle ground.
       thinking: reviewerConfig.thinking || "medium",
       tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
       agentName: "reviewer",
+      cwd: opts.cwd,
     });
     writeState("review.md", result);
     return result;
@@ -1490,6 +1513,7 @@ Output EXACTLY one line: PASS or FAIL: [brief reason with file:line references i
         model: workerConfig.model || "anthropic/claude-haiku-4-5",
         thinking: "off",
         agentName: `reviewer-worker-${st.file.split("/").pop()}`,
+        cwd: opts.cwd,
       });
       return `### ${st.file}\n${result}`;
     }),
@@ -1541,6 +1565,7 @@ Synthesize a final review verdict.`;
     model,
     thinking: reviewerConfig.thinking || "medium",
     agentName: "reviewer-synthesizer",
+    cwd: opts.cwd,
   });
 
   writeState("review.md", result);
@@ -1554,6 +1579,7 @@ export async function askWorker(opts: {
   task: string;
   fileContents?: Record<string, string>;
   maxTokens?: number;
+  cwd?: string;
 }): Promise<string> {
   let prompt = `## Task\n${opts.task}`;
 
@@ -1578,6 +1604,7 @@ export async function askWorker(opts: {
     thinking: workerConfig.thinking || "off",
     tools: workerConfig.tools.length > 0 ? workerConfig.tools : undefined,
     agentName: "worker",
+    cwd: opts.cwd,
   });
 }
 
@@ -1655,6 +1682,7 @@ export async function askBuildFixer(opts: {
   buildOutput: string;
   round: number;
   maxRounds: number;
+  cwd?: string;
 }): Promise<string> {
   const config = loadAgentConfig("build-fixer");
   const model = config.model || "anthropic/claude-sonnet-4-6";
@@ -1706,6 +1734,7 @@ Decompose these errors into per-file fix tasks.`;
     thinking: "low",
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "build-fixer-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1726,12 +1755,13 @@ Fix compilation errors. Output COMPLETE file content for each file:
       thinking: "off",
       tools: config.tools.length > 0 ? config.tools : undefined,
       agentName: "build-fixer",
+      cwd: opts.cwd,
     });
   }
 
   // Step 2: Delegate per-file fixes to Haiku workers in parallel
   console.error(`[meta-build-fixer] Decomposed into ${parsed.subtasks.length} per-file fix tasks`);
-  const result = await delegateToWorkers(parsed, "build-fixer");
+  const result = await delegateToWorkers(parsed, "build-fixer", opts.cwd);
   return result;
 }
 
@@ -1742,6 +1772,7 @@ export async function askTestFixer(opts: {
   round: number;
   maxRounds: number;
   isBuildFailure: boolean;
+  cwd?: string;
 }): Promise<string> {
   const what = opts.isBuildFailure ? "TEST BUILD" : "TESTS";
   const config = loadAgentConfig("test-fixer");
@@ -1795,6 +1826,7 @@ Decompose these failures into per-file fix tasks.`;
     thinking: "low",
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "test-fixer-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1815,12 +1847,13 @@ ${fixStrategy}. Output COMPLETE file content for each file:
       thinking: "off",
       tools: config.tools.length > 0 ? config.tools : undefined,
       agentName: "test-fixer",
+      cwd: opts.cwd,
     });
   }
 
   // Step 2: Delegate per-file fixes to Haiku workers in parallel
   console.error(`[meta-test-fixer] Decomposed into ${parsed.subtasks.length} per-file fix tasks`);
-  const result = await delegateToWorkers(parsed, "test-fixer");
+  const result = await delegateToWorkers(parsed, "test-fixer", opts.cwd);
   return result;
 }
 
@@ -1830,6 +1863,7 @@ export async function askDiagnoser(opts: {
   task: string;
   testOutput: string;
   recentCommits: string;
+  cwd?: string;
 }): Promise<string> {
   const diagnoserConfig = loadAgentConfig("diagnoser");
   const model = diagnoserConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1889,6 +1923,7 @@ Decompose these test failures into per-error analysis tasks.`;
     thinking: diagnoserConfig.thinking || "low",
     tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
     agentName: "diagnoser-meta",
+    cwd: opts.cwd,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1923,6 +1958,7 @@ Do NOT propose fixes — only diagnose.
       thinking: diagnoserConfig.thinking || "low",
       tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
       agentName: "diagnoser",
+      cwd: opts.cwd,
     });
   }
 
@@ -1932,10 +1968,11 @@ Do NOT propose fixes — only diagnose.
   const workerResults = await Promise.all(
     parsed.subtasks.map(async (st) => {
       // Load context files for the worker
+      const basePath = opts.cwd || PROJECT_ROOT;
       const fileContents: Record<string, string> = {};
       const allFiles = [st.file, ...st.context_files].slice(0, 3);
       for (const f of allFiles) {
-        const fullPath = f.startsWith("/") ? f : join(PROJECT_ROOT, f);
+        const fullPath = f.startsWith("/") ? f : join(basePath, f);
         if (existsSync(fullPath) && statSync(fullPath).isFile()) {
           const content = readFileSync(fullPath, "utf-8");
           fileContents[f] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
@@ -1948,6 +1985,7 @@ Analyze the test failure described below by examining the provided source code.
 Output EXACTLY: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief explanation]`,
         task: st.worker_prompt,
         fileContents,
+        cwd: opts.cwd,
       });
       return `### ${st.file}\n${result}`;
     }),
@@ -2001,6 +2039,7 @@ Synthesize a unified diagnosis from the worker findings.`;
     model,
     thinking: diagnoserConfig.thinking || "low",
     agentName: "diagnoser-synthesizer",
+    cwd: opts.cwd,
   });
 }
 

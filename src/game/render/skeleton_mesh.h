@@ -6,35 +6,41 @@
 #include <cstdint>
 #include <vector>
 
-// Per-vertex data for skinned skeletal mesh rendering.
-// bone_indices: two influencing joint indices (ivec2)
-// bone_weight:  blend weight for bone_indices[0]; (1 - bone_weight) for [1]
+// Per-vertex data for a CPU-skinned (LBS) skeletal mesh.
+// bone_index0/1: primary/secondary bone indices [0..NUM_BONES-1] stored as float
+//               so they feed directly into float vertex attributes without reinterpret.
+// bone_weight:  blend weight for bone_index0; (1 - bone_weight) for bone_index1.
 struct SkeletonVertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::ivec2 bone_indices;  // joint indices into SkeletonPose::joints
-    float      bone_weight;   // weight for bone_indices[0]
+    glm::vec3 position;    // world-space (updated by deform_skeleton_mesh each frame)
+    glm::vec3 normal;      // world-space (updated by deform_skeleton_mesh each frame)
+    float     bone_index0; // primary bone index [0..17]
+    float     bone_weight; // blend weight for bone_index0
+    float     bone_index1; // secondary bone index [0..17]
 };
+static_assert(sizeof(SkeletonVertex) == 36, "SkeletonVertex must be 36 bytes");
 
-// Cylindrical cross-section profile for one bone segment.
-// Drives procedural mesh generation around the bone axis.
+// Per-bone-segment profile for procedural mesh generation.
+// One entry per bone in the BONES table (16 total, matching BoneSeg order).
 struct BoneProfile {
-    float radius  = 0.06f;   // cylinder radius in world units
-    float taper   = 0.0f;    // 0 = uniform, 1 = fully tapered at distal end
-    int   sides   = 6;       // polygon cross-section resolution
+    float radius_start = 0.06f; // cross-section radius at the start (parent) joint
+    float radius_end   = 0.06f; // cross-section radius at the end (child) joint
+    int   sides        = 6;     // polygon cross-section side count [3..6]
+    float taper        = 0.0f;  // unused by mesh gen (use radius_end directly); kept for compat
+    float twist        = 0.0f;  // cross-section rotation along bone axis in degrees
 };
 
-// 18-element array — one entry per joint (Joint::COUNT = 17) plus one spare.
-using BoneProfiles = std::array<BoneProfile, 18>;
+// 16-element array — one entry per bone (matches BoneSeg order in actor_renderer.h).
+static constexpr int NUM_BONE_PROFILES = 16;
+using BoneProfileArray = std::array<BoneProfile, NUM_BONE_PROFILES>;
 
-// GPU-ready skinned mesh.
-// Vertex/index data lives in CPU vectors until upload_to_gpu() is called.
+// GPU-ready CPU-skinned mesh.
+// Vertex/index data lives in CPU vectors and is re-uploaded every frame after deform.
 struct SkeletonMesh {
     std::vector<SkeletonVertex> vertices;
     std::vector<uint32_t>       indices;
 
-    // Local bone-space positions for each vertex (same length as vertices).
-    // Used by deform_skeleton_mesh to recompute world positions each call.
+    // Bone-local rest-pose positions for each vertex (same length as vertices).
+    // Used by deform_skeleton_mesh to reconstruct world positions from current pose.
     std::vector<glm::vec3> rest_positions;
 
     // Owned GPU buffers (null until explicitly uploaded).
@@ -49,16 +55,14 @@ struct SkeletonMesh {
     }
 };
 
-struct SkeletonPose;
-
 // Build a CPU-only SkeletonMesh from the given bind pose + per-bone profiles.
+// profiles[bi] describes the cross-section for bone bi (0..NUM_BONE_PROFILES-1).
 // Positions are stored in local bone space (rest_positions). vertices[i].position
-// is set to the world position at bind pose. Call deform_skeleton_mesh each
-// frame to update positions to a new pose.
-SkeletonMesh generate_skeleton_mesh(const SkeletonPose &bind_pose,
-                                    const BoneProfiles &profiles);
+// is set to the world position at bind pose. Call deform_skeleton_mesh each frame.
+SkeletonMesh generate_skeleton_mesh(const SkeletonPose     &bind_pose,
+                                    const BoneProfileArray &profiles);
 
-// LBS deform: for each vertex, reconstruct world position from local bone-space
+// LBS deform: for each vertex, reconstruct world position/normal from local bone-space
 // rest_positions using the current joint positions in `pose`.
-// bone_weight blends between bone_indices[0] and bone_indices[1] transforms.
+// bone_weight blends between bone_index0 and bone_index1 transforms.
 void deform_skeleton_mesh(SkeletonMesh &mesh, const SkeletonPose &pose);

@@ -2,62 +2,42 @@
 #include "terrain/terrain_mesh.h"   // BasaltVertex, SceneUniforms
 #include "gpu/gpu.h"                // UploadManager
 #include "core/asset_manager.h"
+#include "render/skeleton_mesh.h"   // SkeletonVertex, SkeletonMesh, BoneProfile, BoneProfileArray
 #include <SDL3/SDL_gpu.h>
 #include <flecs.h>
 #include <glm/glm.hpp>
 #include <vector>
 
-// Vertex layout for GPU-skinned skeleton meshes.
-struct SkeletonVertex {
-    float pos_x, pos_y, pos_z;
-    float nx, ny, nz;
-    float bone_index;   // primary bone (0–17), stored as float
-    float bone_weight;  // blend weight [0,1] for primary bone
-    float bone_index2;  // secondary bone
-};
-
-// CPU-side skeleton mesh with bone matrices and per-bone colors.
-struct SkeletonMesh {
-    std::vector<SkeletonVertex> vertices;
-    std::vector<uint32_t>       indices;
-    glm::mat4 bone_matrices[18];
-    glm::vec3 bone_colors[18];
-};
-
-// Per-bone-segment rendering profile for hot-reload UI.
-struct BoneProfile {
-    float radius_start = 0.06f;
-    float radius_end   = 0.06f; // taper: end radius (same = no taper)
-    int   sides        = 6;     // polygon count [3, 6]
-    float twist        = 0.0f;  // rotation along bone axis in degrees
-};
-
-// Indices into BoneProfiles::bones[].
+// Indices into SegmentProfiles::bones[].
+// Order must match the BONES table in skeleton_mesh.cpp.
 enum class BoneSeg : int {
-    SPINE = 0,      // ROOT → SPINE
-    CHEST_CORE,     // SPINE → CHEST
-    NECK_SEG,       // CHEST → NECK
-    HEAD_SEG,       // NECK → HEAD
-    L_SHOULDER_CONN,// CHEST → L_SHOULDER
-    L_UPPER_ARM,    // L_SHOULDER → L_ELBOW
-    L_FOREARM,      // L_ELBOW → L_WRIST
-    R_SHOULDER_CONN,// CHEST → R_SHOULDER
-    R_UPPER_ARM,    // R_SHOULDER → R_ELBOW
-    R_FOREARM,      // R_ELBOW → R_WRIST
-    L_HIP_CONN,     // ROOT → L_HIP
-    L_UPPER_LEG,    // L_HIP → L_KNEE
-    L_LOWER_LEG,    // L_KNEE → L_ANKLE
-    R_HIP_CONN,     // ROOT → R_HIP
-    R_UPPER_LEG,    // R_HIP → R_KNEE
-    R_LOWER_LEG,    // R_KNEE → R_ANKLE
+    SPINE = 0,        // ROOT → SPINE
+    CHEST_CORE,       // SPINE → CHEST
+    NECK_SEG,         // CHEST → NECK
+    HEAD_SEG,         // NECK → HEAD
+    L_SHOULDER_CONN,  // CHEST → L_SHOULDER
+    L_UPPER_ARM,      // L_SHOULDER → L_ELBOW
+    L_FOREARM,        // L_ELBOW → L_WRIST
+    R_SHOULDER_CONN,  // CHEST → R_SHOULDER
+    R_UPPER_ARM,      // R_SHOULDER → R_ELBOW
+    R_FOREARM,        // R_ELBOW → R_WRIST
+    L_HIP_CONN,       // SPINE → L_HIP
+    L_UPPER_LEG,      // L_HIP → L_KNEE
+    L_LOWER_LEG,      // L_KNEE → L_ANKLE
+    R_HIP_CONN,       // SPINE → R_HIP
+    R_UPPER_LEG,      // R_HIP → R_KNEE
+    R_LOWER_LEG,      // R_KNEE → R_ANKLE
     COUNT
 };
+static_assert((int)BoneSeg::COUNT == NUM_BONE_PROFILES,
+              "BoneSeg::COUNT must equal NUM_BONE_PROFILES");
 
-// Per-segment overrides. Initialised to match ActorConfig defaults.
-struct BoneProfiles {
+// Per-segment profile array used by the ImGui UI and generate_skeleton_mesh.
+// Indexed by BoneSeg. Array layout matches BONES table in skeleton_mesh.cpp.
+struct SegmentProfiles {
     BoneProfile bones[(int)BoneSeg::COUNT];
 
-    BoneProfiles() {
+    SegmentProfiles() {
         // Torso segments: 4-sided, thicker
         for (int i : { (int)BoneSeg::SPINE, (int)BoneSeg::CHEST_CORE,
                        (int)BoneSeg::NECK_SEG, (int)BoneSeg::HEAD_SEG }) {
@@ -72,6 +52,13 @@ struct BoneProfiles {
             bones[i].sides        = 6;
         }
     }
+
+    // Convert to BoneProfileArray for generate_skeleton_mesh.
+    BoneProfileArray to_profile_array() const {
+        BoneProfileArray arr;
+        for (int i = 0; i < (int)BoneSeg::COUNT; ++i) arr[(size_t)i] = bones[i];
+        return arr;
+    }
 };
 
 struct SkeletonPose;
@@ -79,7 +66,6 @@ struct SkeletonPose;
 class ActorRenderer {
 public:
     // terrain_pipeline and dummy_ssbo are borrowed (not owned) from TerrainRenderer.
-    // dummy_ssbo fills binding slots 1 and 2 (pipeline declares num_storage_buffers=3).
     void init(SDL_GPUDevice *device,
               SDL_GPUGraphicsPipeline *terrain_pipeline,
               SDL_GPUBuffer *dummy_ssbo,
@@ -96,7 +82,8 @@ public:
     // Returns the number of vertices to draw (0 if nothing to draw).
     uint32_t prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs);
 
-    // Upload SkeletonMesh vertex/index data to GPU buffers and cache bone data.
+    // Upload SkeletonMesh vertex/index data to GPU buffers.
+    // Call this each frame after deform_skeleton_mesh.
     void upload_mesh(SDL_GPUCommandBuffer *cmd, const SkeletonMesh &mesh);
 
     // Call inside the actor render pass.
@@ -107,23 +94,30 @@ public:
               uint32_t vertex_count);
 
     // Draw the uploaded skeleton mesh using the skel pipeline.
+    // Vertices are already in world space (CPU LBS done before upload).
     void draw_skel(SDL_GPURenderPass *pass,
                    SDL_GPUCommandBuffer *cmd,
                    const SceneUniforms &uniforms);
 
-    // Rebuild actor vertex buffer from pose + per-bone profiles.
-    // Flags the next prepare() to upload the rebuilt verts.
-    // Index buffer is not touched; vertex count must stay <= MAX_ACTOR_VERTICES.
-    void regenerate(const SkeletonPose &pose, BoneProfiles &profiles);
+    // Rebuild actor vertex buffer from pose + per-bone profiles (old BasaltVertex path).
+    void regenerate(const SkeletonPose &pose, SegmentProfiles &profiles);
 
-    // Draw ImGui panel with per-bone sliders. Calls regenerate() on any change.
+    // Draw ImGui panel with per-bone sliders. Sets skel_profiles_dirty_ on any change.
     void draw_ui(const SkeletonPose &pose);
+
+    // Returns true (and resets the flag) if draw_ui changed profiles since last call.
+    bool consume_skel_profiles_dirty() {
+        bool v = skel_profiles_dirty_;
+        skel_profiles_dirty_ = false;
+        return v;
+    }
 
     void cleanup(SDL_GPUDevice *device);
 
     bool is_initialized() const { return initialized; }
+    bool has_skel_pipeline() const { return skel_pipeline != nullptr; }
 
-    BoneProfiles bone_profiles;
+    SegmentProfiles segment_profiles;
 
 private:
     void emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
@@ -145,7 +139,7 @@ private:
     SDL_GPUDevice           *gpu_device    = nullptr;
     AssetManager            *asset_manager = nullptr;
 
-    // Cylinder-based actor buffers (existing).
+    // Cylinder-based actor buffers (existing BasaltVertex path).
     SDL_GPUBuffer         *actor_vbo      = nullptr;
     SDL_GPUTransferBuffer *transfer_buf   = nullptr;
 
@@ -155,11 +149,13 @@ private:
     SDL_GPUBuffer           *skel_ibo         = nullptr;
     SDL_GPUTransferBuffer   *skel_transfer    = nullptr;
     uint32_t                 skel_index_count = 0;
-    glm::mat4                skel_bone_matrices[18] = {};
-    glm::vec4                skel_bone_colors[18]   = {};
+    glm::vec4                skel_bone_colors[(int)BoneSeg::COUNT] = {};
 
-    // Hot-reload state: rebuilt verts waiting to be uploaded in next prepare().
+    // Hot-reload state for BasaltVertex path.
     std::vector<BasaltVertex> regen_verts_;
     bool                      regen_dirty_        = false;
     uint32_t                  regen_vertex_count_ = 0;
+
+    // Set by draw_ui when profile sliders change; consumed by topo_game to re-generate mesh.
+    bool skel_profiles_dirty_ = false;
 };

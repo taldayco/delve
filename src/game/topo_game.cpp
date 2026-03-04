@@ -292,6 +292,8 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                         terrain_renderer.get_terrain_pipeline(),
                         terrain_renderer.get_dummy_ssbo(),
                         &asset_manager);
+    actor_renderer.init_skel_pipeline(gpu.device, gpu.game_window,
+                                      terrain_renderer.get_depth_format());
   }
 
   terrain_renderer.rebuild_dirty_pipelines(gpu.game_window);
@@ -455,15 +457,36 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
     if (actor_renderer.is_initialized()) {
       uint32_t actor_vert_count = actor_renderer.prepare(frame.cmd, ecs);
-      if (actor_vert_count > 0) {
+
+      // Skeleton mesh: generate once, deform + upload every frame.
+      bool skel_ready = false;
+      if (actor_renderer.has_skel_pipeline() && player_entity.is_alive()) {
+        const auto *pose = player_entity.get<SkeletonPose>();
+        if (pose) {
+          // Regenerate topology when profiles changed via UI or on first spawn.
+          if (!skel_generated_ || actor_renderer.consume_skel_profiles_dirty()) {
+            skel_mesh_ = generate_skeleton_mesh(
+                *pose, actor_renderer.segment_profiles.to_profile_array());
+            skel_generated_ = true;
+          }
+          deform_skeleton_mesh(skel_mesh_, *pose);
+          actor_renderer.upload_mesh(frame.cmd, skel_mesh_);
+          skel_ready = true;
+        }
+      }
+
+      if (actor_vert_count > 0 || skel_ready) {
         SDL_GPURenderPass *actor_pass =
             terrain_renderer.begin_render_pass_load_preserve_depth(
                 frame.cmd, frame.swapchain,
                 frame.swapchain_w, frame.swapchain_h);
         if (actor_pass) {
-          actor_renderer.draw(actor_pass, frame.cmd, uniforms,
-                              terrain_renderer.get_point_light_ssbo(),
-                              actor_vert_count);
+          if (actor_vert_count > 0)
+            actor_renderer.draw(actor_pass, frame.cmd, uniforms,
+                                terrain_renderer.get_point_light_ssbo(),
+                                actor_vert_count);
+          if (skel_ready)
+            actor_renderer.draw_skel(actor_pass, frame.cmd, uniforms);
           SDL_EndGPURenderPass(actor_pass);
         }
       }
@@ -635,6 +658,12 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
     if (ImGui::Button("Stop Animation Log", {-1, 0})) anim_log.toggle();
   } else {
     if (ImGui::Button("Record Animation Log", {-1, 0})) anim_log.toggle();
+  }
+
+  ImGui::Separator();
+  if (player_entity.is_alive()) {
+    const auto *pose = player_entity.get<SkeletonPose>();
+    if (pose) actor_renderer.draw_ui(*pose);
   }
 
   ImGui::Separator();

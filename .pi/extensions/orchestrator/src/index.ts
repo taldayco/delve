@@ -499,7 +499,7 @@ export default function (pi: ExtensionAPI) {
         // ── DECISION 1: Route by subsystem count ─────────────────────
         setPhase("plan", ctx);
         const subsystems = resolveSubsystems(prompt);
-        const codebaseContext = getCodebaseContext(prompt);
+        const codebaseContext = getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         let implementation: string;
 
@@ -509,7 +509,7 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(`Single subsystem: ${targetSubsystem} — calling specialist directly`, "info");
           setPhase("implement", ctx);
           const agent = getSubsystemAgent(targetSubsystem);
-          implementation = await agent({ task: prompt, files: contextFiles });
+          implementation = await agent({ task: prompt, files: contextFiles, cwd: wt });
         } else {
           // MULTIPLE SUBSYSTEMS: parallel planning — one planner per subsystem
           ctx.ui.notify(`Multiple subsystems: [${subsystems.join(", ")}] — parallel planning`, "info");
@@ -517,10 +517,10 @@ export default function (pi: ExtensionAPI) {
           // Build per-subsystem scoped contexts
           const subsystemContexts: Record<string, string> = {};
           for (const sub of subsystems) {
-            subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+            subsystemContexts[sub] = getSubsystemCodebaseContext(sub, wt);
           }
 
-          const plan = await askParallelPlanner({ task: prompt, subsystemContexts });
+          const plan = await askParallelPlanner({ task: prompt, subsystemContexts, cwd: wt });
           ctx.ui.notify(`Parallel plan complete (${plan.length} chars, ${subsystems.length} subsystems)`, "success");
 
           // Parse per-subsystem subtasks from plan
@@ -529,7 +529,7 @@ export default function (pi: ExtensionAPI) {
           // Retry with single-agent planner as fallback if no subtasks parsed
           if (subtasks.length === 0) {
             ctx.ui.notify("Parallel planner output missing subtask tags — falling back to single planner", "warning");
-            const fallbackPlan = await askMetaPlanner({ task: prompt, codebaseContext });
+            const fallbackPlan = await askMetaPlanner({ task: prompt, codebaseContext, cwd: wt });
             subtasks = parseSubtasks(fallbackPlan);
 
             if (subtasks.length === 0) {
@@ -537,6 +537,7 @@ export default function (pi: ExtensionAPI) {
               const correctedPlan = await askMetaPlanner({
                 task: `Your previous output was:\n\n${fallbackPlan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
                 codebaseContext: "",
+                cwd: wt,
               });
               subtasks = parseSubtasks(correctedPlan);
             }
@@ -550,13 +551,13 @@ export default function (pi: ExtensionAPI) {
               ctx.ui.notify(`Implementing subtask [${sub.subsystem}]`, "info");
               const agent = getSubsystemAgent(sub.subsystem);
               const subFiles = extractFilePaths(sub.task).concat(contextFiles);
-              const subImpl = await agent({ task: sub.task, files: subFiles });
+              const subImpl = await agent({ task: sub.task, files: subFiles, cwd: wt });
               implementations.push(subImpl);
             }
           } else {
             ctx.ui.notify("Planner output has no tagged subtasks — using generic implementer", "warning");
             const planFiles = extractFilePaths(plan);
-            const genImpl = await askMetaImplementer({ plan, task: prompt, files: planFiles });
+            const genImpl = await askMetaImplementer({ plan, task: prompt, files: planFiles, cwd: wt });
             implementations.push(genImpl);
           }
 
@@ -572,6 +573,7 @@ export default function (pi: ExtensionAPI) {
           finalImplementation = await retryAgent({
             task: prompt + "\n\nCRITICAL: Output ### FILE: blocks with COMPLETE file content. No explanations.",
             files: contextFiles,
+            cwd: wt,
           });
           const retryCount = (finalImplementation.match(/###\s*FILE:/g) || []).length;
           if (retryCount === 0) {
@@ -608,6 +610,7 @@ export default function (pi: ExtensionAPI) {
             buildOutput: build.summary,
             round: round + 1,
             maxRounds: MAX_BUILD_FIX_ROUNDS,
+            cwd: wt,
           });
 
           applyFileBlocks(fix, wt);
@@ -627,6 +630,7 @@ export default function (pi: ExtensionAPI) {
           task: prompt,
           changedFiles,
           implementationSummary: implementation.slice(0, 2000),
+          cwd: wt,
         });
 
         applyFileBlocks(testCode, wt);
@@ -659,6 +663,7 @@ export default function (pi: ExtensionAPI) {
             round: round + 1,
             maxRounds: MAX_TEST_FIX_ROUNDS,
             isBuildFailure,
+            cwd: wt,
           });
 
           applyFileBlocks(fix, wt);
@@ -675,6 +680,7 @@ export default function (pi: ExtensionAPI) {
             task: prompt,
             diff,
             testResults: testsOk ? "All tests PASSED." : `Tests FAILED.\n${testResults}`,
+            cwd: wt,
           });
           reviewDecision = parseReviewDecision(review);
           ctx.ui.notify(
@@ -689,6 +695,7 @@ export default function (pi: ExtensionAPI) {
           const reviewFix = await reviewFixAgent({
             task: `Fix the following code review issues:\n\n${review}\n\nOriginal task: ${prompt}`,
             files: getChangedFiles(wt),
+            cwd: wt,
           });
           applyFileBlocks(reviewFix, wt);
 
@@ -700,6 +707,7 @@ export default function (pi: ExtensionAPI) {
               buildOutput: fixBuild.summary,
               round: 1,
               maxRounds: 1,
+              cwd: wt,
             });
             applyFileBlocks(buildFix, wt);
             fixBuild = runBuild(wt);
@@ -832,12 +840,12 @@ export default function (pi: ExtensionAPI) {
         setPhase("implement", ctx);
         const subsystems = resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt);
+        const codebaseContext = getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
 
         ctx.ui.notify(`Subsystem: ${targetSubsystem}`, "info");
         const agent = getSubsystemAgent(targetSubsystem);
-        const implementation = await agent({ task: prompt, files: contextFiles });
+        const implementation = await agent({ task: prompt, files: contextFiles, cwd: wt });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) {
@@ -871,6 +879,7 @@ export default function (pi: ExtensionAPI) {
             buildOutput: build.summary,
             round: round + 1,
             maxRounds: MAX_BUILD_FIX_ROUNDS,
+            cwd: wt,
           });
           applyFileBlocks(fix, wt);
         }
@@ -960,10 +969,10 @@ export default function (pi: ExtensionAPI) {
         setPhase("implement", ctx);
         const subsystems = resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt);
+        const codebaseContext = getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         const agent = getSubsystemAgent(targetSubsystem);
-        const implementation = await agent({ task: prompt, files: contextFiles });
+        const implementation = await agent({ task: prompt, files: contextFiles, cwd: wt });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) { state.phase = "failed"; recordFailure("implement", "No file changes produced"); ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
@@ -978,7 +987,7 @@ export default function (pi: ExtensionAPI) {
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
-          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
+          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS, cwd: wt });
           applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
@@ -990,6 +999,7 @@ export default function (pi: ExtensionAPI) {
           task: prompt + "\n\nCRITICAL REVIEW CONSTRAINT: Reject if observable behavior changes. This is a refactoring — behavior must be preserved.",
           diff,
           testResults: "No tests run (refactoring pipeline).",
+          cwd: wt,
         });
         const reviewDecision = parseReviewDecision(review);
         ctx.ui.notify(`Review: ${reviewDecision}`, reviewDecision === "APPROVE" ? "success" : "warning");
@@ -1067,6 +1077,7 @@ export default function (pi: ExtensionAPI) {
           task: prompt,
           testOutput: initialTests.summary,
           recentCommits,
+          cwd: wt,
         });
         ctx.ui.notify("Diagnosis complete", "success");
         writeState("diagnosis.md", diagnosis);
@@ -1075,12 +1086,13 @@ export default function (pi: ExtensionAPI) {
         setPhase("implement", ctx);
         const subsystems = resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt);
+        const codebaseContext = getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         const agent = getSubsystemAgent(targetSubsystem);
         const implementation = await agent({
           task: `${prompt}\n\n## Diagnosis\n${diagnosis}`,
           files: contextFiles,
+          cwd: wt,
         });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
@@ -1096,7 +1108,7 @@ export default function (pi: ExtensionAPI) {
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
-          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
+          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS, cwd: wt });
           applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
@@ -1115,6 +1127,7 @@ export default function (pi: ExtensionAPI) {
             round: round + 1,
             maxRounds: MAX_TEST_FIX_ROUNDS,
             isBuildFailure: !testResult.buildOk,
+            cwd: wt,
           });
           applyFileBlocks(fix, wt);
         }
@@ -1184,9 +1197,9 @@ export default function (pi: ExtensionAPI) {
 
         // Implement (force shader subsystem)
         setPhase("implement", ctx);
-        const codebaseContext = getCodebaseContext("shader " + prompt);
+        const codebaseContext = getCodebaseContext("shader " + prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
-        const implementation = await askShaderAgent({ task: prompt, files: contextFiles });
+        const implementation = await askShaderAgent({ task: prompt, files: contextFiles, cwd: wt });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) { state.phase = "failed"; recordFailure("implement", "No file changes produced"); ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
@@ -1201,7 +1214,7 @@ export default function (pi: ExtensionAPI) {
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
-          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
+          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS, cwd: wt });
           applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
@@ -1480,7 +1493,7 @@ export default function (pi: ExtensionAPI) {
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
-          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
+          const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS, cwd: wt });
           applyFileBlocks(fix, wt);
         }
 
@@ -1497,6 +1510,7 @@ export default function (pi: ExtensionAPI) {
           task: "Domain decoupling refactor",
           diff,
           testResults: "No tests run (structural refactor).",
+          cwd: wt,
         });
         const reviewDecision = parseReviewDecision(review);
         ctx.ui.notify(`Review: ${reviewDecision}`, reviewDecision === "APPROVE" ? "success" : "warning");

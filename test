@@ -5,7 +5,8 @@ Objective
   The skeleton is defined by joint positions connected by bones. The output mesh
    must deform in real-time as the skeleton animates, producing a stylized
   low-poly humanoid silhouette suitable for an isometric hex-grid terrain game
-  rendered with SDL3-GPU.
+  rendered with SDL3-GPU. Verify that the proportions of the character are human and that
+  the animation is believably humanoid.
 
   ---
   Input
@@ -108,10 +109,10 @@ Objective
   ---
   Stylistic Constraints
 
-  - Low-poly aesthetic: Cross-sections should use 4-6 sides max. The character
-  should look deliberately geometric and faceted, matching the hex-grid terrain
-  style.
-  - No textures required: Color comes from per-vertex or per-bone uniform color.
+  -aesthetic: The character
+  should look deliberately humanoid while still being low poly in a sense that the mesh will be tesselated triangles. 
+  - No textures required: Color comes from per-vertex white lines that construct the triangle mesh.
+  - or per-bone uniform color.
    Each bone segment can have a distinct color (e.g., torso = dark, limbs =
   lighter).
   - Silhouette priority: The mesh exists primarily to give the stick figure a
@@ -157,5 +158,5 @@ Objective
   3. A deform_skeleton_mesh() function that takes current joint transforms and
   updates vertex positions/normals in-place.
   4. A vertex shader that accepts bone matrices and performs LBS.
-  5. ImGui controls for per-bone radius, sides, taper, and twist, wired to
-  trigger regeneration.
+  5. Proportional human shape - legs aren't too long compared to the arms, etc.
+  6. Beleivable humanoid bipedal animation - limbs shouldn't snap to positions.

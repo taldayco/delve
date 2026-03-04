@@ -53,11 +53,19 @@ void register_animation_systems(flecs::world &ecs,
             float dt = ecs.delta_time();
 
             // Desired velocity from raw input.
-            float desired_x = 0.0f, desired_y = 0.0f;
-            if (in.held[(int)Action::MoveUp])    desired_y -= gait->move_speed;
-            if (in.held[(int)Action::MoveDown])  desired_y += gait->move_speed;
-            if (in.held[(int)Action::MoveLeft])  desired_x -= gait->move_speed;
-            if (in.held[(int)Action::MoveRight]) desired_x += gait->move_speed;
+            float raw_x = 0.0f, raw_y = 0.0f;
+            if (in.held[(int)Action::MoveUp])    raw_y -= 1.0f;
+            if (in.held[(int)Action::MoveDown])  raw_y += 1.0f;
+            if (in.held[(int)Action::MoveLeft])  raw_x -= 1.0f;
+            if (in.held[(int)Action::MoveRight]) raw_x += 1.0f;
+
+            // Rotate -45 degrees to align WASD with isometric screen axes.
+            // Isometric camera looks from NE: world(-1,-1) = screen UP.
+            // -45° maps W(screen-up) → world(-x,-y), D(screen-right) → world(+x,-y).
+            static constexpr float COS_ISO = 0.70710678118f; // cos(45°)
+            static constexpr float SIN_ISO = 0.70710678118f; // sin(45°)
+            float desired_x = ( raw_x * COS_ISO + raw_y * SIN_ISO) * gait->move_speed;
+            float desired_y = (-raw_x * SIN_ISO + raw_y * COS_ISO) * gait->move_speed;
 
             // SmoothDamp: critically-damped spring gives feeling of mass.
             // smooth_time = 0.1s → reaches ~90% of target in ~0.2s.
@@ -273,8 +281,6 @@ void register_animation_systems(flecs::world &ecs,
 
                 auto swing_elbow_pos = [&](glm::vec3 shoulder, float shoulder_angle,
                                             float elbow_angle, float arm_len) -> glm::vec3 {
-                    // Rotate hang_down around right_axis by shoulder_angle.
-                    // Using Rodrigues' rotation formula: v_rot = v*cos(a) + (k×v)*sin(a) + k*(k·v)*(1-cos(a))
                     float ca = cosf(shoulder_angle);
                     float sa = sinf(shoulder_angle);
                     glm::vec3 k = right_axis;
@@ -358,6 +364,8 @@ void register_animation_systems(flecs::world &ecs,
                 solve_leg(r_hip, legs.foot[1], cfg.leg_len, cfg.shin_len, r_pole, r_knee, r_ankle);
                 pose.joints[(int)J::R_KNEE]  = r_knee;
                 pose.joints[(int)J::R_ANKLE] = r_ankle;
+
+                (void)fwd_x; (void)fwd_y;
             });
         });
 
@@ -390,13 +398,11 @@ void register_animation_systems(flecs::world &ecs,
                 pose.joints[(int)J::CHEST] += sway_vec;
 
                 // ---- Acceleration-driven torso lean ----
-                // Compute acceleration from velocity delta.
                 glm::vec3 cur_vel(vel.x, vel.y, 0.0f);
                 glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - anim.prev_velocity) / dt)
                                                : glm::vec3(0.0f);
                 anim.prev_velocity = cur_vel;
 
-                // Map acceleration to lean direction and magnitude.
                 float accel_len = glm::length(accel);
                 const float max_lean = glm::radians(8.0f);
                 float lean_factor = std::min(accel_len * 0.015f, max_lean);
@@ -408,46 +414,37 @@ void register_animation_systems(flecs::world &ecs,
                 float target_lean_x = lean_dir.x * lean_factor;
                 float target_lean_y = lean_dir.y * lean_factor;
 
-                // Successive breaking: each segment gets smoother lean with increasing lag.
-                // Chest: fast response (0.05s), full lean
                 anim.chest_lean_x = smooth_damp(anim.chest_lean_x, target_lean_x,
                                                  &anim.chest_lean_x_rate, 0.05f, dt);
                 anim.chest_lean_y = smooth_damp(anim.chest_lean_y, target_lean_y,
                                                  &anim.chest_lean_y_rate, 0.05f, dt);
 
-                // Neck: medium lag (0.08s), 70% of chest lean
                 anim.neck_lean_x = smooth_damp(anim.neck_lean_x, anim.chest_lean_x * 0.7f,
                                                &anim.neck_lean_x_rate, 0.08f, dt);
                 anim.neck_lean_y = smooth_damp(anim.neck_lean_y, anim.chest_lean_y * 0.7f,
                                                &anim.neck_lean_y_rate, 0.08f, dt);
 
-                // Head: slowest lag (0.12s), 50% of chest lean
                 anim.head_lean_x = smooth_damp(anim.head_lean_x, anim.chest_lean_x * 0.5f,
                                                &anim.head_lean_x_rate, 0.12f, dt);
                 anim.head_lean_y = smooth_damp(anim.head_lean_y, anim.chest_lean_y * 0.5f,
                                                &anim.head_lean_y_rate, 0.12f, dt);
 
-                // Also update the legacy lean_x/lean_y for log_finalize compatibility.
                 anim.lean_x = anim.chest_lean_x;
                 anim.lean_y = anim.chest_lean_y;
 
-                // Apply per-segment lean as position offsets.
                 pose.joints[(int)J::CHEST] += glm::vec3(anim.chest_lean_x, anim.chest_lean_y, 0.0f);
                 pose.joints[(int)J::NECK]  += glm::vec3(anim.neck_lean_x,  anim.neck_lean_y,  0.0f);
                 pose.joints[(int)J::HEAD]  += glm::vec3(anim.head_lean_x,  anim.head_lean_y,  0.0f);
 
                 // ---- Idle micro-motion ----
-                // Fade out based on speed (smooth transition, no pop).
                 float idle_blend = 1.0f - std::min(1.0f, speed / 0.2f);
 
-                // Breathing: ~0.6 Hz sine wave on chest/neck/head Z.
                 anim.breath_phase += dt * glm::two_pi<float>() * 0.6f;
                 float breath_offset = sinf(anim.breath_phase) * 0.008f * idle_blend;
                 pose.joints[(int)J::CHEST].z += breath_offset;
                 pose.joints[(int)J::NECK].z  += breath_offset * 0.6f;
                 pose.joints[(int)J::HEAD].z  += breath_offset * 0.4f;
 
-                // Idle weight-shift: ~0.15 Hz lateral sway on root/spine.
                 anim.idle_sway_phase += dt * glm::two_pi<float>() * 0.15f;
                 float idle_sway = sinf(anim.idle_sway_phase) * 0.01f * idle_blend;
                 glm::vec3 idle_sway_vec(rght_x * idle_sway, rght_y * idle_sway, 0.0f);

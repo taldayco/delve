@@ -15,6 +15,7 @@ import {
 } from "./agents.js";
 import {
   gitBranch,
+  cleanupWorktree,
   runBuild,
   runTests,
   gitCommitAndPr,
@@ -58,6 +59,7 @@ export interface BlueprintContext {
     buildOk?: boolean;
     testsOk?: boolean;
     reviewDecision?: string;
+    worktreePath?: string;
   };
 }
 
@@ -84,6 +86,9 @@ type PhaseHandler = (ctx: BlueprintContext) => Promise<PhaseResult>;
 const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   branch: async (ctx) => {
     const result = gitBranch(ctx.branch);
+    if (result.ok && result.worktreePath) {
+      ctx.data.worktreePath = result.worktreePath;
+    }
     return { ok: result.ok, output: result.summary };
   },
 
@@ -151,15 +156,16 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       return { ok: false, output: "No FILE blocks produced" };
     }
 
-    applyFileBlocks(implementation);
+    applyFileBlocks(implementation, ctx.data.worktreePath);
     ctx.data.implementation = implementation;
     return { ok: true, output: `Applied ${fileBlockCount} files` };
   },
 
   build: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     let buildOk = false;
     for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
-      const build = runBuild();
+      const build = runBuild(wt);
       if (build.ok) { buildOk = true; break; }
       if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
       const fix = await askBuildFixer({
@@ -167,27 +173,29 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         round: round + 1,
         maxRounds: MAX_BUILD_FIX_ROUNDS,
       });
-      applyFileBlocks(fix);
+      applyFileBlocks(fix, wt);
     }
     ctx.data.buildOk = buildOk;
     return { ok: buildOk, output: buildOk ? "Build PASSED" : "Build FAILED after max attempts" };
   },
 
   write_tests: async (ctx) => {
-    const changedFiles = getChangedFiles();
+    const wt = ctx.data.worktreePath;
+    const changedFiles = getChangedFiles(wt);
     const testCode = await askMetaTester({
       task: ctx.prompt,
       changedFiles,
       implementationSummary: (ctx.data.implementation || "").slice(0, 2000),
     });
-    applyFileBlocks(testCode);
+    applyFileBlocks(testCode, wt);
     return { ok: true, output: "Tests written" };
   },
 
   test: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     let testsOk = false;
     for (let round = 0; round < MAX_TEST_FIX_ROUNDS; round++) {
-      const testResult = runTests();
+      const testResult = runTests(wt);
       if (testResult.buildOk && testResult.testsOk) { testsOk = true; break; }
       if (round + 1 >= MAX_TEST_FIX_ROUNDS) break;
       const fix = await askTestFixer({
@@ -196,14 +204,14 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         maxRounds: MAX_TEST_FIX_ROUNDS,
         isBuildFailure: !testResult.buildOk,
       });
-      applyFileBlocks(fix);
+      applyFileBlocks(fix, wt);
     }
     ctx.data.testsOk = testsOk;
     return { ok: testsOk, output: testsOk ? "Tests PASSED" : "Tests FAILED" };
   },
 
   review: async (ctx) => {
-    const diff = getDiff();
+    const diff = getDiff(ctx.data.worktreePath);
     const testResults = readState("test_results.json");
     const review = await askReviewer({
       task: ctx.prompt,
@@ -218,12 +226,13 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   commit_pr: async (ctx) => {
+    const wt = ctx.data.worktreePath;
     // Pre-flight gate: verify build+tests pass before shipping
-    const preflight_build = runBuild();
+    const preflight_build = runBuild(wt);
     if (!preflight_build.ok) {
       return { ok: false, output: "Pre-commit build check FAILED — aborting" };
     }
-    const preflight_tests = runTests();
+    const preflight_tests = runTests(wt);
     if (!preflight_tests.buildOk || !preflight_tests.testsOk) {
       return { ok: false, output: "Pre-commit test check FAILED — aborting" };
     }
@@ -235,12 +244,13 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       branch: ctx.branch,
       buildOk: true,
       testsOk: true,
+      cwd: wt,
     });
     return { ok: result.ok, output: result.summary };
   },
 
   diagnose: async (ctx) => {
-    const testResult = runTests();
+    const testResult = runTests(ctx.data.worktreePath);
     const { execSync } = require("node:child_process");
     let recentCommits = "";
     try {
@@ -366,25 +376,31 @@ export async function executeBlueprint(
 ): Promise<void> {
   // Agent listeners are managed by MinionDisplay in index.ts — no need to
   // duplicate them here. We just notify on phase transitions.
-  for (const phase of blueprint.phases) {
-    const handler = PHASE_HANDLERS[phase.handler];
-    if (!handler) {
-      throw new Error(`Unknown phase handler: ${phase.handler}`);
+  try {
+    for (const phase of blueprint.phases) {
+      const handler = PHASE_HANDLERS[phase.handler];
+      if (!handler) {
+        throw new Error(`Unknown phase handler: ${phase.handler}`);
+      }
+
+      context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
+
+      const result = await handler(context);
+
+      if (!result.ok && !phase.optional) {
+        context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
+        return;
+      }
+
+      if (result.ok) {
+        context.ctx.ui.notify(`${phase.name}: ${result.output}`, "success");
+      } else {
+        context.ctx.ui.notify(`${phase.name} (optional): ${result.output}`, "warning");
+      }
     }
-
-    context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
-
-    const result = await handler(context);
-
-    if (!result.ok && !phase.optional) {
-      context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
-      return;
-    }
-
-    if (result.ok) {
-      context.ctx.ui.notify(`${phase.name}: ${result.output}`, "success");
-    } else {
-      context.ctx.ui.notify(`${phase.name} (optional): ${result.output}`, "warning");
+  } finally {
+    if (context.data.worktreePath) {
+      cleanupWorktree(context.data.worktreePath);
     }
   }
 }

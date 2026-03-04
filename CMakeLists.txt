@@ -68,6 +68,10 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/contour.frag.glsl
     ${SHADER_DIR}/background.vert.glsl
     ${SHADER_DIR}/background.frag.glsl
+    ${SHADER_DIR}/actor_skel.vert.glsl
+    ${SHADER_DIR}/actor_skel.frag.glsl
+    ${SHADER_DIR}/actor_mesh.vert.glsl
+    ${SHADER_DIR}/actor_mesh.frag.glsl
 )
 
 set(COMPUTE_SHADER_SOURCES
@@ -215,6 +219,11 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_animation.cpp
     src/test/tests/test_palettes.cpp
     src/test/tests/test_terrain_pipeline.cpp
+    src/test/tests/test_color.cpp
+    src/test/tests/test_map_util.cpp
+    src/test/tests/test_skeleton_mesh.cpp
+    src/game/terrain/map_util.cpp
+    src/game/render/skeleton_mesh.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 

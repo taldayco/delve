@@ -827,6 +827,9 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
   }
 
 
+  if (post_terrain_draw_fn)
+    post_terrain_draw_fn(pass, cmd, uniforms);
+
   if (contour_vbo && contour_vertex_count > 0 && contour_pipeline) {
     SDL_BindGPUGraphicsPipeline(pass, contour_pipeline);
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));

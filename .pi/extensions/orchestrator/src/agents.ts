@@ -232,7 +232,7 @@ export function silentShell(
     const stdout: string = execSync(cmd, {
       cwd: cwd || process.cwd(),
       encoding: "utf-8",
-      timeout: 900_000,
+      timeout: 3_600_000,
       maxBuffer: 10 * 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -471,7 +471,7 @@ async function spawnSubagentOnce(opts: SpawnSubagentOpts): Promise<string> {
     fs.writeFileSync(promptFile, `Task: ${effectivePrompt}`, { encoding: "utf-8", mode: 0o600 });
     args.push(`@${promptFile}`);
 
-    const SUBAGENT_TIMEOUT_MS = opts.timeoutMs ?? 900_000; // 15 minutes
+    const SUBAGENT_TIMEOUT_MS = opts.timeoutMs ?? 3_600_000; // 1 hour
 
     const proc = spawn("pi", args, {
       cwd: PROJECT_ROOT,
@@ -678,7 +678,7 @@ For each file change, output:
   return parts.join("\n\n");
 }
 
-// ─── Subsystem Agents (Sonnet via pi subagent) ──────────────────────────────
+// ─── Subsystem Agents (Sonnet meta → Haiku workers) ─────────────────────────
 
 interface SubsystemAgentOpts {
   task: string;
@@ -689,10 +689,12 @@ async function callSubsystemAgent(
   subsystem: string,
   opts: SubsystemAgentOpts,
 ): Promise<string> {
-  const systemPrompt = buildSubsystemPrompt(subsystem);
   const agentName = SUBSYSTEM_AGENT_MAP[subsystem] || subsystem;
   const agentConfig = loadAgentConfig(agentName);
   const model = agentConfig.model || "anthropic/claude-sonnet-4-6";
+
+  // Build meta-decomposer prompt (Sonnet analyzes + decomposes)
+  const systemPrompt = buildMetaDecomposerPrompt(subsystem);
 
   // Compute remaining char budget for file contents
   const limit = MODEL_CONTEXT_LIMITS[model] || 200_000;
@@ -704,15 +706,38 @@ async function callSubsystemAgent(
 
   const prompt = `## Task\n${opts.task}\n\n## Current File Contents\n${fileContents}`;
 
-  const result = await spawnWithEscalation({
+  // Step 1: Sonnet decomposes task into per-file worker subtasks
+  const decomposition = await spawnSubagent({
     prompt,
     systemPrompt,
     model,
-    thinking: agentConfig.thinking,
+    thinking: agentConfig.thinking || "low",
     tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
-    expectFileBlocks: true,
-    agentName: subsystem,
+    agentName: `${subsystem}-meta`,
   });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use legacy direct implementation
+  if (parsed.subtasks.length === 0) {
+    console.error(`[meta-${subsystem}] Decomposition failed — falling back to direct implementation`);
+    const fallbackPrompt = buildSubsystemPrompt(subsystem);
+    const fallbackResult = await spawnWithEscalation({
+      prompt,
+      systemPrompt: fallbackPrompt,
+      model,
+      thinking: agentConfig.thinking,
+      tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
+      expectFileBlocks: true,
+      agentName: subsystem,
+    });
+    writeState(`${subsystem}_changes.md`, fallbackResult);
+    return fallbackResult;
+  }
+
+  // Step 2: Delegate to Haiku workers in parallel
+  console.error(`[meta-${subsystem}] Decomposed into ${parsed.subtasks.length} worker subtasks`);
+  const result = await delegateToWorkers(parsed, subsystem);
 
   writeState(`${subsystem}_changes.md`, result);
   return result;
@@ -979,7 +1004,157 @@ export function parseSubtasks(plan: string): Subtask[] {
   return subtasks;
 }
 
-// ─── Agent Tool: ask_meta_implementer (Sonnet) ─────────────────────────────
+// ─── Meta-Agent Decomposition Infrastructure ────────────────────────────────
+
+/**
+ * A focused subtask produced by a Sonnet meta-agent decomposer.
+ * Each subtask targets exactly one file and includes a self-contained
+ * worker prompt so Haiku workers need no additional context.
+ */
+interface WorkerSubtask {
+  file: string;
+  action: "CREATE" | "MODIFY";
+  instructions: string;
+  context_files: string[];
+  worker_prompt: string;
+}
+
+/**
+ * Structured output from a meta-agent decomposer.
+ */
+interface MetaDecomposition {
+  subtasks: WorkerSubtask[];
+}
+
+/**
+ * Parse a Sonnet meta-agent's JSON decomposition output.
+ * Tolerates markdown fences around JSON.
+ */
+function parseMetaDecomposition(output: string): MetaDecomposition {
+  try {
+    const jsonMatch = output.match(/```json\s*([\s\S]*?)```/);
+    const raw = jsonMatch ? jsonMatch[1].trim() : output.trim();
+    const parsed = JSON.parse(raw);
+    const subtasks: WorkerSubtask[] = (parsed.subtasks || []).map((st: any) => ({
+      file: st.file || "",
+      action: (st.action || "MODIFY").toUpperCase(),
+      instructions: st.instructions || "",
+      context_files: st.context_files || st.dependencies || [],
+      worker_prompt: st.worker_prompt || st.instructions || "",
+    }));
+    return { subtasks };
+  } catch {
+    // Fallback: couldn't parse decomposition — return empty
+    return { subtasks: [] };
+  }
+}
+
+/**
+ * Build a meta-decomposer system prompt for a subsystem agent.
+ * The decomposer's job is to analyze the task and produce a JSON
+ * decomposition of per-file worker subtasks.
+ */
+function buildMetaDecomposerPrompt(subsystem: string): string {
+  const config = SUBSYSTEM_CONFIG[subsystem];
+  if (!config) return loadAgentSystemPrompt();
+
+  const parts = [loadAgentSystemPrompt()];
+
+  const skill = loadSkill(config.skill);
+  if (skill) parts.push("---\n\n" + skill);
+
+  const rule = loadRule(config.rule);
+  if (rule) parts.push("---\n\n" + rule);
+
+  parts.push(`---
+
+## Your Role
+You are a META-${config.description}
+
+You do NOT implement changes yourself. Instead, you DECOMPOSE the task into focused per-file
+worker subtasks that Haiku-tier workers can execute independently.
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/file.cpp",
+      "action": "MODIFY",
+      "instructions": "Detailed description of what to change in this file",
+      "context_files": ["src/path/to/dependency.h"],
+      "worker_prompt": "You are editing file.cpp in a C++20 terrain generator. [Focused instructions for the Haiku worker including exact function signatures, includes needed, and expected output]"
+    }
+  ]
+}
+\`\`\`
+
+## Constraints
+- Each subtask targets EXACTLY ONE file.
+- worker_prompt must be self-contained — the worker has NO other context.
+- Include all necessary details: function signatures, types, includes, conventions.
+- Order subtasks by dependency (headers before implementations).
+- Only decompose changes the task requires — no unnecessary refactoring.
+- Output ONLY the JSON block. No preamble, no explanation.`);
+
+  return parts.join("\n\n");
+}
+
+/**
+ * Delegate a decomposed set of worker subtasks to Haiku workers in parallel.
+ * Each worker receives the file content + focused instructions.
+ * Returns aggregated FILE blocks from all workers.
+ */
+async function delegateToWorkers(
+  decomposition: MetaDecomposition,
+  subsystem: string,
+): Promise<string> {
+  const workerConfig = loadAgentConfig("worker");
+  const workerModel = workerConfig.model || "anthropic/claude-haiku-4-5";
+
+  const workerPromises = decomposition.subtasks.map(async (st) => {
+    // Load the target file and any context files
+    const fileContents: Record<string, string> = {};
+    const targetPath = st.file.startsWith("/") ? st.file : join(PROJECT_ROOT, st.file);
+    if (existsSync(targetPath) && statSync(targetPath).isFile()) {
+      fileContents[st.file] = readFileSync(targetPath, "utf-8");
+    }
+    for (const dep of st.context_files.slice(0, 3)) {
+      const depPath = dep.startsWith("/") ? dep : join(PROJECT_ROOT, dep);
+      if (existsSync(depPath) && statSync(depPath).isFile()) {
+        const content = readFileSync(depPath, "utf-8");
+        fileContents[dep] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
+      }
+    }
+
+    const workerSystemPrompt = `You are a C++20 code worker for the Delve terrain generator.
+You receive a single file to modify and focused instructions.
+
+## Output Format
+### FILE: ${st.file}
+#### ACTION: ${st.action}
+\`\`\`cpp
+[COMPLETE file content — the FULL file, not a snippet or diff]
+\`\`\`
+
+## Constraints
+- Output ONLY the file block above. No preamble, no explanation.
+- Include ALL existing code that doesn't need to change.
+- Follow existing code conventions exactly.
+- Include all necessary #includes.`;
+
+    return askWorker({
+      systemPrompt: workerSystemPrompt,
+      task: st.worker_prompt,
+      fileContents,
+    });
+  });
+
+  const results = await Promise.all(workerPromises);
+  return results.join("\n\n");
+}
+
+// ─── Agent Tool: ask_meta_implementer (Sonnet meta → Haiku workers) ─────────
 
 export async function askMetaImplementer(opts: {
   plan: string;
@@ -1001,24 +1176,37 @@ ${skillSections}
 ---
 
 ## Your Role
-You are a META-IMPLEMENTER. Produce complete file implementations for every subtask in the plan.
+You are a META-IMPLEMENTER. You do NOT write code yourself. Instead, you DECOMPOSE the plan
+into focused per-file worker subtasks that Haiku-tier workers can execute independently.
 
-## Output Format
-For each file, output:
+For each file that needs to change, produce a self-contained worker prompt that includes:
+- Exact function signatures to add/modify
+- Required #includes
+- Type definitions the worker needs to know about
+- Code conventions to follow
+- The complete context the worker needs (it has NO other knowledge)
 
-### FILE: <path>
-#### ACTION: [CREATE | MODIFY]
-\`\`\`cpp
-[COMPLETE file content — not a diff, not a snippet, the FULL file]
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/file.cpp",
+      "action": "CREATE" or "MODIFY",
+      "instructions": "Brief description of what changes",
+      "context_files": ["src/path/to/dependency.h"],
+      "worker_prompt": "You are editing file.cpp in a C++20 terrain generator using SDL3-GPU. [Detailed, self-contained instructions for the Haiku worker. Include exact code to add, function signatures, types, includes, and expected behavior. The worker has the current file content but no other context.]"
+    }
+  ]
+}
 \`\`\`
 
 ## Constraints
-- Output ONLY file blocks. No preamble, no explanation after.
-- Follow existing code conventions exactly.
-- Change only what the plan requires — no unnecessary refactoring.
-- Include all necessary #includes.
-- Maintain hex coordinate invariants.
-- Size MapData vectors correctly.`;
+- Each subtask targets EXACTLY ONE file.
+- worker_prompt must be SELF-CONTAINED — the worker has NO other context beyond the file contents.
+- Order subtasks by dependency (headers before implementations, declarations before usage).
+- Only decompose changes the plan requires — no unnecessary refactoring.
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
   const implementerConfig = loadAgentConfig("implementer");
   const model = implementerConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1039,21 +1227,44 @@ ${opts.plan}
 ## Current File Contents
 ${fileContents}`;
 
-  const result = await spawnWithEscalation({
+  // Step 1: Sonnet decomposes the plan into per-file worker subtasks
+  const decomposition = await spawnSubagent({
     prompt,
     systemPrompt,
     model,
     thinking: implementerConfig.thinking || "low",
     tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
-    expectFileBlocks: true,
-    agentName: "implementer",
+    agentName: "implementer-meta",
   });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use legacy direct implementation
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-implementer] Decomposition failed — falling back to direct implementation");
+    const fallbackResult = await spawnWithEscalation({
+      prompt,
+      systemPrompt: systemPrompt.replace("You do NOT write code yourself. Instead, you DECOMPOSE",
+        "Produce complete file implementations for every subtask in"),
+      model,
+      thinking: implementerConfig.thinking || "low",
+      tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
+      expectFileBlocks: true,
+      agentName: "implementer",
+    });
+    writeState("changes.md", fallbackResult);
+    return fallbackResult;
+  }
+
+  // Step 2: Delegate to Haiku workers in parallel
+  console.error(`[meta-implementer] Decomposed into ${parsed.subtasks.length} worker subtasks`);
+  const result = await delegateToWorkers(parsed, "implementer");
 
   writeState("changes.md", result);
   return result;
 }
 
-// ─── Agent Tool: ask_meta_tester (Sonnet) ───────────────────────────────────
+// ─── Agent Tool: ask_meta_tester (Sonnet meta → Haiku workers) ──────────────
 
 export async function askMetaTester(opts: {
   task: string;
@@ -1069,26 +1280,40 @@ ${loadSkill("test")}
 ---
 
 ## Your Role
-You are a META-TESTER. Produce test code for the implementation changes.
+You are a META-TESTER. You do NOT write test code yourself. Instead, you DECOMPOSE the testing
+task into focused per-file worker subtasks that Haiku-tier workers can execute independently.
 
-## Output Format
-For each test file, output:
+For each test file that needs to be created or modified, produce a self-contained worker prompt
+that includes:
+- Exact test function signatures and names (subsystem_property_being_tested)
+- Required #includes and metric extractors to use
+- Test infrastructure conventions (DELVE_TEST macro, EXPECT_* assertions)
+- Deterministic seeds, map sizes, and expected value ranges
 
-### FILE: <path>
-#### ACTION: [CREATE | MODIFY]
-\`\`\`cpp
-[COMPLETE file content]
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/test/test_terrain_noise.cpp",
+      "action": "CREATE" or "MODIFY",
+      "instructions": "Brief description of test coverage",
+      "context_files": ["src/game/terrain/noise.h"],
+      "worker_prompt": "You are writing C++20 tests for the Delve terrain generator. [Detailed instructions including exact test function signatures, DELVE_TEST usage, EXPECT_* assertions, seed values, map sizes, and expected value ranges. The worker has the current file content but no other context.]"
+    }
+  ]
+}
 \`\`\`
 
-Include CMakeLists.txt updates if new test files are added.
-
 ## Constraints
+- Each subtask targets EXACTLY ONE file.
+- worker_prompt must be SELF-CONTAINED — the worker has NO other context.
 - Use deterministic seeds (42, 123, etc.).
 - Use 256x256 maps for speed.
 - Test one property per function.
-- Name tests: subsystem_property_being_tested.
 - Metric extractors must be pure functions — no GPU, no window.
-- Use DELVE_TEST macro and EXPECT_* assertions.`;
+- Include CMakeLists.txt subtask if new test files are added.
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
   const testerConfig = loadAgentConfig("tester");
   const model = testerConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1109,26 +1334,114 @@ ${opts.implementationSummary}
 ## Changed Files
 ${fileContents}`;
 
-  const result = await spawnWithEscalation({
+  // Step 1: Sonnet decomposes testing task into per-file worker subtasks
+  const decomposition = await spawnSubagent({
     prompt,
     systemPrompt,
     model,
     thinking: testerConfig.thinking || "low",
     tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
-    agentName: "tester",
+    agentName: "tester-meta",
   });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use legacy direct implementation
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-tester] Decomposition failed — falling back to direct implementation");
+    const fallbackResult = await spawnWithEscalation({
+      prompt,
+      systemPrompt: systemPrompt.replace("You do NOT write test code yourself. Instead, you DECOMPOSE",
+        "Produce test code for the implementation changes. For each test file, decompose"),
+      model,
+      thinking: testerConfig.thinking || "low",
+      tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
+      agentName: "tester",
+    });
+    return fallbackResult;
+  }
+
+  // Step 2: Delegate to Haiku workers in parallel
+  console.error(`[meta-tester] Decomposed into ${parsed.subtasks.length} worker subtasks`);
+  const result = await delegateToWorkers(parsed, "tester");
 
   return result;
 }
 
-// ─── Agent Tool: ask_reviewer (Sonnet) ──────────────────────────────────────
+// ─── Agent Tool: ask_reviewer (Sonnet meta → Haiku workers → Sonnet synthesis) ──
 
 export async function askReviewer(opts: {
   task: string;
   diff: string;
   testResults: string;
 }): Promise<string> {
-  const systemPrompt = `${loadAgentSystemPrompt()}
+  const reviewerConfig = loadAgentConfig("reviewer");
+  const model = reviewerConfig.model || "anthropic/claude-sonnet-4-6";
+
+  // Step 1: Sonnet decomposes diff into per-file review tasks
+  const decomposerPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+${loadSkill("review")}
+
+---
+
+## Your Role
+You are a META-REVIEWER. You do NOT review code yourself. Instead, you DECOMPOSE the diff
+into focused per-file review tasks that Haiku-tier workers can execute independently.
+
+For each changed file, produce a self-contained worker prompt that tells the worker:
+- What the file is supposed to do (from the task context)
+- Specific things to check (memory safety, hex invariants, O(N^2), includes)
+- The diff for ONLY that file
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/file.cpp",
+      "action": "MODIFY",
+      "instructions": "Review changes to file.cpp for correctness and safety",
+      "context_files": [],
+      "worker_prompt": "You are reviewing changes to file.cpp in a C++20 terrain generator. The task was: [task context]. Review the following diff for: (1) compilation errors and missing includes, (2) memory safety (no dangling pointers, buffer overflows, GPU resource leaks), (3) correctness (does the logic match the intent?), (4) performance (no O(N^2) on large data). Output EXACTLY: PASS or FAIL: [brief reason with file:line references]."
+    }
+  ]
+}
+\`\`\`
+
+## Constraints
+- One subtask per changed file.
+- worker_prompt must include the relevant diff section.
+- Output ONLY the JSON block. No preamble, no explanation.`;
+
+  const prompt = `## Task
+${opts.task}
+
+## Diff
+\`\`\`
+${opts.diff}
+\`\`\`
+
+## Test Results
+${opts.testResults}`;
+
+  const decomposition = await spawnSubagent({
+    prompt,
+    systemPrompt: decomposerPrompt,
+    model,
+    thinking: "low",
+    tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
+    agentName: "reviewer-meta",
+  });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed (e.g., single-file diff), do direct review
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-reviewer] Decomposition failed — falling back to direct review");
+    const directPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -1150,34 +1463,84 @@ You are a CODE REVIEWER. Return APPROVE or REQUEST_CHANGES. No middle ground.
 
 ### Tests
 - [PASS/FAIL] All tests pass
+- [YES/NO] New behavior is tested`;
+
+    const result = await spawnSubagent({
+      prompt,
+      systemPrompt: directPrompt,
+      model,
+      thinking: reviewerConfig.thinking || "medium",
+      tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
+      agentName: "reviewer",
+    });
+    writeState("review.md", result);
+    return result;
+  }
+
+  // Step 2: Delegate per-file reviews to Haiku workers in parallel
+  console.error(`[meta-reviewer] Decomposed into ${parsed.subtasks.length} per-file reviews`);
+  const workerConfig = loadAgentConfig("worker");
+  const workerResults = await Promise.all(
+    parsed.subtasks.map(async (st) => {
+      const result = await spawnSubagent({
+        prompt: st.worker_prompt,
+        systemPrompt: `You are a code review worker for a C++20 terrain generator (SDL3-GPU).
+Review the provided diff for correctness, safety, and compilation issues.
+Output EXACTLY one line: PASS or FAIL: [brief reason with file:line references if applicable].`,
+        model: workerConfig.model || "anthropic/claude-haiku-4-5",
+        thinking: "off",
+        agentName: `reviewer-worker-${st.file.split("/").pop()}`,
+      });
+      return `### ${st.file}\n${result}`;
+    }),
+  );
+
+  // Step 3: Sonnet synthesizes final verdict from worker reports
+  const synthesisPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a REVIEW SYNTHESIZER. Given per-file review results from workers, produce a final verdict.
+
+## Output Format
+## Review: [APPROVE / REQUEST_CHANGES]
+
+### Summary
+[1-2 sentences]
+
+### Per-File Results
+[Include the worker results]
+
+### Issues (if any)
+1. [file:line] [severity] — [description]
+
+### Tests
+- [PASS/FAIL] All tests pass
 - [YES/NO] New behavior is tested
 
-## Constraints
-- Reject on memory safety violations or GPU resource leaks.
-- Reject on broken hex coordinate invariants.
-- Reject on O(N^2) over large data.
-- Ignore style nits unless they break conventions.`;
+## Decision Rules
+- If ANY worker reported FAIL → REQUEST_CHANGES
+- If all workers reported PASS and tests pass → APPROVE
+- Include all worker-reported issues in the Issues section`;
 
-  const prompt = `## Task
+  const synthesisInput = `## Task
 ${opts.task}
 
-## Diff
-\`\`\`
-${opts.diff}
-\`\`\`
+## Worker Review Results
+${workerResults.join("\n\n")}
 
 ## Test Results
-${opts.testResults}`;
+${opts.testResults}
 
-  const reviewerConfig = loadAgentConfig("reviewer");
+Synthesize a final review verdict.`;
 
   const result = await spawnSubagent({
-    prompt,
-    systemPrompt,
-    model: reviewerConfig.model || "anthropic/claude-sonnet-4-6",
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model,
     thinking: reviewerConfig.thinking || "medium",
-    tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
-    agentName: "reviewer",
+    agentName: "reviewer-synthesizer",
   });
 
   writeState("review.md", result);
@@ -1286,55 +1649,93 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
   }
 }
 
-// ─── Agent Tool: ask_build_fixer (Haiku) ────────────────────────────────────
+// ─── Agent Tool: ask_build_fixer (Sonnet meta → Haiku workers) ──────────────
 
 export async function askBuildFixer(opts: {
   buildOutput: string;
   round: number;
   maxRounds: number;
 }): Promise<string> {
-  const systemPrompt = `You are a BUILD FIXER for a C++20 CMake project (Delve terrain generator).
-You receive compiler error output and must output the exact file changes needed to fix the errors.
+  const config = loadAgentConfig("build-fixer");
+  const model = config.model || "anthropic/claude-sonnet-4-6";
 
-## Output Format
-For each file to fix, output the COMPLETE file with your fixes applied:
+  // Step 1: Sonnet decomposes build errors into per-file fix tasks
+  const decomposerPrompt = `You are a META-BUILD-FIXER for a C++20 CMake project (Delve terrain generator).
+You do NOT fix code yourself. Instead, you DECOMPOSE build errors into per-file fix tasks
+that Haiku-tier workers can execute independently.
 
-### FILE: <path>
-#### ACTION: MODIFY
-\`\`\`cpp
-[COMPLETE file content with fixes applied — not a snippet, the FULL file]
+For each file with errors, produce a self-contained worker prompt that includes:
+- The exact compiler errors for that file
+- What needs to change (missing #include, wrong type, updated signature, etc.)
+- Enough context for the worker to produce the complete fixed file
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/broken_file.cpp",
+      "action": "MODIFY",
+      "instructions": "Fix compilation errors in broken_file.cpp",
+      "context_files": ["src/path/to/related.h"],
+      "worker_prompt": "You are fixing compilation errors in broken_file.cpp (C++20). Errors: [exact errors]. Fix: [specific instructions: add #include X, change type Y to Z, etc.]. Output the COMPLETE fixed file."
+    }
+  ]
+}
 \`\`\`
 
-CRITICAL: You must output the ENTIRE file content, not just the changed lines.
-The file will be overwritten with exactly what you output.
-
 ## Constraints
-- Fix ONLY the compilation errors shown — don't refactor
-- If a header is missing, add the #include
-- If a type is wrong, fix the type
-- If a function signature changed, update callers
-- Preserve all existing code that doesn't need to change`;
+- One subtask per file with errors.
+- worker_prompt must include the EXACT error messages for that file.
+- Include specific fix instructions (the worker should not need to reason about the fix).
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
-  const config = loadAgentConfig("build-fixer");
-
-  return spawnSubagent({
-    prompt: `BUILD FAILED (attempt ${opts.round}/${opts.maxRounds}).
+  const prompt = `BUILD FAILED (attempt ${opts.round}/${opts.maxRounds}).
 
 Compiler output (tail):
 \`\`\`
 ${opts.buildOutput}
 \`\`\`
 
-Fix the compilation errors.`,
-    systemPrompt,
-    model: config.model || "anthropic/claude-haiku-4-5",
-    thinking: config.thinking || "off",
+Decompose these errors into per-file fix tasks.`;
+
+  const decomposition = await spawnSubagent({
+    prompt,
+    systemPrompt: decomposerPrompt,
+    model,
+    thinking: "low",
     tools: config.tools.length > 0 ? config.tools : undefined,
-    agentName: "build-fixer",
+    agentName: "build-fixer-meta",
   });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use direct Haiku fix
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-build-fixer] Decomposition failed — falling back to direct fix");
+    return spawnSubagent({
+      prompt,
+      systemPrompt: `You are a BUILD FIXER for a C++20 CMake project (Delve terrain generator).
+Fix compilation errors. Output COMPLETE file content for each file:
+### FILE: <path>
+#### ACTION: MODIFY
+\`\`\`cpp
+[COMPLETE file content with fixes]
+\`\`\``,
+      model: "anthropic/claude-haiku-4-5",
+      thinking: "off",
+      tools: config.tools.length > 0 ? config.tools : undefined,
+      agentName: "build-fixer",
+    });
+  }
+
+  // Step 2: Delegate per-file fixes to Haiku workers in parallel
+  console.error(`[meta-build-fixer] Decomposed into ${parsed.subtasks.length} per-file fix tasks`);
+  const result = await delegateToWorkers(parsed, "build-fixer");
+  return result;
 }
 
-// ─── Agent Tool: ask_test_fixer (Haiku) ──────────────────────────────────────
+// ─── Agent Tool: ask_test_fixer (Sonnet meta → Haiku workers) ────────────────
 
 export async function askTestFixer(opts: {
   testOutput: string;
@@ -1343,50 +1744,87 @@ export async function askTestFixer(opts: {
   isBuildFailure: boolean;
 }): Promise<string> {
   const what = opts.isBuildFailure ? "TEST BUILD" : "TESTS";
+  const config = loadAgentConfig("test-fixer");
+  const model = config.model || "anthropic/claude-sonnet-4-6";
 
-  const systemPrompt = `You are a TEST FIXER for a C++20 project (Delve terrain generator).
-You receive ${opts.isBuildFailure ? "test compilation" : "test execution"} output and must output exact file changes.
+  const fixStrategy = opts.isBuildFailure
+    ? "Fix compilation errors in the test code"
+    : "Fix the implementation (not the tests) unless test expectations are clearly wrong";
 
-## Output Format
-For each file to fix, output the COMPLETE file with your fixes applied:
+  // Step 1: Sonnet decomposes test failures into per-file fix tasks
+  const decomposerPrompt = `You are a META-TEST-FIXER for a C++20 project (Delve terrain generator).
+You do NOT fix code yourself. Instead, you DECOMPOSE test failures into per-file fix tasks
+that Haiku-tier workers can execute independently.
 
-### FILE: <path>
-#### ACTION: MODIFY
-\`\`\`cpp
-[COMPLETE file content with fixes applied — not a snippet, the FULL file]
+Strategy: ${fixStrategy}
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/file.cpp",
+      "action": "MODIFY",
+      "instructions": "Fix test failure in file.cpp",
+      "context_files": ["src/path/to/related.h"],
+      "worker_prompt": "You are fixing ${opts.isBuildFailure ? "compilation errors" : "test failures"} in file.cpp (C++20). Errors: [exact errors]. Fix: [specific instructions]. Output the COMPLETE fixed file."
+    }
+  ]
+}
 \`\`\`
 
-CRITICAL: You must output the ENTIRE file content, not just the changed lines.
-The file will be overwritten with exactly what you output.
-
 ## Constraints
-${opts.isBuildFailure
-    ? "- Fix compilation errors in test code"
-    : "- Fix the implementation, not the tests, unless test expectations are clearly wrong"
-  }
-- Preserve all existing code that doesn't need to change
-- Don't refactor — minimal fixes only`;
+- One subtask per file that needs fixing.
+- worker_prompt must include the EXACT error messages relevant to that file.
+- Include specific fix instructions.
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
-  const config = loadAgentConfig("test-fixer");
-
-  return spawnSubagent({
-    prompt: `${what} FAILED (attempt ${opts.round}/${opts.maxRounds}).
+  const prompt = `${what} FAILED (attempt ${opts.round}/${opts.maxRounds}).
 
 Output (tail):
 \`\`\`
 ${opts.testOutput}
 \`\`\`
 
-Fix the errors.`,
-    systemPrompt,
-    model: config.model || "anthropic/claude-haiku-4-5",
-    thinking: config.thinking || "off",
+Decompose these failures into per-file fix tasks.`;
+
+  const decomposition = await spawnSubagent({
+    prompt,
+    systemPrompt: decomposerPrompt,
+    model,
+    thinking: "low",
     tools: config.tools.length > 0 ? config.tools : undefined,
-    agentName: "test-fixer",
+    agentName: "test-fixer-meta",
   });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use direct Haiku fix
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-test-fixer] Decomposition failed — falling back to direct fix");
+    return spawnSubagent({
+      prompt,
+      systemPrompt: `You are a TEST FIXER for a C++20 project (Delve terrain generator).
+${fixStrategy}. Output COMPLETE file content for each file:
+### FILE: <path>
+#### ACTION: MODIFY
+\`\`\`cpp
+[COMPLETE file content with fixes]
+\`\`\``,
+      model: "anthropic/claude-haiku-4-5",
+      thinking: "off",
+      tools: config.tools.length > 0 ? config.tools : undefined,
+      agentName: "test-fixer",
+    });
+  }
+
+  // Step 2: Delegate per-file fixes to Haiku workers in parallel
+  console.error(`[meta-test-fixer] Decomposed into ${parsed.subtasks.length} per-file fix tasks`);
+  const result = await delegateToWorkers(parsed, "test-fixer");
+  return result;
 }
 
-// ─── Agent Tool: ask_diagnoser (Sonnet) ──────────────────────────────────────
+// ─── Agent Tool: ask_diagnoser (Sonnet meta → Haiku workers → Sonnet synthesis) ─
 
 export async function askDiagnoser(opts: {
   task: string;
@@ -1394,8 +1832,71 @@ export async function askDiagnoser(opts: {
   recentCommits: string;
 }): Promise<string> {
   const diagnoserConfig = loadAgentConfig("diagnoser");
+  const model = diagnoserConfig.model || "anthropic/claude-sonnet-4-6";
 
-  const systemPrompt = `${loadAgentSystemPrompt()}
+  // Step 1: Sonnet decomposes test failures into per-error analysis tasks
+  const decomposerPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a META-DIAGNOSTICIAN. You do NOT diagnose bugs yourself. Instead, you DECOMPOSE the
+test failures into focused per-error analysis tasks that Haiku-tier workers can investigate independently.
+
+For each distinct error or failure, produce a self-contained worker prompt that tells the worker:
+- The specific error message or assertion failure
+- The file(s) likely involved
+- What to look for (wrong logic, missing initialization, type mismatch, etc.)
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/suspected_file.cpp",
+      "action": "MODIFY",
+      "instructions": "Analyze assertion failure in test_terrain_noise",
+      "context_files": ["src/game/terrain/noise.h"],
+      "worker_prompt": "You are analyzing a test failure in a C++20 terrain generator. The error is: [exact error message]. The suspected file is [file]. Look at the function [name] and determine: (1) What is the root cause? (2) Which variable or expression is wrong? (3) What is the expected vs actual behavior? Output: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief quote from code or error]"
+    }
+  ]
+}
+\`\`\`
+
+## Constraints
+- One subtask per distinct error/failure.
+- Group related assertion failures into one subtask if they share a root cause.
+- worker_prompt must include the exact error text.
+- Output ONLY the JSON block. No preamble, no explanation.`;
+
+  const prompt = `## Task
+${opts.task}
+
+## Test Output
+\`\`\`
+${opts.testOutput}
+\`\`\`
+
+## Recent Commits
+${opts.recentCommits}
+
+Decompose these test failures into per-error analysis tasks.`;
+
+  const decomposition = await spawnSubagent({
+    prompt,
+    systemPrompt: decomposerPrompt,
+    model,
+    thinking: diagnoserConfig.thinking || "low",
+    tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
+    agentName: "diagnoser-meta",
+  });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, do direct diagnosis
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-diagnoser] Decomposition failed — falling back to direct diagnosis");
+    const directPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -1413,70 +1914,136 @@ Do NOT propose fixes — only diagnose.
 - [file paths that need to change]
 
 ### Evidence
-[relevant error messages, stack traces, or logic errors]
+[relevant error messages, stack traces, or logic errors]`;
+
+    return spawnSubagent({
+      prompt,
+      systemPrompt: directPrompt,
+      model,
+      thinking: diagnoserConfig.thinking || "low",
+      tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
+      agentName: "diagnoser",
+    });
+  }
+
+  // Step 2: Delegate per-error analyses to Haiku workers in parallel
+  console.error(`[meta-diagnoser] Decomposed into ${parsed.subtasks.length} per-error analyses`);
+  const workerConfig = loadAgentConfig("worker");
+  const workerResults = await Promise.all(
+    parsed.subtasks.map(async (st) => {
+      // Load context files for the worker
+      const fileContents: Record<string, string> = {};
+      const allFiles = [st.file, ...st.context_files].slice(0, 3);
+      for (const f of allFiles) {
+        const fullPath = f.startsWith("/") ? f : join(PROJECT_ROOT, f);
+        if (existsSync(fullPath) && statSync(fullPath).isFile()) {
+          const content = readFileSync(fullPath, "utf-8");
+          fileContents[f] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
+        }
+      }
+
+      const result = await askWorker({
+        systemPrompt: `You are a bug analysis worker for a C++20 terrain generator.
+Analyze the test failure described below by examining the provided source code.
+Output EXACTLY: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief explanation]`,
+        task: st.worker_prompt,
+        fileContents,
+      });
+      return `### ${st.file}\n${result}`;
+    }),
+  );
+
+  // Step 3: Sonnet synthesizes final diagnosis from worker reports
+  const synthesisPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a DIAGNOSIS SYNTHESIZER. Given per-error analysis results from workers,
+produce a unified root cause diagnosis.
+
+## Output Format
+## Diagnosis
+
+### Root Cause
+[1-2 sentences identifying the exact root cause — consolidate if workers found a shared cause]
+
+### Affected Files
+- [file paths that need to change]
+
+### Evidence
+[relevant error messages, worker findings, and logic errors]
+
+### Worker Findings
+[Include the per-error worker results]
 
 ## Constraints
-- Analyze, don't fix.
-- Be specific: name the function, line, and variable causing the issue.
-- If multiple failures, identify whether they share a root cause.`;
+- Synthesize, don't re-analyze.
+- If multiple errors share a root cause, identify the common cause.
+- Be specific: name the function, line, and variable causing the issue.`;
 
-  const prompt = `## Task
+  const synthesisInput = `## Task
 ${opts.task}
 
-## Test Output
+## Worker Analysis Results
+${workerResults.join("\n\n")}
+
+## Original Test Output
 \`\`\`
 ${opts.testOutput}
 \`\`\`
 
-## Recent Commits
-${opts.recentCommits}
-
-Diagnose the root cause of the test failures.`;
+Synthesize a unified diagnosis from the worker findings.`;
 
   return spawnSubagent({
-    prompt,
-    systemPrompt,
-    model: diagnoserConfig.model || "anthropic/claude-sonnet-4-6",
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model,
     thinking: diagnoserConfig.thinking || "low",
-    tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
-    agentName: "diagnoser",
+    agentName: "diagnoser-synthesizer",
   });
 }
 
-// ─── Agent Tool: ask_blueprint_generator (Sonnet) ────────────────────────────
+// ─── Agent Tool: ask_blueprint_generator (Sonnet meta → Haiku workers → Sonnet synthesis) ─
 
 export async function askBlueprintGenerator(opts: {
   task: string;
   availablePhases: string[];
 }): Promise<string> {
-  // Load full agent body from blueprint-gen.md (contains detailed heuristics)
-  const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
-  const bodyStart = agentBody.indexOf("---", 3);
-  const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
+  const bpGenConfig = loadAgentConfig("blueprint-gen");
+  const model = bpGenConfig.model || "anthropic/claude-sonnet-4-6";
 
-  const systemPrompt = agentInstructions.length > 100
-    ? agentInstructions
-    : `You are a PIPELINE ARCHITECT. Given a development task, design an optimal pipeline
-by selecting and ordering phases from the available list.
+  // Step 1: Sonnet decomposes the task into analysis questions for workers
+  const decomposerPrompt = `You are a META-PIPELINE-ARCHITECT. You do NOT design pipelines yourself.
+Instead, you DECOMPOSE the task analysis into focused questions that Haiku workers can answer.
+
+For each aspect of the task, produce a worker task that classifies one dimension:
+- Task complexity (simple/moderate/complex)
+- Subsystems affected (terrain/actor/shader/engine)
+- Whether tests are needed
+- Whether review is needed
+- Whether shader validation is needed
+- Whether verification is needed
 
 ## Output Format (JSON only)
+\`\`\`json
 {
-  "name": "descriptive-pipeline-name",
-  "description": "What this pipeline does",
-  "phases": [
-    { "name": "Human-readable phase name", "type": "deterministic|agentic", "handler": "handler_key" }
+  "subtasks": [
+    {
+      "file": "analysis",
+      "action": "MODIFY",
+      "instructions": "Classify task complexity",
+      "context_files": [],
+      "worker_prompt": "Classify this development task's complexity as SIMPLE (single file, obvious change), MODERATE (2-4 files, clear approach), or COMPLEX (5+ files, architectural changes). Task: [description]. Output EXACTLY: COMPLEXITY: [SIMPLE|MODERATE|COMPLEX] | REASON: [1 sentence]"
+    }
   ]
 }
+\`\`\`
 
-## Rules
-- Use ONLY handlers from the available list.
-- Every pipeline MUST start with "branch" and end with "commit_pr".
-- Include "build" after any code generation phase.
-- Simple tasks need fewer phases — don't over-engineer.
-- For refactoring: skip test-writing (behavior should be preserved).
-- For bugfixes: include "diagnose" before "implement".
-- For shader-only tasks: use "shader_validate" instead of "test".
-- For changes that affect visual output: include "verify" after "build" or "test".`;
+## Constraints
+- 3-6 subtasks covering different analysis dimensions.
+- Each worker answers ONE classification question.
+- Output ONLY the JSON block.`;
 
   const prompt = `## Task
 ${opts.task}
@@ -1484,28 +2051,86 @@ ${opts.task}
 ## Available Phase Handlers
 ${opts.availablePhases.map((p) => `- ${p}`).join("\n")}
 
-Design the optimal pipeline for this task.`;
+Decompose this into classification questions.`;
 
-  const bpGenConfig = loadAgentConfig("blueprint-gen");
+  const decomposition = await spawnSubagent({
+    prompt,
+    systemPrompt: decomposerPrompt,
+    model,
+    thinking: bpGenConfig.thinking || "off",
+    agentName: "blueprint-gen-meta",
+  });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: direct pipeline design
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-blueprint-gen] Decomposition failed — falling back to direct design");
+    const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
+    const bodyStart = agentBody.indexOf("---", 3);
+    const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
+
+    return spawnSubagent({
+      prompt,
+      systemPrompt: agentInstructions.length > 100 ? agentInstructions : decomposerPrompt,
+      model,
+      thinking: bpGenConfig.thinking || "off",
+      agentName: "blueprint-gen",
+    });
+  }
+
+  // Step 2: Delegate classification questions to Haiku workers
+  console.error(`[meta-blueprint-gen] Decomposed into ${parsed.subtasks.length} classification tasks`);
+  const workerResults = await Promise.all(
+    parsed.subtasks.map(async (st) => {
+      const result = await askWorker({
+        systemPrompt: `You are a task classifier for a C++20 game engine development pipeline. Answer the classification question concisely in the requested format.`,
+        task: st.worker_prompt,
+      });
+      return `- ${st.instructions}: ${result}`;
+    }),
+  );
+
+  // Step 3: Sonnet synthesizes pipeline from worker classifications
+  const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
+  const bodyStart = agentBody.indexOf("---", 3);
+  const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
+
+  const synthesisPrompt = agentInstructions.length > 100
+    ? agentInstructions
+    : `You are a PIPELINE ARCHITECT. Design an optimal pipeline as JSON.
+Every pipeline MUST start with "branch" and end with "commit_pr".
+Use ONLY handlers from the available list. Output ONLY valid JSON.`;
+
+  const synthesisInput = `## Task
+${opts.task}
+
+## Worker Analysis Results
+${workerResults.join("\n")}
+
+## Available Phase Handlers
+${opts.availablePhases.map((p) => `- ${p}`).join("\n")}
+
+Based on the worker analysis, design the optimal pipeline. Output ONLY the JSON blueprint.`;
 
   return spawnSubagent({
-    prompt,
-    systemPrompt,
-    model: bpGenConfig.model || "anthropic/claude-sonnet-4-6",
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model,
     thinking: bpGenConfig.thinking || "off",
-    agentName: "blueprint-gen",
+    agentName: "blueprint-gen-synthesizer",
   });
 }
 
-// ─── Agent Tool: ask_verifier (Sonnet) ──────────────────────────────────────
+// ─── Agent Tool: ask_verifier (Sonnet meta → Haiku domain analyzers → Sonnet synthesis) ──
 
 export async function askVerifier(opts: {
   task: string;
   metricsDir: string;
   domains: string[];
 }): Promise<string> {
-  const { readFileSync, existsSync } = require("node:fs");
-  const { join } = require("node:path");
+  const verifierConfig = loadAgentConfig("verifier");
+  const model = verifierConfig.model || "anthropic/claude-sonnet-4-6";
 
   // Read all domain metric files
   const domainData: Record<string, string> = {};
@@ -1516,41 +2141,74 @@ export async function askVerifier(opts: {
     }
   }
 
+  // Step 1: Fan out Haiku domain analyzers in parallel (one per domain)
+  console.error(`[meta-verifier] Delegating ${Object.keys(domainData).length} domain analyses to workers`);
+  const workerResults = await Promise.all(
+    Object.entries(domainData).map(([domain, metricData]) =>
+      spawnDomainAnalyzer({ domain, metricData, task: opts.task })
+    ),
+  );
+
+  const workerSummary = workerResults
+    .map((r) => `### ${r.domain}\n${r.result}`)
+    .join("\n\n");
+
+  // Step 2: Sonnet synthesizes final verification summary from worker reports
+  const agentBody = loadFile(join(AGENTS_DIR, "verifier.md"));
+  const bodyStart = agentBody.indexOf("---", 3);
+  const verifierInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
+
+  const synthesisPrompt = `${loadAgentSystemPrompt()}
+
+${verifierInstructions ? "\n\n" + verifierInstructions : ""}
+
+---
+
+## Your Role
+You are a VERIFICATION SYNTHESIZER. Given per-domain analysis results from workers,
+produce a unified verification summary.
+
+## Output Format
+## Verification Summary
+
+**Overall: PASS | FAIL**
+
+### Per-Domain Worker Results
+[Include the worker analysis results]
+
+### Issues Found
+- [List any FAIL items with explanation]
+
+## Decision Rules
+- If ANY domain reported FAIL → Overall FAIL
+- If all domains reported PASS (with optional WARNINGs) → Overall PASS
+- Include all worker-reported issues`;
+
   const domainSections = Object.entries(domainData)
     .map(([domain, content]) => `### ${domain}.json\n\`\`\`json\n${content}\n\`\`\``)
     .join("\n\n");
 
-  const agentBody = loadFile(join(AGENTS_DIR, "verifier.md"));
-  const verifierConfig = loadAgentConfig("verifier");
-
-  // Build system prompt from agent file body (after frontmatter)
-  const bodyStart = agentBody.indexOf("---", 3);
-  const systemPrompt = bodyStart >= 0
-    ? loadAgentSystemPrompt() + "\n\n" + agentBody.slice(bodyStart + 3).trim()
-    : loadAgentSystemPrompt();
-
-  const prompt = `## Task Being Verified
+  const synthesisInput = `## Task Being Verified
 ${opts.task}
 
-## Available Metric Domains
-${opts.domains.join(", ")}
+## Worker Domain Analysis Results
+${workerSummary}
 
-## Metric Data
-
+## Raw Metric Data (for reference)
 ${domainSections}
 
-Analyze the metrics above and provide your verification summary.`;
+Synthesize a final verification verdict from the worker findings.`;
 
   return spawnSubagent({
-    prompt,
-    systemPrompt,
-    model: verifierConfig.model || "anthropic/claude-sonnet-4-6",
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model,
     thinking: verifierConfig.thinking || "low",
-    agentName: "verifier",
+    agentName: "verifier-synthesizer",
   });
 }
 
-// ─── Domain Decoupling Analyst (Sonnet) ──────────────────────────────────────
+// ─── Domain Decoupling Analyst (Sonnet meta → Haiku workers → Sonnet synthesis) ──
 
 export async function askDecoupleAnalyst(opts: {
   domainReport: { domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; files: string[] };
@@ -1558,57 +2216,46 @@ export async function askDecoupleAnalyst(opts: {
   files: string[];
 }): Promise<string> {
   const decouplerConfig = loadAgentConfig("decoupler");
-
-  const systemPrompt = `${loadAgentSystemPrompt()}
-
----
-
-## Your Role
-You are a DOMAIN SPLIT SPECIALIST. You analyze over-complex domains and propose how to split them
-into smaller, well-bounded sub-domains.
-
-## Output Format
-Produce a structured SPLIT_PROPOSAL in markdown:
-
-## SPLIT_PROPOSAL
-
-### New Sub-domains
-For each proposed sub-domain:
-
-#### Sub-domain: <name>
-- **Directory:** <new directory path>
-- **Files to move:** <list of files>
-- **Responsibility:** <brief description>
-
-### New Agent Definitions
-For each new sub-domain, a new agent .md file:
-
-### FILE: .pi/agents/<name>.md
-\`\`\`
----
-name: <name>-specialist
-description: <description>
-tools: read,write,edit,bash
-model: anthropic/claude-sonnet-4-6
-thinking: low
----
-
-<agent instructions>
-\`\`\`
-
-### Keyword Map Additions
-New entries for KEYWORD_SYNONYMS and SUBSYSTEM_DIRS.
-
-## Constraints
-- Each sub-domain must have >= 5 files
-- Preserve public interfaces (headers used outside the domain)
-- Don't cross game/engine boundary
-- Follow existing naming conventions`;
+  const model = decouplerConfig.model || "anthropic/claude-sonnet-4-6";
 
   const fileList = opts.files.map((f) => `- ${f}`).join("\n");
   const metricsSection = opts.recentMetrics.length > 0
     ? `## Recent Agent Metrics\n${opts.recentMetrics.map((m) => `- ${m.agentName}: ${m.contextUsagePct}% context, ${m.durationMs}ms, success=${m.success}`).join("\n")}`
     : "## Recent Agent Metrics\nNo recent metrics available.";
+
+  // Step 1: Sonnet decomposes the domain analysis into per-file-group analysis tasks
+  const decomposerPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a META-DECOUPLER. You do NOT propose splits yourself. Instead, you DECOMPOSE the domain
+into file groups for Haiku workers to analyze for coupling and responsibility boundaries.
+
+For each potential file group, produce a worker task that asks the worker to:
+- Identify the group's primary responsibility
+- List its public interfaces (headers used outside the group)
+- Identify dependencies on other files in the domain
+
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": "src/game/terrain/noise.cpp",
+      "action": "MODIFY",
+      "instructions": "Analyze file group: noise generation files",
+      "context_files": ["src/game/terrain/noise.h", "src/game/terrain/noise_layers.cpp"],
+      "worker_prompt": "You are analyzing files for domain splitting in a C++20 terrain generator. Files in this group: [list]. For each file, output: RESPONSIBILITY: [1 sentence] | PUBLIC_API: [exported symbols used outside this group] | DEPENDS_ON: [files from other groups this file imports]. Output one line per file."
+    }
+  ]
+}
+\`\`\`
+
+## Constraints
+- Group related files (e.g., noise.h + noise.cpp + noise_layers.cpp).
+- Each subtask analyzes one logical file group (3-8 files).
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
   const prompt = `## Domain Analysis
 - Domain: ${opts.domainReport.domain}
@@ -1622,50 +2269,155 @@ ${fileList}
 
 ${metricsSection}
 
-Analyze this domain and propose how to split it into well-bounded sub-domains.`;
+Decompose this domain into file groups for coupling analysis.`;
 
-  const result = await spawnSubagent({
+  const decomposition = await spawnSubagent({
     prompt,
-    systemPrompt,
-    model: decouplerConfig.model || "anthropic/claude-sonnet-4-6",
+    systemPrompt: decomposerPrompt,
+    model,
     thinking: decouplerConfig.thinking || "medium",
     tools: decouplerConfig.tools.length > 0 ? decouplerConfig.tools : ["read"],
-    agentName: "decoupler",
+    agentName: "decoupler-meta",
+  });
+
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if decomposition failed, use direct analysis
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-decoupler] Decomposition failed — falling back to direct analysis");
+    const directPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a DOMAIN SPLIT SPECIALIST. Analyze this domain and propose how to split it into well-bounded sub-domains.
+
+## Output Format
+Produce a structured SPLIT_PROPOSAL in markdown with sub-domains, agent definitions, and keyword map additions.`;
+
+    const result = await spawnSubagent({
+      prompt,
+      systemPrompt: directPrompt,
+      model,
+      thinking: decouplerConfig.thinking || "medium",
+      tools: decouplerConfig.tools.length > 0 ? decouplerConfig.tools : ["read"],
+      agentName: "decoupler",
+    });
+    writeState("decouple_proposal.md", result);
+    return result;
+  }
+
+  // Step 2: Delegate per-group coupling analysis to Haiku workers in parallel
+  console.error(`[meta-decoupler] Decomposed into ${parsed.subtasks.length} file group analyses`);
+  const workerConfig = loadAgentConfig("worker");
+  const workerResults = await Promise.all(
+    parsed.subtasks.map(async (st) => {
+      const fileContents: Record<string, string> = {};
+      const allFiles = [st.file, ...st.context_files].slice(0, 5);
+      for (const f of allFiles) {
+        const fullPath = f.startsWith("/") ? f : join(PROJECT_ROOT, f);
+        if (existsSync(fullPath) && statSync(fullPath).isFile()) {
+          const content = readFileSync(fullPath, "utf-8");
+          fileContents[f] = content.length > 3000 ? content.slice(0, 3000) + "\n... [truncated]" : content;
+        }
+      }
+      const result = await askWorker({
+        systemPrompt: `You are a code coupling analyzer for a C++20 project.
+Analyze the provided files and output per-file: RESPONSIBILITY: [1 sentence] | PUBLIC_API: [exported symbols] | DEPENDS_ON: [external dependencies].`,
+        task: st.worker_prompt,
+        fileContents,
+      });
+      return `### File Group: ${st.file}\n${result}`;
+    }),
+  );
+
+  // Step 3: Sonnet synthesizes split proposal from worker coupling analyses
+  const synthesisPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a SPLIT SYNTHESIZER. Given per-file-group coupling analyses from workers,
+produce a structured domain split proposal.
+
+## Output Format
+## SPLIT_PROPOSAL
+
+### New Sub-domains
+#### Sub-domain: <name>
+- **Directory:** <path>
+- **Files to move:** <list>
+- **Responsibility:** <description>
+
+### New Agent Definitions
+### FILE: .pi/agents/<name>.md
+(agent definition for each sub-domain)
+
+### Keyword Map Additions
+New entries for KEYWORD_SYNONYMS and SUBSYSTEM_DIRS.
+
+## Constraints
+- Each sub-domain must have >= 5 files
+- Preserve public interfaces
+- Don't cross game/engine boundary`;
+
+  const synthesisInput = `## Domain
+${opts.domainReport.domain} (${opts.domainReport.directory}, ${opts.domainReport.fileCount} files, ${opts.domainReport.totalLines} lines)
+
+## Worker Coupling Analyses
+${workerResults.join("\n\n")}
+
+${metricsSection}
+
+Synthesize a domain split proposal from the coupling analyses.`;
+
+  const result = await spawnSubagent({
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model,
+    thinking: decouplerConfig.thinking || "medium",
+    agentName: "decoupler-synthesizer",
   });
 
   writeState("decouple_proposal.md", result);
   return result;
 }
 
-// ─── Map Updater Agent (Sonnet) ──────────────────────────────────────────────
+// ─── Map Updater Agent (Sonnet meta → Haiku workers) ─────────────────────────
 
 export async function askMapUpdater(opts: {
   coverageReport: { unmappedDirs: string[]; unmappedKeywords: string[]; currentKeywordCount: number };
   currentToolsContent: string;
 }): Promise<string> {
-  const systemPrompt = `${loadAgentSystemPrompt()}
+  // Step 1: Sonnet decomposes unmapped dirs into per-directory classification tasks
+  const decomposerPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
 ## Your Role
-You are a MAP UPDATER. You maintain the subsystem routing maps in the orchestrator.
-Given unmapped directories and the current map definitions, produce updated map code.
+You are a META-MAP-UPDATER. You do NOT write map code yourself. Instead, you DECOMPOSE
+the unmapped directories into classification tasks that Haiku workers can handle.
 
-## Output Format
-Output a single file block with the updated maps section of tools.ts:
+For each unmapped directory, produce a worker task that classifies it into a canonical subsystem.
 
-### FILE: .pi/extensions/orchestrator/src/tools.ts
-\`\`\`typescript
-// Only output the KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SUBSYSTEM_CANONICAL objects.
-// These will be applied via applyFileBlocks.
+## Output Format (JSON only)
+\`\`\`json
+{
+  "subtasks": [
+    {
+      "file": ".pi/extensions/orchestrator/src/tools.ts",
+      "action": "MODIFY",
+      "instructions": "Classify directory src/game/new_feature/ into a canonical subsystem",
+      "context_files": [],
+      "worker_prompt": "Classify this directory into one of these canonical subsystems: terrain, actor, shader, engine. Directory: [path]. Files in it: [list]. Output EXACTLY: SUBSYSTEM: [name] | KEYWORDS: [comma-separated relevant keywords]"
+    }
+  ]
+}
 \`\`\`
 
 ## Constraints
-- Preserve ALL existing mappings
-- Only ADD new entries for unmapped directories
-- Follow the existing naming patterns
-- Map new directories to the most logical canonical subsystem
-- Add relevant keyword synonyms for new subsystems`;
+- One subtask per unmapped directory.
+- Output ONLY the JSON block. No preamble, no explanation.`;
 
   const prompt = `## Unmapped Directories
 ${opts.coverageReport.unmappedDirs.map((d) => `- ${d}`).join("\n") || "None"}
@@ -1681,18 +2433,89 @@ ${opts.coverageReport.currentKeywordCount}
 ${opts.currentToolsContent}
 \`\`\`
 
-Update the maps to include the unmapped directories.`;
+Decompose unmapped directories into classification tasks.`;
 
-  const result = await spawnSubagent({
+  const decomposition = await spawnSubagent({
     prompt,
-    systemPrompt,
+    systemPrompt: decomposerPrompt,
     model: "anthropic/claude-sonnet-4-6",
     thinking: "low",
     tools: ["read"],
-    agentName: "map-updater",
+    agentName: "map-updater-meta",
   });
 
-  return result;
+  const parsed = parseMetaDecomposition(decomposition);
+
+  // Fallback: if no unmapped dirs or decomposition failed, do direct update
+  if (parsed.subtasks.length === 0) {
+    console.error("[meta-map-updater] Decomposition failed — falling back to direct update");
+    const directPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a MAP UPDATER. Produce updated map code for unmapped directories.
+Output a single FILE block with updated KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SUBSYSTEM_CANONICAL.`;
+
+    return spawnSubagent({
+      prompt,
+      systemPrompt: directPrompt,
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: "low",
+      tools: ["read"],
+      agentName: "map-updater",
+    });
+  }
+
+  // Step 2: Delegate per-directory classification to Haiku workers
+  console.error(`[meta-map-updater] Decomposed into ${parsed.subtasks.length} classification tasks`);
+  const workerResults = await Promise.all(
+    parsed.subtasks.map(async (st) => {
+      const result = await askWorker({
+        systemPrompt: `You are a directory classifier for a C++20 project. Classify directories into: terrain, actor, shader, or engine.
+Output EXACTLY: SUBSYSTEM: [name] | KEYWORDS: [comma-separated keywords]`,
+        task: st.worker_prompt,
+      });
+      return result;
+    }),
+  );
+
+  // Step 3: Sonnet synthesizes map updates from worker classifications
+  const synthesisPrompt = `${loadAgentSystemPrompt()}
+
+---
+
+## Your Role
+You are a MAP SYNTHESIZER. Given per-directory classifications from workers,
+produce the updated map code for tools.ts.
+
+## Output Format
+### FILE: .pi/extensions/orchestrator/src/tools.ts
+\`\`\`typescript
+// Updated KEYWORD_SYNONYMS, SUBSYSTEM_DIRS, and SUBSYSTEM_CANONICAL objects
+\`\`\`
+
+## Constraints
+- Preserve ALL existing mappings
+- Only ADD new entries based on worker classifications`;
+
+  const synthesisInput = `## Worker Classifications
+${workerResults.map((r, i) => `### Directory ${i + 1}\n${r}`).join("\n\n")}
+
+## Current Map Definitions
+\`\`\`typescript
+${opts.currentToolsContent}
+\`\`\`
+
+Produce the updated map code incorporating these classifications.`;
+
+  return spawnSubagent({
+    prompt: synthesisInput,
+    systemPrompt: synthesisPrompt,
+    model: "anthropic/claude-sonnet-4-6",
+    thinking: "low",
+    agentName: "map-updater-synthesizer",
+  });
 }
 
 // ─── Dynamic Domain Analyzer (Haiku throwaway agents) ────────────────────────

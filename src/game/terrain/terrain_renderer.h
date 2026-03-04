@@ -3,6 +3,7 @@
 #include "core/asset_manager.h"
 #include "gpu/gpu.h"
 #include <SDL3/SDL.h>
+#include <functional>
 #include <vector>
 
 class TerrainRenderer {
@@ -61,6 +62,10 @@ public:
   uint32_t desired_depth_h = 0;
 
   void cleanup(SDL_GPUDevice *device);
+
+  // Optional callback invoked after lava draw and before contour lines.
+  // Signature: void(SDL_GPURenderPass*, SDL_GPUCommandBuffer*, const SceneUniforms&)
+  std::function<void(SDL_GPURenderPass *, SDL_GPUCommandBuffer *, const SceneUniforms &)> post_terrain_draw_fn;
 
   bool is_initialized() const { return initialized; }
   bool has_mesh()       const { return has_data; }

@@ -28,7 +28,7 @@ function findProjectRoot(): string {
 
 function shell(
   cmd: string,
-  timeout = 120_000
+  timeout = 3_600_000
 ): { ok: boolean; stdout: string; stderr: string } {
   try {
     const stdout = execSync(cmd, {

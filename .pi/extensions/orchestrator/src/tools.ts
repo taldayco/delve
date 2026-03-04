@@ -15,7 +15,7 @@ function shell(cmd: string, cwd?: string): { ok: boolean; stdout: string; stderr
     const stdout = execSync(cmd, {
       cwd: cwd || process.cwd(),
       encoding: "utf-8",
-      timeout: 900_000,
+      timeout: 3_600_000,
       maxBuffer: 10 * 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
     });

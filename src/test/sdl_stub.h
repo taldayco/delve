@@ -35,4 +35,9 @@ inline Uint64 SDL_GetTicks() { return 0; }
 // Category constants
 #define SDL_LOG_CATEGORY_APPLICATION 0
 
+// GPU stubs for skeleton_mesh tests (headless builds don't use GPU).
+struct SDL_GPUBuffer {};
+struct SDL_GPUDevice {};
+inline void SDL_ReleaseGPUBuffer(SDL_GPUDevice *, SDL_GPUBuffer *) {}
+
 #endif // SDL_STUB_DEFINED

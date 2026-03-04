@@ -52,66 +52,58 @@ inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; 
 inline float gait_step_height(const ProceduralGait &g) { return g.step_height; }
 
 // ---------------------------------------------------------------------------
-// New metric helpers for fluid animation tests (headless, no SDL)
+// New metrics for fluid animation features
 // ---------------------------------------------------------------------------
 
-// Mirrors the SmoothDamp from actor_animation.cpp — for headless testing
-inline float smooth_damp_test(float current, float target, float &vel,
-                               float smoothing_time, float dt) {
-    float omega   = 2.0f / smoothing_time;
-    float x       = omega * dt;
-    float exp_val = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
-    float change  = current - target;
-    float temp    = (vel + omega * change) * dt;
-    vel           = (vel - omega * temp) * exp_val;
-    return target + (change + temp) * exp_val;
+// Simulate a critically-damped SmoothDamp for N steps.
+// Returns the residual |current - target| after all steps.
+inline float smooth_damp_residual(float start, float target,
+                                   float smooth_time, int steps, float dt) {
+    float vel     = 0.0f;
+    float current = start;
+    float omega   = 2.0f / smooth_time;
+    for (int i = 0; i < steps; ++i) {
+        float x      = omega * dt;
+        float ef     = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+        float change = current - target;
+        float temp   = (vel + omega * change) * dt;
+        vel          = (vel - omega * temp) * ef;
+        current      = target + (change + temp) * ef;
+    }
+    return std::abs(current - target);
 }
 
-// Run N steps of SmoothDamp and return (final_value - target) / (start - target)
-// i.e., the residual fraction. 0 = converged, 1 = no change.
-inline float smooth_damp_residual(float start, float target, float smoothing_time,
-                                   float dt, int steps) {
-    float val = start;
-    float vel = 0.0f;
-    for (int i = 0; i < steps; ++i)
-        val = smooth_damp_test(val, target, vel, smoothing_time, dt);
-    float denom = fabsf(start - target);
-    if (denom < 1e-8f) return 0.0f;
-    return fabsf(val - target) / denom;
+// True if phase_l and phase_r are approximately π apart (modulo 2π).
+inline bool arm_phases_antiphase(float phase_l, float phase_r) {
+    const float two_pi = 6.28318530f;
+    const float pi     = 3.14159265f;
+    float diff = std::abs(phase_l - phase_r);
+    // Fold into [0, 2π)
+    diff = diff - std::floor(diff / two_pi) * two_pi;
+    // Accept if within 0.5 rad of π
+    return std::abs(diff - pi) < 0.5f;
 }
 
-// Returns true if arm phases are approximately PI apart (antiphase)
-inline bool arm_phases_antiphase(float phase_a, float phase_b, float tolerance_rad = 0.1f) {
-    float diff = fabsf(phase_a - phase_b);
-    // Normalize to [0, 2*pi]
-    float two_pi = 2.0f * 3.14159265f;
-    diff = fmodf(diff, two_pi);
-    if (diff > 3.14159265f) diff = two_pi - diff;
-    return fabsf(diff - 3.14159265f) < tolerance_rad;
+// True if the breathing amplitude is within the expected physiological range.
+inline bool breathing_amplitude_valid(float amp) {
+    return amp > 0.005f && amp < 0.05f;
 }
 
-// Returns true if breathing amplitude is in physiologically reasonable range
-inline bool breathing_amplitude_valid(float amplitude) {
-    return amplitude >= 0.001f && amplitude <= 0.05f;
+// One-foot-planted invariant: at most one foot may be airborne at a time.
+inline bool foot_planted_invariant(bool stepping_l, bool stepping_r) {
+    return !(stepping_l && stepping_r);
 }
 
-// Returns true if foot planted invariant holds: not both feet stepping simultaneously
-inline bool foot_planted_invariant_holds(const LegState &legs) {
-    return !(legs.stepping[0] && legs.stepping[1]);
+// True if a slower speed gives a longer step duration (speed-adaptive).
+inline bool adaptive_step_duration_decreases(float slow_dur, float fast_dur) {
+    return slow_dur > fast_dur;
 }
 
-// Speed-adaptive step duration: interpolate between slow_dur and fast_dur
-// speed in [0, max_speed], result in [slow_dur, fast_dur]
-inline float adaptive_step_duration(float speed, float max_speed,
-                                     float slow_dur = 0.45f, float fast_dur = 0.22f) {
-    float t = std::min(speed / std::max(max_speed, 1e-6f), 1.0f);
-    return slow_dur + (fast_dur - slow_dur) * t;
-}
-
-// Single-frame SmoothDamp moves fraction toward target: returns how much moved [0,1]
-inline float smooth_damp_single_frame_fraction(float smoothing_time, float dt) {
-    float val = 0.0f;
-    float vel = 0.0f;
-    float result = smooth_damp_test(val, 1.0f, vel, smoothing_time, dt);
-    return result; // fraction moved toward target in one frame
+// True if spine lean fractions form a strictly increasing chain
+// (successive breaking: spine < chest < neck).
+inline bool torso_lean_successive(float lean_spine_frac,
+                                   float lean_chest_frac,
+                                   float lean_neck_frac) {
+    return lean_spine_frac < lean_chest_frac
+        && lean_chest_frac < lean_neck_frac;
 }

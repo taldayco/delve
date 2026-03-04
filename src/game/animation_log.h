@@ -100,9 +100,7 @@ public:
                 legs.prev_foot[i].x, legs.prev_foot[i].y, legs.prev_foot[i].z,
                 legs.stepping[i] ? "true" : "false",
                 legs.progress[i],
-                foot_along_fwd,
-                foot_lateral,
-                foot_vertical,
+                foot_along_fwd, foot_lateral, foot_vertical,
                 reach, reach_ratio,
                 (reach > chain_len) ? "true" : "false");
         }
@@ -193,59 +191,36 @@ public:
             sqrtf(lean_x * lean_x + lean_y * lean_y));
     }
 
-    void log_dynamics(const AnimationState &anim, float dt) {
+    void log_dynamics(float smooth_vx, float smooth_vy, float accel_x, float accel_y) {
         if (!active || !file) return;
-        float smooth_speed = glm::length(anim.smooth_vel);
-        float accel_x = (dt > 1e-6f) ? (anim.smooth_vel.x - anim.prev_smooth_vel.x) / dt : 0.0f;
-        float accel_y = (dt > 1e-6f) ? (anim.smooth_vel.y - anim.prev_smooth_vel.y) / dt : 0.0f;
-        float accel_mag = sqrtf(accel_x * accel_x + accel_y * accel_y);
         fprintf(file,
             ",\"dynamics\":{"
-            "\"smooth_vel\":[%.4f,%.4f],"
-            "\"smooth_speed\":%.4f,"
-            "\"accel\":[%.4f,%.4f],"
-            "\"accel_mag\":%.4f,"
-            "\"lean\":[%.4f,%.4f],"
-            "\"sway_phase\":%.4f}",
-            anim.smooth_vel.x, anim.smooth_vel.y,
-            smooth_speed,
-            accel_x, accel_y,
-            accel_mag,
-            anim.lean_x, anim.lean_y,
-            anim.sway_phase);
+            "\"smooth_vx\":%.4f,\"smooth_vy\":%.4f,"
+            "\"accel_x\":%.4f,\"accel_y\":%.4f}",
+            smooth_vx, smooth_vy, accel_x, accel_y);
     }
 
-    void log_arm_swing(const SkeletonPose &pose, const Transform &t,
-                       const AnimationState &anim) {
+    void log_arm_swing(float phase_l, float phase_r, float swing_l, float swing_r) {
         if (!active || !file) return;
-        float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
-
-        auto &le = pose.joints[(int)Joint::L_ELBOW];
-        auto &ls = pose.joints[(int)Joint::L_SHOULDER];
-        auto &re = pose.joints[(int)Joint::R_ELBOW];
-        auto &rs = pose.joints[(int)Joint::R_SHOULDER];
-
-        float l_fwd = (le.x - ls.x) * fwd_x + (le.y - ls.y) * fwd_y;
-        float r_fwd = (re.x - rs.x) * fwd_x + (re.y - rs.y) * fwd_y;
-
+        float diff = fabsf(phase_l - phase_r);
+        while (diff > 6.28318f) diff -= 6.28318f;
+        bool antiphase = fabsf(diff - 3.14159265f) < 0.5f;
         fprintf(file,
             ",\"arm_swing\":{"
-            "\"arm_phase\":[%.4f,%.4f],"
-            "\"arm_delay\":[%.4f,%.4f],"
-            "\"l_elbow_fwd\":%.4f,"
-            "\"r_elbow_fwd\":%.4f,"
+            "\"phase_l\":%.4f,\"phase_r\":%.4f,"
+            "\"swing_l\":%.4f,\"swing_r\":%.4f,"
             "\"antiphase\":%s}",
-            anim.arm_phase[0], anim.arm_phase[1],
-            anim.arm_delay[0], anim.arm_delay[1],
-            l_fwd, r_fwd,
-            (l_fwd * r_fwd < 0.0f) ? "true" : "false");
+            phase_l, phase_r, swing_l, swing_r,
+            antiphase ? "true" : "false");
     }
 
-    void log_grounding(const Transform &t) {
+    void log_grounding(float target_z, float current_z, float blend) {
         if (!active || !file) return;
         fprintf(file,
-            ",\"grounding\":{\"actor_z\":%.4f}",
-            t.z);
+            ",\"grounding\":{"
+            "\"target_z\":%.4f,\"current_z\":%.4f,"
+            "\"blend\":%.4f,\"error\":%.4f}",
+            target_z, current_z, blend, fabsf(target_z - current_z));
     }
 
     void log_camera(const CameraState &cam) {

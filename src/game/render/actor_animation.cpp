@@ -222,7 +222,7 @@ void register_animation_systems(flecs::world &ecs,
                 glm::vec3 spine  = root  + glm::vec3(0, 0, cfg.torso_len * 0.4f);
                 glm::vec3 chest  = root  + glm::vec3(0, 0, cfg.torso_len);
                 glm::vec3 neck   = chest + glm::vec3(0, 0, cfg.neck_len);
-                glm::vec3 head   = neck  + glm::vec3(0, 0, cfg.head_radius);
+                glm::vec3 head   = neck  + glm::vec3(0, 0, 2.0f * cfg.head_radius);
 
                 pose.joints[(int)J::ROOT]  = root;
                 pose.joints[(int)J::SPINE] = spine;

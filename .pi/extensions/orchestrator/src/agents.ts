@@ -462,10 +462,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
 
       if (opts.signal) {
         const killProc = () => {
-          proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!proc.killed) proc.kill("SIGKILL");
-          }, 5000);
+          if (!proc.killed) proc.kill("SIGKILL");
         };
         if (opts.signal.aborted) killProc();
         else opts.signal.addEventListener("abort", killProc, { once: true });
@@ -475,8 +472,6 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutHandle = setTimeout(() => {
-        proc.kill("SIGTERM");
-        setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
         reject(new Error(`Subagent '${agentName}' timed out after ${SUBAGENT_TIMEOUT_MS / 1000}s`));
       }, SUBAGENT_TIMEOUT_MS);
     });
@@ -485,6 +480,10 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       return await Promise.race([spawnPromise, timeoutPromise]);
     } finally {
       if (timeoutHandle) clearTimeout(timeoutHandle);
+      // Ensure the process is dead after timeout or completion
+      if (!proc.killed) {
+        proc.kill("SIGKILL");
+      }
     }
   } finally {
     // Clean up all temp files in the directory

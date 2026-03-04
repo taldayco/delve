@@ -343,6 +343,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
       const prompt = args.trim();
       const timestamp = new Date()
         .toISOString()
@@ -373,6 +378,7 @@ export default function (pi: ExtensionAPI) {
         if (!branchResult.ok) {
           ctx.ui.notify(branchResult.summary, "error");
           state.phase = "failed";
+          recordFailure("branch", branchResult.summary);
           return;
         }
         const wt = branchResult.worktreePath;
@@ -447,6 +453,7 @@ export default function (pi: ExtensionAPI) {
           const retryCount = (finalImplementation.match(/###\s*FILE:/g) || []).length;
           if (retryCount === 0) {
             state.phase = "failed";
+            recordFailure("implement", "No file changes produced after retry");
             ctx.ui.notify("No file changes after retry — FAIL", "error");
             return;
           }
@@ -485,6 +492,7 @@ export default function (pi: ExtensionAPI) {
 
         if (!buildOk) {
           state.phase = "failed";
+          recordFailure("build", "Build failed after max fix attempts");
           ctx.ui.notify("Build FAILED after max attempts — FAIL", "error");
           return;
         }
@@ -588,6 +596,7 @@ export default function (pi: ExtensionAPI) {
         const finalBuild = runBuild(wt);
         if (!finalBuild.ok) {
           state.phase = "failed";
+          recordFailure("build", "Final build check failed after review");
           ctx.ui.notify("Final build check FAILED after review — aborting pipeline", "error");
           return;
         }
@@ -597,6 +606,7 @@ export default function (pi: ExtensionAPI) {
         const finalTests = runTests(wt);
         if (!finalTests.buildOk || !finalTests.testsOk) {
           state.phase = "failed";
+          recordFailure("test", "Final test check failed after review");
           ctx.ui.notify("Final test check FAILED after review — aborting pipeline", "error");
           return;
         }
@@ -629,7 +639,8 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -649,6 +660,11 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       if (!args || args.trim().length === 0) {
         ctx.ui.notify("Usage: /minion-quick <task description>", "error");
+        return;
+      }
+
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
         return;
       }
 
@@ -682,6 +698,7 @@ export default function (pi: ExtensionAPI) {
         if (!branchResult.ok) {
           ctx.ui.notify(branchResult.summary, "error");
           state.phase = "failed";
+          recordFailure("branch", branchResult.summary);
           return;
         }
         const wt = branchResult.worktreePath;
@@ -702,6 +719,7 @@ export default function (pi: ExtensionAPI) {
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) {
           state.phase = "failed";
+          recordFailure("implement", "No file changes produced");
           ctx.ui.notify("No file changes produced — FAIL", "error");
           return;
         }
@@ -736,6 +754,7 @@ export default function (pi: ExtensionAPI) {
 
         if (!buildOk) {
           state.phase = "failed";
+          recordFailure("build", "Build failed after max fix attempts");
           ctx.ui.notify("Build FAILED after max attempts — FAIL", "error");
           return;
         }
@@ -764,7 +783,8 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion-quick error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -787,6 +807,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
       const prompt = args.trim();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const branch = `minion-refactor/${timestamp}-${slugify(prompt)}`;
@@ -803,7 +828,7 @@ export default function (pi: ExtensionAPI) {
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
-        if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        if (!branchResult.ok) { state.phase = "failed"; recordFailure("branch", branchResult.summary); ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
         worktreePath = wt;
         state.worktreePath = wt;
@@ -818,7 +843,7 @@ export default function (pi: ExtensionAPI) {
         const implementation = await agent({ task: prompt, files: contextFiles });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
-        if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
+        if (fileBlockCount === 0) { state.phase = "failed"; recordFailure("implement", "No file changes produced"); ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
         applyFileBlocks(implementation, wt);
 
         // Build + fix
@@ -833,7 +858,7 @@ export default function (pi: ExtensionAPI) {
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
           applyFileBlocks(fix, wt);
         }
-        if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
+        if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
         // Review (with extra constraint: reject if behavior changes)
         setPhase("review", ctx);
@@ -856,7 +881,8 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion-refactor error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -879,6 +905,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
       const prompt = args.trim();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const branch = `minion-bugfix/${timestamp}-${slugify(prompt)}`;
@@ -895,7 +926,7 @@ export default function (pi: ExtensionAPI) {
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
-        if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        if (!branchResult.ok) { state.phase = "failed"; recordFailure("branch", branchResult.summary); ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
         worktreePath = wt;
         state.worktreePath = wt;
@@ -930,7 +961,7 @@ export default function (pi: ExtensionAPI) {
         });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
-        if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
+        if (fileBlockCount === 0) { state.phase = "failed"; recordFailure("implement", "No file changes produced"); ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
         applyFileBlocks(implementation, wt);
 
         // Build + fix
@@ -945,7 +976,7 @@ export default function (pi: ExtensionAPI) {
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
           applyFileBlocks(fix, wt);
         }
-        if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
+        if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
         // Test (no test-writing — bugfixes should make existing tests pass)
         let testsOk = false;
@@ -978,7 +1009,8 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion-bugfix error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -1001,6 +1033,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
       const prompt = args.trim();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const branch = `minion-shader/${timestamp}-${slugify(prompt)}`;
@@ -1017,7 +1054,7 @@ export default function (pi: ExtensionAPI) {
         // Branch
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
-        if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        if (!branchResult.ok) { state.phase = "failed"; recordFailure("branch", branchResult.summary); ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
         worktreePath = wt;
         state.worktreePath = wt;
@@ -1029,7 +1066,7 @@ export default function (pi: ExtensionAPI) {
         const implementation = await askShaderAgent({ task: prompt, files: contextFiles });
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
-        if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
+        if (fileBlockCount === 0) { state.phase = "failed"; recordFailure("implement", "No file changes produced"); ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
         applyFileBlocks(implementation, wt);
 
         // Build + fix
@@ -1044,7 +1081,7 @@ export default function (pi: ExtensionAPI) {
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
           applyFileBlocks(fix, wt);
         }
-        if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
+        if (!buildOk) { state.phase = "failed"; recordFailure("build", "Build failed after max fix attempts"); ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
         // Shader validation via glslc
         setPhase("shader-validate", ctx);
@@ -1067,7 +1104,8 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion-shader error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
@@ -1089,6 +1127,11 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
+      if (state) {
+        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
       const prompt = args.trim();
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const branch = `minion-meta/${timestamp}-${slugify(prompt)}`;
@@ -1097,6 +1140,7 @@ export default function (pi: ExtensionAPI) {
       attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-meta started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -1143,6 +1187,9 @@ export default function (pi: ExtensionAPI) {
 
         await executeBlueprint(blueprint, context);
 
+        // Track worktree path from state in case executeBlueprint set it
+        worktreePath = state?.worktreePath;
+
         state.phase = "done";
         ctx.ui.notify(
           `Minion-meta complete in ${elapsed(state.startTime)}. Blueprint: ${blueprint.name}`,
@@ -1151,10 +1198,14 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        state!.phase = "failed";
+        worktreePath = worktreePath || state?.worktreePath;
+        if (state) state.phase = "failed";
+        recordFailure(state?.phase || "unknown", error.message);
         ctx.ui.notify(`Minion-meta error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });
@@ -1394,6 +1445,12 @@ export default function (pi: ExtensionAPI) {
     if (state) {
       display.updatePhase(phase, state);
     }
+  }
+
+  function recordFailure(phase: string, reason: string): void {
+    writeState("failure_report.md",
+      `# Pipeline Failure\n\n- **Phase:** ${phase}\n- **Reason:** ${reason}\n- **Time:** ${new Date().toISOString()}\n`
+    );
   }
 }
 

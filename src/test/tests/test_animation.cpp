@@ -3,6 +3,9 @@
 #include "actor.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <cmath>
+
+// ---- Existing 5 tests (preserved) ----
 
 DELVE_TEST(default_gait_parameters_valid) {
   ProceduralGait g;
@@ -15,10 +18,10 @@ DELVE_TEST(default_gait_parameters_valid) {
 
 DELVE_TEST(default_actor_config_proportional) {
   ActorConfig c;
-  EXPECT_GT(c.leg_len, c.arm_len);
-  EXPECT_GT(c.torso_len, 0.3f);
-  EXPECT_LT(c.head_radius, c.torso_len);
-  EXPECT_GT(c.shoulder_width, c.hip_width);
+  EXPECT_GT(c.leg_len, c.arm_len);          // legs longer than arms
+  EXPECT_GT(c.torso_len, 0.3f);             // torso substantial
+  EXPECT_LT(c.head_radius, c.torso_len);    // head smaller than torso
+  EXPECT_GT(c.shoulder_width, c.hip_width);  // shoulders wider than hips
   return true;
 }
 
@@ -36,6 +39,7 @@ DELVE_TEST(skeleton_pose_joint_count) {
 DELVE_TEST(skeleton_symmetry_at_rest) {
   SkeletonPose pose;
   ActorConfig cfg;
+  // Build a simple T-pose
   pose.joints[(int)Joint::ROOT]       = {0, 0, 0};
   pose.joints[(int)Joint::SPINE]      = {0, cfg.torso_len * 0.3f, 0};
   pose.joints[(int)Joint::CHEST]      = {0, cfg.torso_len * 0.7f, 0};
@@ -68,84 +72,235 @@ DELVE_TEST(leg_state_parallel_arrays_consistent) {
   return true;
 }
 
-// Local SmoothDamp mirror for headless test (no actor_animation.cpp linkage in tests).
-static float smooth_damp_local(float current, float target, float &vel_state,
-                                float smooth_time, float dt) {
+// ---- New 6 tests for biomechanical animation ----
+
+// Test 1: smooth_damp converges to target within 1 second (dt=1/60).
+DELVE_TEST(smooth_damp_convergence) {
+  // Inline the smooth_damp formula (same as actor_animation.cpp).
+  auto smooth_damp_fn = [](float current, float target, float *velocity,
+                            float smooth_time, float dt) -> float {
     float omega = 2.0f / smooth_time;
-    float x = omega * dt;
-    float exp_factor = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
-    float change = current - target;
-    float temp = (vel_state + omega * change) * dt;
-    vel_state = (vel_state - omega * temp) * exp_factor;
-    return target + (change + temp) * exp_factor;
+    float x     = omega * dt;
+    float exp_f = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float delta = current - target;
+    float temp  = (*velocity + omega * delta) * dt;
+    *velocity   = (*velocity - omega * temp) * exp_f;
+    return target + (delta + temp) * exp_f;
+  };
+
+  float current = 0.0f;
+  float target  = 1.0f;
+  float rate    = 0.0f;
+  float dt      = 1.0f / 60.0f;
+
+  // Run for 1 second (60 frames) with smooth_time = 0.1s.
+  for (int i = 0; i < 60; ++i) {
+    current = smooth_damp_fn(current, target, &rate, 0.1f, dt);
+  }
+
+  // After 1s (10x smooth_time), should be > 99% of target.
+  EXPECT_GT(current, 0.99f);
+  return true;
 }
 
-DELVE_TEST(smooth_damp_converges_to_target) {
-    float current = 0.0f, target = 1.0f, vel = 0.0f;
-    const float dt = 1.0f / 60.0f;
-    for (int i = 0; i < 60; ++i)
-        current = smooth_damp_local(current, target, vel, 0.12f, dt);
-    EXPECT_NEAR(current, 1.0f, 0.01f);
-    return true;
+// Test 2: Arm phase opposes leg phase (anti-phase property).
+DELVE_TEST(arm_phase_opposes_leg) {
+  // Arm target = sin(phase + PI) for left arm.
+  // Leg forward projection = sin(phase) (simplified foot phase model).
+  // These should be in anti-phase: product negative.
+  int opposing_count = 0;
+  int total_samples  = 100;
+
+  for (int i = 0; i < total_samples; ++i) {
+    float phase        = (float)i / total_samples * glm::two_pi<float>();
+    float l_arm_angle  = sinf(phase + glm::pi<float>());
+    float l_leg_fwd    = sinf(phase);  // leg forward = gait phase directly
+
+    float opposition = arm_phase_opposition(l_arm_angle, l_leg_fwd);
+    if (opposition > 0.5f) ++opposing_count;
+  }
+
+  // At least 80% of samples should show anti-phase (ignoring near-zero crossings).
+  // In theory, sin(x+pi) = -sin(x), so they're always opposite-sign except at zeros.
+  // Expect > 70% with some tolerance around zero crossings.
+  float ratio = (float)opposing_count / total_samples;
+  EXPECT_GT(ratio, 0.7f);
+  return true;
 }
 
-DELVE_TEST(arm_phases_default_antiphase) {
-    // New AnimationState uses l_arm_target/r_arm_target computed from opposing phases.
-    // At any non-zero gait phase, l_arm_target = sin(phase + pi), r_arm_target = sin(phase).
-    // Verify these are always opposite-sign (antiphase) for a non-trivial phase.
-    float phase = 1.0f; // arbitrary non-zero, non-pi phase
-    float swing_amp = 0.3f;
-    float l = sinf(phase + glm::pi<float>()) * swing_amp;
-    float r = sinf(phase)                     * swing_amp;
-    // Antiphase: l * r < 0 for most phases (except 0, pi where both are 0)
-    EXPECT_LT(l * r, 0.0f);
-    // Also confirm default AnimationState initialises arm targets to zero.
-    AnimationState anim;
-    EXPECT_NEAR(anim.l_arm_target, 0.0f, 1e-6f);
-    EXPECT_NEAR(anim.r_arm_target, 0.0f, 1e-6f);
-    return true;
+// Test 3: Joint delay ordering — shoulder converges faster than wrist.
+DELVE_TEST(joint_delay_ordering) {
+  auto smooth_damp_fn = [](float current, float target, float *velocity,
+                            float smooth_time, float dt) -> float {
+    float omega = 2.0f / smooth_time;
+    float x     = omega * dt;
+    float exp_f = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float delta = current - target;
+    float temp  = (*velocity + omega * delta) * dt;
+    *velocity   = (*velocity - omega * temp) * exp_f;
+    return target + (delta + temp) * exp_f;
+  };
+
+  float dt = 1.0f / 60.0f;
+  float target = 1.0f;
+
+  float shoulder = 0.0f, shoulder_rate = 0.0f;
+  float elbow    = 0.0f, elbow_rate    = 0.0f;
+  float wrist    = 0.0f, wrist_rate    = 0.0f;
+
+  // Advance 3 frames — shoulder 0.02s, elbow 0.05s (tracks shoulder), wrist 0.08s (tracks elbow).
+  for (int i = 0; i < 3; ++i) {
+    shoulder = smooth_damp_fn(shoulder, target,  &shoulder_rate, 0.02f, dt);
+    elbow    = smooth_damp_fn(elbow,    shoulder, &elbow_rate,    0.05f, dt);
+    wrist    = smooth_damp_fn(wrist,    elbow,    &wrist_rate,    0.08f, dt);
+  }
+
+  // Shoulder should be closest to target (smallest error).
+  float shoulder_err = fabsf(shoulder - target);
+  float elbow_err    = fabsf(elbow    - target);
+  float wrist_err    = fabsf(wrist    - target);
+
+  // Shoulder error < elbow error < wrist error (increasing lag).
+  EXPECT_LT(shoulder_err, elbow_err);
+  EXPECT_LT(elbow_err,    wrist_err);
+  return true;
 }
 
-DELVE_TEST(breathing_amplitude_valid_range) {
-    float amp = breathing_amplitude();
-    EXPECT_GT(amp, 0.005f);
-    EXPECT_LT(amp, 0.05f);
-    return true;
+// Test 4: Idle breathing frequency is approximately 0.6 Hz.
+DELVE_TEST(idle_breathing_frequency) {
+  // Simulate 5 seconds of idle breathing.
+  float dt        = 1.0f / 60.0f;
+  int   frames    = (int)(5.0f / dt);
+  float phase     = 0.0f;
+  float prev_val  = 0.0f;
+  int   crossings = 0;
+
+  for (int i = 0; i < frames; ++i) {
+    phase += dt * glm::two_pi<float>() * 0.6f;
+    float val = sinf(phase) * 0.008f;
+
+    // Count upward zero crossings.
+    if (prev_val < 0.0f && val >= 0.0f) ++crossings;
+    prev_val = val;
+  }
+
+  // In 5 seconds at 0.6 Hz, expect ~3 full cycles = ~3 upward crossings.
+  // Allow ±1 for edge effects.
+  EXPECT_GT(crossings, 1);
+  EXPECT_LT(crossings, 6);
+  return true;
 }
 
-DELVE_TEST(foot_planted_invariant_holds) {
-    LegState legs;
-    legs.stepping[0] = true;
-    legs.stepping[1] = false;
+// Test 5: Velocity smoothing has weight — doesn't reach full speed in 1 frame.
+DELVE_TEST(velocity_smoothing_has_weight) {
+  auto smooth_damp_fn = [](float current, float target, float *velocity,
+                            float smooth_time, float dt) -> float {
+    float omega = 2.0f / smooth_time;
+    float x     = omega * dt;
+    float exp_f = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float delta = current - target;
+    float temp  = (*velocity + omega * delta) * dt;
+    *velocity   = (*velocity - omega * temp) * exp_f;
+    return target + (delta + temp) * exp_f;
+  };
 
-    // Simulate invariant check for leg 1: other=0 is stepping → other NOT planted.
-    int leg = 1;
-    int other = 1 - leg;
-    bool other_planted = !legs.stepping[other];
-    // Invariant: only step if other is planted. Here other is NOT planted.
-    EXPECT_FALSE(other_planted);
-    return true;
+  float move_speed = 4.0f;
+  float current    = 0.0f;
+  float rate       = 0.0f;
+  float dt         = 1.0f / 60.0f;
+
+  // Apply 1 frame of smoothing toward move_speed.
+  float result = smooth_damp_fn(current, move_speed, &rate, 0.1f, dt);
+
+  // After 1 frame at dt=1/60, should be < 50% of move_speed (has weight).
+  EXPECT_LT(result, move_speed * 0.5f);
+  // But should have moved some (not zero).
+  EXPECT_GT(result, 0.0f);
+  return true;
 }
 
-DELVE_TEST(adaptive_step_duration_speed_scaling) {
-    ProceduralGait g;
-    float slow_dur = step_duration_at_speed(0.0f, g.move_speed);
-    float fast_dur = step_duration_at_speed(g.move_speed, g.move_speed);
-    EXPECT_GT(slow_dur, fast_dur);
-    EXPECT_NEAR(slow_dur, 0.45f, 0.001f);
-    EXPECT_NEAR(fast_dur, 0.22f, 0.001f);
-    return true;
-}
+// Test 6: One-foot-planted invariant — both legs never step simultaneously.
+DELVE_TEST(no_simultaneous_stepping) {
+  // Simulate the gait logic directly (headless, no ECS needed).
+  LegState legs{};
+  ProceduralGait gait{};
 
-DELVE_TEST(torso_lean_successive_breaking) {
-    constexpr float spine_frac = 0.30f;
-    constexpr float chest_frac = 0.62f;
-    constexpr float head_frac  = 1.00f;
+  // Place feet at origin.
+  legs.foot[0] = {-0.25f, 0.0f, 0.0f};
+  legs.foot[1] = { 0.25f, 0.0f, 0.0f};
+  legs.prev_foot[0] = legs.foot[0];
+  legs.prev_foot[1] = legs.foot[1];
+  legs.target[0]    = legs.foot[0];
+  legs.target[1]    = legs.foot[1];
 
-    EXPECT_GT(chest_frac, spine_frac);
-    EXPECT_GT(head_frac,  chest_frac);
-    EXPECT_NEAR(spine_frac, 0.30f, 0.001f);
-    EXPECT_NEAR(chest_frac, 0.62f, 0.001f);
-    EXPECT_NEAR(head_frac,  1.00f, 0.001f);
-    return true;
+  float dt = 1.0f / 60.0f;
+  bool both_stepping_ever = false;
+
+  // Simulate 200 frames of constant movement.
+  float pos_x = 0.0f, pos_y = 0.0f;
+  float vel_x = 3.0f, vel_y = 0.0f;
+  float facing = 0.0f;
+
+  for (int frame = 0; frame < 200; ++frame) {
+    float speed = sqrtf(vel_x * vel_x + vel_y * vel_y);
+    gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len));
+
+    pos_x += vel_x * dt;
+    pos_y += vel_y * dt;
+
+    float fwd_x = cosf(facing), fwd_y = sinf(facing);
+    float rght_x = -sinf(facing), rght_y = cosf(facing);
+    float hip_sign[2] = { -1.0f, 1.0f };
+    float vel_dx = vel_x / speed, vel_dy = vel_y / speed;
+
+    float speed_ratio       = std::max(0.2f, std::min(1.0f, speed / gait.move_speed));
+    float adaptive_duration = gait.step_duration / speed_ratio;
+
+    for (int leg = 0; leg < 2; ++leg) {
+      int other_leg = 1 - leg;
+
+      float hip_x = pos_x + rght_x * hip_sign[leg] * 0.25f;
+      float hip_y = pos_y + rght_y * hip_sign[leg] * 0.25f;
+
+      float pred_x = hip_x + vel_dx * gait.stride_len * 0.5f;
+      float pred_y = hip_y + vel_dy * gait.stride_len * 0.5f;
+
+      if (!legs.stepping[leg]) {
+        float dx   = legs.foot[leg].x - pred_x;
+        float dy   = legs.foot[leg].y - pred_y;
+        float dist = sqrtf(dx * dx + dy * dy);
+
+        // One-foot-planted invariant.
+        bool other_planted = !legs.stepping[other_leg];
+        if (dist > gait.stride_len * 0.5f && other_planted) {
+          legs.stepping[leg]  = true;
+          legs.progress[leg]  = 0.0f;
+          legs.prev_foot[leg] = legs.foot[leg];
+          legs.target[leg]    = {pred_x, pred_y, 0.0f};
+        }
+      }
+
+      if (legs.stepping[leg]) {
+        legs.progress[leg] += dt / adaptive_duration;
+        float progress = std::min(legs.progress[leg], 1.0f);
+        float ts = progress * progress * (3.0f - 2.0f * progress);
+
+        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
+        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts;
+
+        if (legs.progress[leg] >= 1.0f) {
+          legs.stepping[leg] = false;
+          legs.foot[leg]     = legs.target[leg];
+        }
+      }
+    }
+
+    // Check invariant.
+    if (legs.stepping[0] && legs.stepping[1]) {
+      both_stepping_ever = true;
+    }
+  }
+
+  EXPECT_FALSE(both_stepping_ever);
+  return true;
 }

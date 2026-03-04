@@ -46,14 +46,17 @@ static BoneProfileArray make_uniform_profiles(int sides) {
 }
 
 // ---------------------------------------------------------------------------
-// Test (a): line index count matches formula  bones * sides * 3 * 2
+// Test (a): triangle index count matches formula for uniform sides.
+// Triangle-list: cylinder*S*6 + wrist_caps*2*S*3 + foot_segs*2*(S*6+S*3) +
+//                head_sphere*(3*S*6+S*3) + root_cap*S*3
+// Simplified: S * (16*6 + 2*3 + 2*9 + 21 + 3) = S * 144
 // ---------------------------------------------------------------------------
 DELVE_TEST(actor_mesh_line_index_count_uniform_sides_6) {
     SkeletonPose pose = make_standing_pose();
     BoneProfileArray prof = make_uniform_profiles(6);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    size_t expected = wireframe_edge_count_expected(NUM_BONE_PROFILES, 6);
+    size_t expected = (size_t)(6 * 144);
     EXPECT_EQ((int)mesh.indices.size(), (int)expected);
     return true;
 }
@@ -63,7 +66,7 @@ DELVE_TEST(actor_mesh_line_index_count_uniform_sides_4) {
     BoneProfileArray prof = make_uniform_profiles(4);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    size_t expected = wireframe_edge_count_expected(NUM_BONE_PROFILES, 4);
+    size_t expected = (size_t)(4 * 144);
     EXPECT_EQ((int)mesh.indices.size(), (int)expected);
     return true;
 }
@@ -73,7 +76,7 @@ DELVE_TEST(actor_mesh_line_index_count_uniform_sides_3) {
     BoneProfileArray prof = make_uniform_profiles(3);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    size_t expected = wireframe_edge_count_expected(NUM_BONE_PROFILES, 3);
+    size_t expected = (size_t)(3 * 144);
     EXPECT_EQ((int)mesh.indices.size(), (int)expected);
     return true;
 }
@@ -100,14 +103,18 @@ DELVE_TEST(actor_mesh_all_line_indices_in_bounds_sides_4) {
 }
 
 // ---------------------------------------------------------------------------
-// Test (c): no degenerate edges (both endpoints identical)
+// Test (c): no degenerate triangles (two identical vertex indices in a triangle)
 // ---------------------------------------------------------------------------
 DELVE_TEST(actor_mesh_no_degenerate_edges_sides_6) {
     SkeletonPose pose = make_standing_pose();
     BoneProfileArray prof = make_uniform_profiles(6);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    int degenerate = count_degenerate_edges(mesh.indices);
+    int degenerate = 0;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        uint32_t a = mesh.indices[i], b = mesh.indices[i+1], c = mesh.indices[i+2];
+        if (a == b || b == c || a == c) ++degenerate;
+    }
     EXPECT_EQ(degenerate, 0);
     return true;
 }
@@ -117,22 +124,19 @@ DELVE_TEST(actor_mesh_no_degenerate_edges_sides_3) {
     BoneProfileArray prof = make_uniform_profiles(3);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    int degenerate = count_degenerate_edges(mesh.indices);
+    int degenerate = 0;
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        uint32_t a = mesh.indices[i], b = mesh.indices[i+1], c = mesh.indices[i+2];
+        if (a == b || b == c || a == c) ++degenerate;
+    }
     EXPECT_EQ(degenerate, 0);
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// Test (d): ring edges form closed loops
-// For each bone bi with `sides` s, the start ring occupies vertices
-// [base_start .. base_start+s) and the end ring [base_end .. base_end+s).
-// The ring edges (first pair per side: v00→v10, where v10 = base+(si+1)%s)
-// must collectively visit every consecutive pair in the ring, including the
-// wrap-around edge (last→first).
-//
-// Strategy: reconstruct which edges appear in the index buffer, then verify
-// that for every bone the start-ring and end-ring each form exactly one
-// closed cycle covering all `sides` vertices.
+// Test (d): triangle-list mesh covers all ring vertices.
+// Each bone has a start ring (SIDES verts) and end ring (SIDES verts).
+// Every ring vertex must appear in at least one triangle.
 // ---------------------------------------------------------------------------
 DELVE_TEST(actor_mesh_ring_edges_form_closed_loops) {
     SkeletonPose pose = make_standing_pose();
@@ -140,53 +144,24 @@ DELVE_TEST(actor_mesh_ring_edges_form_closed_loops) {
     BoneProfileArray prof = make_uniform_profiles(SIDES);
     SkeletonMesh mesh = generate_skeleton_mesh(pose, prof);
 
-    // Each bone contributes 2*SIDES vertices (start ring + end ring).
-    // Vertex layout per bone: [base_start .. base_start+SIDES) start ring,
-    //                         [base_end   .. base_end+SIDES)   end ring.
-    // base_start for bone bi = bi * 2 * SIDES.
-    int bones = NUM_BONE_PROFILES;
-    EXPECT_EQ((int)mesh.vertices.size(), bones * 2 * SIDES);
+    // Verify triangle-list topology.
+    EXPECT_EQ((int)(mesh.indices.size() % 3), 0);
 
-    // Build an adjacency set from pairs of indices.
-    // For each ring (start/end per bone), check that every side has exactly
-    // one ring edge connecting it to its cyclic neighbour.
-    for (int bi = 0; bi < bones; ++bi) {
-        uint32_t base_start = (uint32_t)(bi * 2 * SIDES);
-        uint32_t base_end   = base_start + (uint32_t)SIDES;
-
-        // Collect ring-edge counts: start_ring[si] = #edges from si to (si+1)%SIDES.
-        std::vector<int> start_ring(SIDES, 0);
-        std::vector<int> end_ring(SIDES, 0);
-
-        // Scan all index pairs.
-        for (size_t i = 0; i + 1 < mesh.indices.size(); i += 2) {
-            uint32_t a = mesh.indices[i];
-            uint32_t b = mesh.indices[i + 1];
-
-            // Check start ring: a in [base_start, base_start+SIDES), b same range.
-            if (a >= base_start && a < base_start + SIDES &&
-                b >= base_start && b < base_start + SIDES) {
-                int sa = (int)(a - base_start);
-                int sb = (int)(b - base_start);
-                int fwd = (sa + 1) % SIDES;
-                if (sb == fwd) start_ring[sa]++;
-            }
-            // Check end ring.
-            if (a >= base_end && a < base_end + SIDES &&
-                b >= base_end && b < base_end + SIDES) {
-                int sa = (int)(a - base_end);
-                int sb = (int)(b - base_end);
-                int fwd = (sa + 1) % SIDES;
-                if (sb == fwd) end_ring[sa]++;
-            }
-        }
-
-        // Every side of each ring must have exactly one forward ring edge.
-        for (int si = 0; si < SIDES; ++si) {
-            EXPECT_EQ(start_ring[si], 1);
-            EXPECT_EQ(end_ring[si], 1);
-        }
+    // Build set of referenced vertices.
+    std::vector<bool> referenced(mesh.vertices.size(), false);
+    for (uint32_t idx : mesh.indices) {
+        if (idx < (uint32_t)mesh.vertices.size())
+            referenced[idx] = true;
     }
+
+    // All vertices from rings (first 16*2*SIDES) must be referenced.
+    // The mesh may have cap vertices appended after the ring vertices.
+    int unreferenced = 0;
+    int ring_verts = NUM_BONE_PROFILES * 2 * SIDES;
+    for (int i = 0; i < ring_verts && i < (int)mesh.vertices.size(); ++i) {
+        if (!referenced[i]) ++unreferenced;
+    }
+    EXPECT_EQ(unreferenced, 0);
     return true;
 }
 

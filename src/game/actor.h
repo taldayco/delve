@@ -14,23 +14,22 @@ struct Velocity {
     float x = 0, y = 0, z = 0;
 };
 
-// Classical 8-head proportions at H=2.0 world units.
-// Head unit h = H/8 = 0.25. Crotch at midpoint (4h from top = 4h from ground).
-// upper_leg = lower_leg = H/4 = 0.50 (1:1 ratio, legs = half of height).
-// torso (crotch→shoulders) = 3H/8 = 0.75.
-// neck = H/32 = 0.0625, head_radius = H/16 = 0.125 (full head = H/8).
-// shoulder_width (per side) = 3H/16 = 0.375, hip_width (per side) = H/8 = 0.25.
-// arm_len (upper arm) = 3H/16 = 0.375, forearm_len = H/8 = 0.25.
+// Human proportions at H=2.0 world units (total height from ankle to head crown).
+// legs (ankle→hip)   = 46% → leg_len + shin_len = 0.92  → each = 0.46
+// torso (hip→chest)  = 19% → torso_len = 0.38            chest at y=0.38
+// neck+head          = 18% → neck_len=0.30, head_radius=0.18  HEAD joint at y=0.86
+// shoulder_width per side = 0.28, hip_width per side = 0.20.
+// arm_len = 0.30, forearm_len = 0.22.
 struct ActorConfig {
-    float hip_width      = 0.25f;  // H/8  — per side from center
-    float shoulder_width = 0.375f; // 3H/16 — per side from center
-    float leg_len        = 0.50f;  // H/4  — upper leg (hip to knee)
-    float shin_len       = 0.50f;  // H/4  — lower leg (knee to ankle)
-    float torso_len      = 0.75f;  // 3H/8 — crotch to shoulders
-    float neck_len       = 0.0625f; // H/32 — visual neck cylinder
-    float head_radius    = 0.125f; // H/16 — sphere (full head = H/8)
-    float arm_len        = 0.375f; // 3H/16 — upper arm (shoulder to elbow)
-    float forearm_len    = 0.25f;  // H/8  — forearm (elbow to wrist)
+    float hip_width      = 0.20f;  // per side from center
+    float shoulder_width = 0.28f;  // per side from center
+    float leg_len        = 0.46f;  // upper leg (hip to knee)
+    float shin_len       = 0.46f;  // lower leg (knee to ankle)
+    float torso_len      = 0.38f;  // hip to chest  →  chest at y=1.30
+    float neck_len       = 0.30f;  // chest to NECK joint
+    float head_radius    = 0.18f;  // HEAD joint = NECK + 2*head_radius
+    float arm_len        = 0.30f;  // upper arm (shoulder to elbow)
+    float forearm_len    = 0.22f;  // forearm (elbow to wrist)
     float limb_radius    = 0.06f;
     float torso_radius   = 0.12f;
 };
@@ -124,4 +123,8 @@ struct AnimationState {
 
     // --- Previous velocity for acceleration computation ---
     glm::vec3 prev_velocity{0.0f};
+
+    // --- Single walk cycle phase (advances by dt * speed * 2π / (2*stride_len)) ---
+    // All joint deltas are derived from this value — no step discontinuities.
+    float walk_phase = 0.0f;
 };

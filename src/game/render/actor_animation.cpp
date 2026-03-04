@@ -109,8 +109,9 @@ void register_animation_systems(flecs::world &ecs,
 
     // =========================================================================
     // 3. GaitSystem
-    //    Procedural foot placement with one-foot-planted invariant.
-    //    Speed-adaptive step duration for natural cadence.
+    //    Continuous sinusoidal foot placement — no discrete step events.
+    //    walk_phase advances by dt*speed*(2π/(2*stride_len)).
+    //    Foot positions derived from sin(walk_phase ± π/2) each frame.
     // =========================================================================
     ecs.system("GaitSystem")
         .kind(flecs::PostUpdate)
@@ -128,69 +129,33 @@ void register_animation_systems(flecs::world &ecs,
                          const ActorConfig &cfg) {
 
                 float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
-                gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len));
+
+                // Advance single walk phase — all joint motion derived from this.
+                anim.walk_phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len));
+                gait.phase = anim.walk_phase; // keep in sync for log/metrics
 
                 float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
                 float vel_dx = speed > 0.001f ? vel.x / speed : fwd_x;
                 float vel_dy = speed > 0.001f ? vel.y / speed : fwd_y;
-
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
-                // Hip socket XY offsets (legs offset left/right of facing).
-                float hip_sign[2] = { -1.0f, 1.0f }; // left, right
+                float stride_half = gait.stride_len * 0.5f;
 
-                // Speed-adaptive step duration: faster movement = quicker steps.
-                float speed_ratio      = std::max(0.2f, std::min(1.0f, speed / gait.move_speed));
-                float adaptive_duration = gait.step_duration / speed_ratio;
+                // Left leg: phase offset +π/2 (leads right leg by half cycle).
+                float l_phase = anim.walk_phase + glm::half_pi<float>();
+                float l_fwd   = sinf(l_phase) * stride_half;
+                float l_lift  = std::max(0.0f, sinf(l_phase)) * gait.step_height;
+                float l_fx    = t.x - rght_x * cfg.hip_width + vel_dx * l_fwd;
+                float l_fy    = t.y - rght_y * cfg.hip_width + vel_dy * l_fwd;
+                legs.foot[0]  = { l_fx, l_fy, sample_world_height(*map_data, l_fx, l_fy) + l_lift };
 
-                for (int leg = 0; leg < 2; ++leg) {
-                    int other_leg = 1 - leg;
-
-                    float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
-                    float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
-
-                    float stride_off_x = vel_dx * gait.stride_len * 0.5f;
-                    float stride_off_y = vel_dy * gait.stride_len * 0.5f;
-                    float pred_x = hip_x + stride_off_x;
-                    float pred_y = hip_y + stride_off_y;
-                    float pred_z = sample_world_height(*map_data, pred_x, pred_y);
-
-                    if (!legs.stepping[leg]) {
-                        float dx   = legs.foot[leg].x - pred_x;
-                        float dy   = legs.foot[leg].y - pred_y;
-                        float dist = sqrtf(dx * dx + dy * dy);
-
-                        // One-foot-planted invariant: only step if other foot is planted.
-                        bool other_planted = !legs.stepping[other_leg];
-                        if (dist > gait.stride_len * 0.5f && other_planted) {
-                            legs.stepping[leg]  = true;
-                            legs.progress[leg]  = 0.0f;
-                            legs.prev_foot[leg] = legs.foot[leg];
-                            legs.target[leg]    = {pred_x, pred_y, pred_z};
-                        }
-                    }
-
-                    if (legs.stepping[leg]) {
-                        legs.progress[leg] += dt / adaptive_duration;
-                        float progress = std::min(legs.progress[leg], 1.0f);
-                        // Cubic smoothstep.
-                        float ts = progress * progress * (3.0f - 2.0f * progress);
-
-                        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
-                        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts;
-                        legs.foot[leg].z = legs.prev_foot[leg].z + (legs.target[leg].z - legs.prev_foot[leg].z) * ts
-                                           + sinf(progress * glm::pi<float>()) * gait.step_height;
-
-                        if (legs.progress[leg] >= 1.0f) {
-                            // Log contact velocity for grounding quality metrics.
-                            float step_dist = glm::length(legs.target[leg] - legs.prev_foot[leg]);
-                            anim.foot_contact_velocity[leg] = step_dist / adaptive_duration;
-
-                            legs.stepping[leg] = false;
-                            legs.foot[leg]     = legs.target[leg];
-                        }
-                    }
-                }
+                // Right leg: phase offset -π/2 (anti-phase with left).
+                float r_phase = anim.walk_phase - glm::half_pi<float>();
+                float r_fwd   = sinf(r_phase) * stride_half;
+                float r_lift  = std::max(0.0f, sinf(r_phase)) * gait.step_height;
+                float r_fx    = t.x + rght_x * cfg.hip_width + vel_dx * r_fwd;
+                float r_fy    = t.y + rght_y * cfg.hip_width + vel_dy * r_fwd;
+                legs.foot[1]  = { r_fx, r_fy, sample_world_height(*map_data, r_fx, r_fy) + r_lift };
             });
         });
 
@@ -236,25 +201,27 @@ void register_animation_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_HIP] = l_hip;
                 pose.joints[(int)J::R_HIP] = r_hip;
 
-                // Shoulder sockets.
+                // Shoulder sockets — sit 0.08 above chest joint (y=1.38 with default config).
+                // Derived as chest.z + neck_len * 0.17f to stay proportional.
+                float shoulder_z = chest.z + cfg.neck_len * 0.17f;
                 glm::vec3 l_shoulder(chest.x - rght_x * cfg.shoulder_width,
                                       chest.y - rght_y * cfg.shoulder_width,
-                                      chest.z);
+                                      shoulder_z);
                 glm::vec3 r_shoulder(chest.x + rght_x * cfg.shoulder_width,
                                       chest.y + rght_y * cfg.shoulder_width,
-                                      chest.z);
+                                      shoulder_z);
                 pose.joints[(int)J::L_SHOULDER] = l_shoulder;
                 pose.joints[(int)J::R_SHOULDER] = r_shoulder;
 
                 // ---- Pendulum arm swing ----
-                // Arm swing opposes the ipsilateral leg (anti-phase).
-                // Scale amplitude with speed.
+                // Arms counter-swing: sin(walk_phase ∓ π/2) × amplitude ~0.25 rad.
+                // Left arm counter-swings right leg (walk_phase + π/2 = right leg phase).
+                // Right arm counter-swings left leg (walk_phase - π/2 = left leg phase).
                 float speed       = sqrtf(vel.x * vel.x + vel.y * vel.y);
-                float swing_amp   = std::min(1.0f, speed / gait.move_speed) * glm::radians(30.0f);
+                float swing_amp   = std::min(1.0f, speed / gait.move_speed) * 0.25f;
 
-                // Left arm opposes left leg (offset by pi).
-                float l_arm_target = sinf(gait.phase + glm::pi<float>()) * swing_amp;
-                float r_arm_target = sinf(gait.phase)                      * swing_amp;
+                float l_arm_target = sinf(anim.walk_phase + glm::half_pi<float>()) * swing_amp;
+                float r_arm_target = sinf(anim.walk_phase - glm::half_pi<float>()) * swing_amp;
                 anim.l_arm_target = l_arm_target;
                 anim.r_arm_target = r_arm_target;
 
@@ -389,9 +356,8 @@ void register_animation_systems(flecs::world &ecs,
                 float speed   = sqrtf(vel.x * vel.x + vel.y * vel.y);
                 float rght_x  = -sinf(t.facing), rght_y = cosf(t.facing);
 
-                // ---- CoM hip sway ----
-                anim.sway_phase += speed * dt * 6.0f;
-                float sway = sinf(anim.sway_phase) * anim.sway_amount;
+                // ---- CoM hip sway: sin(walk_phase) × sway_amount ----
+                float sway = sinf(anim.walk_phase) * anim.sway_amount * std::min(1.0f, speed / 4.0f);
                 glm::vec3 sway_vec(rght_x * sway, rght_y * sway, 0.0f);
                 pose.joints[(int)J::ROOT]  += sway_vec;
                 pose.joints[(int)J::SPINE] += sway_vec;

@@ -175,6 +175,8 @@ add_executable(topogen
     src/game/render/actor_animation.cpp
     src/game/render/skeleton_mesh.cpp
     src/game/render/actor_mesh.cpp
+    src/game/render/skeleton.cpp
+    src/game/render/animation.cpp
 )
 
 target_include_directories(topogen PRIVATE
@@ -225,9 +227,12 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_map_util.cpp
     src/test/tests/test_skeleton_mesh.cpp
     src/test/tests/test_actor_mesh.cpp
+    src/test/tests/actor_proportions_test.cpp
     src/game/terrain/map_util.cpp
     src/game/render/skeleton_mesh.cpp
     src/game/render/actor_mesh.cpp
+    src/game/render/skeleton.cpp
+    src/game/render/animation.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 

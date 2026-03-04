@@ -36,20 +36,60 @@ static_assert((int)BoneSeg::COUNT == NUM_BONE_PROFILES,
 // Indexed by BoneSeg. Array layout matches BONES table in skeleton_mesh.cpp.
 struct SegmentProfiles {
     BoneProfile bones[(int)BoneSeg::COUNT];
+    bool dirty = false; // set to true when any parameter changes; cleared after mesh rebuild
 
     SegmentProfiles() {
-        // Torso segments: 4-sided, thicker
-        for (int i : { (int)BoneSeg::SPINE, (int)BoneSeg::CHEST_CORE,
-                       (int)BoneSeg::NECK_SEG, (int)BoneSeg::HEAD_SEG }) {
+        // Torso (SPINE, CHEST_CORE)
+        for (int i : { (int)BoneSeg::SPINE, (int)BoneSeg::CHEST_CORE }) {
             bones[i].radius_start = 0.12f;
-            bones[i].radius_end   = 0.12f;
-            bones[i].sides        = 4;
-        }
-        // Limb segments: 6-sided, thinner
-        for (int i = (int)BoneSeg::L_SHOULDER_CONN; i < (int)BoneSeg::COUNT; ++i) {
-            bones[i].radius_start = 0.06f;
-            bones[i].radius_end   = 0.06f;
+            bones[i].radius_end   = 0.10f;
             bones[i].sides        = 6;
+            bones[i].color        = glm::vec3(0.25f, 0.25f, 0.30f);
+        }
+        // Neck
+        bones[(int)BoneSeg::NECK_SEG].radius_start = 0.08f;
+        bones[(int)BoneSeg::NECK_SEG].radius_end   = 0.07f;
+        bones[(int)BoneSeg::NECK_SEG].sides        = 6;
+        bones[(int)BoneSeg::NECK_SEG].color        = glm::vec3(0.35f, 0.30f, 0.28f);
+        // Head
+        bones[(int)BoneSeg::HEAD_SEG].radius_start = 0.14f;
+        bones[(int)BoneSeg::HEAD_SEG].radius_end   = 0.14f;
+        bones[(int)BoneSeg::HEAD_SEG].sides        = 8;
+        bones[(int)BoneSeg::HEAD_SEG].color        = glm::vec3(0.35f, 0.30f, 0.28f);
+        // Shoulder connectors + upper arms
+        for (int i : { (int)BoneSeg::L_SHOULDER_CONN, (int)BoneSeg::L_UPPER_ARM,
+                       (int)BoneSeg::R_SHOULDER_CONN, (int)BoneSeg::R_UPPER_ARM }) {
+            bones[i].radius_start = 0.07f;
+            bones[i].radius_end   = 0.06f;
+            bones[i].sides        = 5;
+            bones[i].color        = glm::vec3(0.20f, 0.22f, 0.28f);
+        }
+        // Forearms
+        for (int i : { (int)BoneSeg::L_FOREARM, (int)BoneSeg::R_FOREARM }) {
+            bones[i].radius_start = 0.06f;
+            bones[i].radius_end   = 0.04f;
+            bones[i].sides        = 4;
+            bones[i].color        = glm::vec3(0.22f, 0.24f, 0.30f);
+        }
+        // Hip connectors + upper legs
+        for (int i : { (int)BoneSeg::L_HIP_CONN, (int)BoneSeg::R_HIP_CONN }) {
+            bones[i].radius_start = 0.10f;
+            bones[i].radius_end   = 0.08f;
+            bones[i].sides        = 6;
+            bones[i].color        = glm::vec3(0.18f, 0.20f, 0.26f);
+        }
+        for (int i : { (int)BoneSeg::L_UPPER_LEG, (int)BoneSeg::R_UPPER_LEG }) {
+            bones[i].radius_start = 0.10f;
+            bones[i].radius_end   = 0.08f;
+            bones[i].sides        = 6;
+            bones[i].color        = glm::vec3(0.18f, 0.20f, 0.26f);
+        }
+        // Lower legs
+        for (int i : { (int)BoneSeg::L_LOWER_LEG, (int)BoneSeg::R_LOWER_LEG }) {
+            bones[i].radius_start = 0.08f;
+            bones[i].radius_end   = 0.05f;
+            bones[i].sides        = 5;
+            bones[i].color        = glm::vec3(0.16f, 0.18f, 0.24f);
         }
     }
 

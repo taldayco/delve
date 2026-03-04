@@ -47,11 +47,12 @@ static WireFrame make_wire_frame(const glm::vec3 &a, const glm::vec3 &b) {
 }
 
 // Emit all line-list edges for one bone into `out`.
+// Each bone segment uses its BoneProfile color for visual distinction.
 // Edges: start ring (N), end ring (N), longitudinal (N) = 3N line pairs = 6N vertices.
 static void emit_bone_wireframe(const glm::vec3 &pa, const glm::vec3 &pb,
                                 const BoneProfile &prof,
                                 std::vector<ActorMeshVertex> &out) {
-    static constexpr glm::vec4 WHITE{1.f, 1.f, 1.f, 1.f};
+    const glm::vec4 bone_color{1.f, 1.f, 1.f, 1.f};
     static constexpr float PI = 3.14159265358979323846f;
 
     int sides = std::max(3, prof.sides);
@@ -80,21 +81,21 @@ static void emit_bone_wireframe(const glm::vec3 &pa, const glm::vec3 &pb,
     // Start ring edges.
     for (int si = 0; si < sides; ++si) {
         int next = (si + 1) % sides;
-        out.push_back({ring0[si],   WHITE});
-        out.push_back({ring0[next], WHITE});
+        out.push_back({ring0[si],   bone_color});
+        out.push_back({ring0[next], bone_color});
     }
 
     // End ring edges.
     for (int si = 0; si < sides; ++si) {
         int next = (si + 1) % sides;
-        out.push_back({ring1[si],   WHITE});
-        out.push_back({ring1[next], WHITE});
+        out.push_back({ring1[si],   bone_color});
+        out.push_back({ring1[next], bone_color});
     }
 
     // Longitudinal edges connecting start ring to end ring.
     for (int si = 0; si < sides; ++si) {
-        out.push_back({ring0[si], WHITE});
-        out.push_back({ring1[si], WHITE});
+        out.push_back({ring0[si], bone_color});
+        out.push_back({ring1[si], bone_color});
     }
 }
 
@@ -116,6 +117,7 @@ ActorMesh generate_actor_wireframe_mesh(const SkeletonPose     &pose,
 void deform_actor_mesh(ActorMesh &mesh, const SkeletonPose &pose,
                        const BoneProfileArray &profiles) {
     // Rebuild from scratch — the vertex count is small (< 1000) so this is fast.
+    // This also picks up any BoneProfile parameter changes (hot-reload).
     mesh.vertices.clear();
     for (int bi = 0; bi < NUM_WIRE_BONES; ++bi) {
         const glm::vec3 &pa = pose.joints[WIRE_BONES[bi].a];

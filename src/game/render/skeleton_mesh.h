@@ -53,9 +53,10 @@ struct SkeletonMesh {
     std::vector<SkeletonVertex> vertices;
     std::vector<uint32_t>       indices;
 
-    // Bone-local rest-pose positions for each vertex (same length as vertices).
-    // Used by deform_skeleton_mesh to reconstruct world positions from current pose.
+    // Bone-local rest-pose positions and normals for each vertex (same length as vertices).
+    // Used by deform_skeleton_mesh to reconstruct world positions/normals from current pose.
     std::vector<glm::vec3> rest_positions;
+    std::vector<glm::vec3> rest_normals;
 
     // Per-vertex primary bone index (same length as vertices).
     std::vector<int>   vertex_bone;

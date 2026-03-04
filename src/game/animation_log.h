@@ -68,20 +68,16 @@ public:
 
         const char *names[2] = {"left", "right"};
         for (int i = 0; i < 2; ++i) {
-            // Compute hip socket position
             float hx = t.x + rght_x * hip_sign[i] * cfg.hip_width;
             float hy = t.y + rght_y * hip_sign[i] * cfg.hip_width;
-            float hz = t.z;
 
-            // Foot position relative to hip, projected onto facing direction
             float dx = legs.foot[i].x - hx;
             float dy = legs.foot[i].y - hy;
             float foot_along_fwd = dx * fwd_x + dy * fwd_y;
             float foot_lateral   = dx * rght_x + dy * rght_y;
-            float foot_vertical  = legs.foot[i].z - hz;
+            float foot_vertical  = legs.foot[i].z - t.z;
 
-            // IK reach
-            float dz = legs.foot[i].z - hz;
+            float dz = legs.foot[i].z - t.z;
             float reach = sqrtf(dx*dx + dy*dy + dz*dz);
             float reach_ratio = reach / chain_len;
 
@@ -123,7 +119,6 @@ public:
             "R_HIP", "R_KNEE", "R_ANKLE"
         };
 
-        // Raw joint positions
         fprintf(file, ",\"joints\":{");
         for (int i = 0; i < (int)Joint::COUNT; ++i) {
             if (i > 0) fprintf(file, ",");
@@ -132,7 +127,6 @@ public:
         }
         fprintf(file, "}");
 
-        // Derived arm diagnostics — offsets relative to their parent joint
         using J = Joint;
         auto rel = [&](Joint child, Joint parent) {
             auto &c = pose.joints[(int)child];
@@ -140,7 +134,6 @@ public:
             return glm::vec3(c.x - p.x, c.y - p.y, c.z - p.z);
         };
 
-        // Arm swing: project elbow offset from shoulder onto facing forward axis
         float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
 
         auto l_elbow_off = rel(J::L_ELBOW, J::L_SHOULDER);
@@ -148,11 +141,9 @@ public:
         float l_arm_swing = l_elbow_off.x * fwd_x + l_elbow_off.y * fwd_y;
         float r_arm_swing = r_elbow_off.x * fwd_x + r_elbow_off.y * fwd_y;
 
-        // Shoulder relative to chest
         auto l_shoulder_off = rel(J::L_SHOULDER, J::CHEST);
         auto r_shoulder_off = rel(J::R_SHOULDER, J::CHEST);
 
-        // Root-to-transform offset (actual sway displacement)
         float root_offset_x = pose.joints[(int)J::ROOT].x - t.x;
         float root_offset_y = pose.joints[(int)J::ROOT].y - t.y;
 
@@ -172,7 +163,6 @@ public:
             r_shoulder_off.x, r_shoulder_off.y, r_shoulder_off.z,
             (l_arm_swing == r_arm_swing) ? "true" : "false");
 
-        // Spine diagnostics — is the spine a rigid column?
         auto spine_off = rel(J::SPINE, J::ROOT);
         auto chest_off = rel(J::CHEST, J::SPINE);
         auto neck_off  = rel(J::NECK, J::CHEST);
@@ -203,34 +193,66 @@ public:
             sqrtf(lean_x * lean_x + lean_y * lean_y));
     }
 
+    void log_dynamics(const AnimationState &anim, float dt) {
+        if (!active || !file) return;
+        float smooth_speed = glm::length(anim.smooth_vel);
+        float accel_x = (dt > 1e-6f) ? (anim.smooth_vel.x - anim.prev_smooth_vel.x) / dt : 0.0f;
+        float accel_y = (dt > 1e-6f) ? (anim.smooth_vel.y - anim.prev_smooth_vel.y) / dt : 0.0f;
+        float accel_mag = sqrtf(accel_x * accel_x + accel_y * accel_y);
+        fprintf(file,
+            ",\"dynamics\":{"
+            "\"smooth_vel\":[%.4f,%.4f],"
+            "\"smooth_speed\":%.4f,"
+            "\"accel\":[%.4f,%.4f],"
+            "\"accel_mag\":%.4f,"
+            "\"lean\":[%.4f,%.4f],"
+            "\"sway_phase\":%.4f}",
+            anim.smooth_vel.x, anim.smooth_vel.y,
+            smooth_speed,
+            accel_x, accel_y,
+            accel_mag,
+            anim.lean_x, anim.lean_y,
+            anim.sway_phase);
+    }
+
+    void log_arm_swing(const SkeletonPose &pose, const Transform &t,
+                       const AnimationState &anim) {
+        if (!active || !file) return;
+        float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+
+        auto &le = pose.joints[(int)Joint::L_ELBOW];
+        auto &ls = pose.joints[(int)Joint::L_SHOULDER];
+        auto &re = pose.joints[(int)Joint::R_ELBOW];
+        auto &rs = pose.joints[(int)Joint::R_SHOULDER];
+
+        float l_fwd = (le.x - ls.x) * fwd_x + (le.y - ls.y) * fwd_y;
+        float r_fwd = (re.x - rs.x) * fwd_x + (re.y - rs.y) * fwd_y;
+
+        fprintf(file,
+            ",\"arm_swing\":{"
+            "\"arm_phase\":[%.4f,%.4f],"
+            "\"arm_delay\":[%.4f,%.4f],"
+            "\"l_elbow_fwd\":%.4f,"
+            "\"r_elbow_fwd\":%.4f,"
+            "\"antiphase\":%s}",
+            anim.arm_phase[0], anim.arm_phase[1],
+            anim.arm_delay[0], anim.arm_delay[1],
+            l_fwd, r_fwd,
+            (l_fwd * r_fwd < 0.0f) ? "true" : "false");
+    }
+
+    void log_grounding(const Transform &t) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"grounding\":{\"actor_z\":%.4f}",
+            t.z);
+    }
+
     void log_camera(const CameraState &cam) {
         if (!active || !file) return;
         fprintf(file,
             ",\"camera\":{\"world_x\":%.4f,\"world_y\":%.4f,\"zoom\":%.4f,\"following\":%s}",
             cam.world_x, cam.world_y, cam.zoom, cam.following ? "true" : "false");
-    }
-
-    void log_dynamics(glm::vec2 smooth_vel, float lean_x, float lean_y) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"dynamics\":{\"smooth_vel\":[%.4f,%.4f],\"lean\":[%.4f,%.4f]}",
-            smooth_vel.x, smooth_vel.y, lean_x, lean_y);
-    }
-
-    void log_arm_swing(float phase_l, float phase_r, float delay_l, float delay_r) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"arm_swing\":{\"phase_l\":%.4f,\"phase_r\":%.4f,\"delay_l\":%.4f,\"delay_r\":%.4f}",
-            phase_l, phase_r, delay_l, delay_r);
-    }
-
-    void log_grounding(const LegState &legs, float step_duration) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"grounding\":{\"stepping_l\":%s,\"stepping_r\":%s,\"step_duration\":%.4f}",
-            legs.stepping[0] ? "true" : "false",
-            legs.stepping[1] ? "true" : "false",
-            step_duration);
     }
 
     void end_frame() {

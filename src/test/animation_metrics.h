@@ -19,7 +19,6 @@ inline glm::vec3 joint_direction(const glm::vec3 &from, const glm::vec3 &to) {
 }
 
 inline float pose_symmetry_score(const SkeletonPose &pose) {
-  // Compare left/right joint pairs
   struct Pair { Joint left; Joint right; };
   static const Pair pairs[] = {
     {Joint::L_SHOULDER, Joint::R_SHOULDER},
@@ -34,11 +33,9 @@ inline float pose_symmetry_score(const SkeletonPose &pose) {
   for (auto &p : pairs) {
     glm::vec3 l = pose.joints[(int)p.left];
     glm::vec3 r = pose.joints[(int)p.right];
-    // Mirror on X axis — left and right should be symmetric
     glm::vec3 mirrored_r = glm::vec3(-r.x, r.y, r.z);
     total_diff += glm::length(l - mirrored_r);
   }
-  // Normalize: perfect symmetry = 1.0, high asymmetry → 0
   return 1.0f / (1.0f + total_diff);
 }
 
@@ -54,79 +51,67 @@ inline float skeleton_height(const SkeletonPose &pose) {
 inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; }
 inline float gait_step_height(const ProceduralGait &g) { return g.step_height; }
 
-// Simulate critically-damped spring: returns steps to reach 95% of target.
-// Returns -1 if not converged within max_steps.
-inline int smooth_velocity_convergence(float initial, float target,
-                                        float smooth_time, float dt,
-                                        int max_steps = 600) {
-    float current = initial;
-    float vel     = 0.f;
-    float threshold = std::abs(target - initial) * 0.05f + 1e-6f;
-    for (int i = 0; i < max_steps; ++i) {
-        float omega  = 2.f / smooth_time;
-        float x      = omega * dt;
-        float exp_x  = 1.f / (1.f + x + 0.48f * x * x + 0.235f * x * x * x);
-        float delta  = current - target;
-        float temp   = (vel + omega * delta) * dt;
-        vel     = (vel - omega * temp) * exp_x;
-        current = target + (delta + temp) * exp_x;
-        if (std::abs(current - target) <= threshold)
-            return i + 1;
-    }
-    return -1;
+// ---------------------------------------------------------------------------
+// New metric helpers for fluid animation tests (headless, no SDL)
+// ---------------------------------------------------------------------------
+
+// Mirrors the SmoothDamp from actor_animation.cpp — for headless testing
+inline float smooth_damp_test(float current, float target, float &vel,
+                               float smoothing_time, float dt) {
+    float omega   = 2.0f / smoothing_time;
+    float x       = omega * dt;
+    float exp_val = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float change  = current - target;
+    float temp    = (vel + omega * change) * dt;
+    vel           = (vel - omega * temp) * exp_val;
+    return target + (change + temp) * exp_val;
 }
 
-inline bool torso_lean_proportional(float lean_at_slow, float lean_at_fast) {
-    return std::abs(lean_at_fast) > std::abs(lean_at_slow);
+// Run N steps of SmoothDamp and return (final_value - target) / (start - target)
+// i.e., the residual fraction. 0 = converged, 1 = no change.
+inline float smooth_damp_residual(float start, float target, float smoothing_time,
+                                   float dt, int steps) {
+    float val = start;
+    float vel = 0.0f;
+    for (int i = 0; i < steps; ++i)
+        val = smooth_damp_test(val, target, vel, smoothing_time, dt);
+    float denom = fabsf(start - target);
+    if (denom < 1e-8f) return 0.0f;
+    return fabsf(val - target) / denom;
 }
 
-// Returns true if arm phases (in radians) are antiphase (|diff mod 2π - π| < tolerance_rad).
-// Default tolerance is 0.15 * 2π ≈ 54°.
-inline bool arm_swing_antiphase(float left_phase, float right_phase,
-                                 float tolerance_rad = 0.15f * 6.28318530f) {
-    constexpr float two_pi = 6.28318530f;
-    constexpr float pi     = 3.14159265f;
-    float diff = std::fmod(std::abs(left_phase - right_phase), two_pi);
-    return std::abs(diff - pi) <= tolerance_rad;
+// Returns true if arm phases are approximately PI apart (antiphase)
+inline bool arm_phases_antiphase(float phase_a, float phase_b, float tolerance_rad = 0.1f) {
+    float diff = fabsf(phase_a - phase_b);
+    // Normalize to [0, 2*pi]
+    float two_pi = 2.0f * 3.14159265f;
+    diff = fmodf(diff, two_pi);
+    if (diff > 3.14159265f) diff = two_pi - diff;
+    return fabsf(diff - 3.14159265f) < tolerance_rad;
 }
 
-inline bool breathing_amplitude_reasonable(float amplitude) {
+// Returns true if breathing amplitude is in physiologically reasonable range
+inline bool breathing_amplitude_valid(float amplitude) {
     return amplitude >= 0.001f && amplitude <= 0.05f;
 }
 
-inline bool foot_planted_invariant(const LegState &legs) {
+// Returns true if foot planted invariant holds: not both feet stepping simultaneously
+inline bool foot_planted_invariant_holds(const LegState &legs) {
     return !(legs.stepping[0] && legs.stepping[1]);
 }
 
-inline bool step_duration_adaptive(float dur_slow, float dur_fast) {
-    return dur_fast < dur_slow;
+// Speed-adaptive step duration: interpolate between slow_dur and fast_dur
+// speed in [0, max_speed], result in [slow_dur, fast_dur]
+inline float adaptive_step_duration(float speed, float max_speed,
+                                     float slow_dur = 0.45f, float fast_dur = 0.22f) {
+    float t = std::min(speed / std::max(max_speed, 1e-6f), 1.0f);
+    return slow_dur + (fast_dur - slow_dur) * t;
 }
 
-// ── New metrics (Subtask 8) ───────────────────────────────────────────────
-
-// Returns 1.0 if left arm and left leg forward projection are in anti-phase
-// (product negative → opposite signs), 0.0 otherwise.
-inline float arm_phase_opposition(float l_arm_angle, float l_leg_forward) {
-    return (l_arm_angle * l_leg_forward < 0.0f) ? 1.0f : 0.0f;
-}
-
-// Returns wrist_lag / shoulder_lag ratio.
-// Should be > 1.0 (wrist lags more than shoulder).
-inline float joint_lag_ratio(float shoulder_lag, float wrist_lag) {
-    if (shoulder_lag < 1e-6f) return 1.0f;
-    return wrist_lag / shoulder_lag;
-}
-
-// Returns the recorded foot contact velocity for leg index.
-inline float foot_contact_velocity(const AnimationState &anim, int leg) {
-    return anim.foot_contact_velocity[leg];
-}
-
-// Returns a [0,1] correlation between lean magnitude and acceleration magnitude.
-// 1.0 = lean perfectly tracks expected value; 0.0 = maximum error.
-inline float lean_acceleration_correlation(float lean_mag, float accel_mag,
-                                            float max_lean) {
-    float expected = std::min(accel_mag * 0.01f, max_lean);
-    float error    = std::abs(lean_mag - expected);
-    return 1.0f - std::min(error / (max_lean + 1e-6f), 1.0f);
+// Single-frame SmoothDamp moves fraction toward target: returns how much moved [0,1]
+inline float smooth_damp_single_frame_fraction(float smoothing_time, float dt) {
+    float val = 0.0f;
+    float vel = 0.0f;
+    float result = smooth_damp_test(val, 1.0f, vel, smoothing_time, dt);
+    return result; // fraction moved toward target in one frame
 }

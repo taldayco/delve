@@ -1,0 +1,161 @@
+Objective
+
+  Build a procedural mesh generation system that wraps a renderable 3D mesh
+  around an existing animated stick-skeleton for a humanoid bipedal character.
+  The skeleton is defined by joint positions connected by bones. The output mesh
+   must deform in real-time as the skeleton animates, producing a stylized
+  low-poly humanoid silhouette suitable for an isometric hex-grid terrain game
+  rendered with SDL3-GPU.
+
+  ---
+  Input
+
+  - Stick skeleton: A hierarchy of joints (positions in 3D space) connected by
+  bones (line segments). The skeleton has: hips (root), spine, chest, neck,
+  head, left/right shoulders, upper arms, forearms, hands, upper legs, lower
+  legs, feet. Each joint has a world-space position and a parent joint. The
+  skeleton animates over time (walking, idle cycles) by updating joint
+  positions/rotations each frame.
+  - Per-bone parameters: Each bone carries metadata describing the desired mesh
+  profile at that segment:
+    - radius_start / radius_end — cross-section radius at the parent and child
+  joint
+    - cross_section_sides — number of polygon sides for the cross-section (e.g.,
+   4 for boxy, 6 for rounder, 3 for angular/stylized)
+    - taper — how the radius interpolates along the bone (linear, ease-in,
+  ease-out)
+    - twist — rotational offset of the cross-section polygon along the bone
+  length
+
+  ---
+  Mesh Generation Pipeline
+
+  Step 1: Cross-Section Extrusion
+
+  For each bone in the skeleton:
+
+  1. Compute the bone direction vector from parent joint to child joint.
+  2. Build a local coordinate frame (tangent, normal, binormal) at the bone
+  using the bone direction as tangent. Use the parent bone's frame or a world-up
+   reference to resolve the initial orientation and prevent flipping.
+  3. At N stations along the bone (minimum 2: start and end, more for
+  curved/tapered segments), generate a cross-section polygon perpendicular to
+  the bone direction. The polygon is a regular n-gon with the specified number
+  of sides, scaled by the interpolated radius at that station, and rotated by
+  the interpolated twist.
+  4. Connect adjacent cross-sections with triangle strips to form the tube
+  geometry for that bone.
+
+  Step 2: Joint Stitching
+
+  Where bones meet at a joint (e.g., shoulder connects upper arm and chest):
+
+  1. If the connected bones have the same cross-section side count, merge their
+  end vertices directly — weld vertices that are within a threshold distance.
+  2. If side counts differ, generate a transitional ring of triangles that
+  bridges the two cross-sections (fan triangulation from the higher-count ring
+  to the lower-count ring).
+  3. For branching joints (e.g., chest → neck + left shoulder + right shoulder),
+   generate a convex hull or blended patch over the overlapping cross-section
+  endpoints to fill gaps. A simple approach: collect all endpoint vertices at
+  the joint, compute their convex hull projected onto the plane perpendicular to
+   the average bone direction, and triangulate.
+
+  Step 3: Terminal Caps
+
+  For bones that terminate without a child (hands, feet, head):
+
+  1. Generate an end cap by triangulating the final cross-section polygon (fan
+  triangulation from centroid).
+  2. For the head specifically, scale the cap outward slightly and add an
+  additional extruded section to suggest a head volume (a sphere approximation
+  via subdivided cross-sections with radius that increases then decreases).
+  3. Feet get a flattened, elongated cap — stretch the final cross-section along
+   the forward direction of the foot bone.
+
+  Step 4: Normal Generation
+
+  1. Compute face normals for every triangle.
+  2. Compute smooth vertex normals by averaging face normals of adjacent
+  triangles weighted by face area.
+  3. Optionally support hard edges at joint boundaries where the mesh profile
+  changes abruptly — do not average normals across hard edges, instead duplicate
+   vertices.
+
+  Step 5: Skinning / Deformation
+
+  The generated mesh must deform with the skeleton each frame:
+
+  1. Each vertex is assigned to the bone it was generated from. Vertices at
+  joints are assigned weights to both connecting bones (linear blend skinning
+  with 2 bone influences).
+  2. Each frame, recompute vertex positions by transforming from bone-local
+  space to world space using the current joint transforms. This is standard LBS:
+   v_world = sum(weight_i * bone_matrix_i * v_local).
+  3. Recompute normals after deformation (or transform normals by the
+  inverse-transpose of the bone matrices).
+
+  Step 6: GPU Upload
+
+  1. Pack vertices into a vertex buffer: position (vec3), normal (vec3),
+  bone_index (ivec2), bone_weight (float — second weight is 1.0 - weight).
+  2. Pack triangle indices into an index buffer.
+  3. On first generation, create GPU buffers. On subsequent frames, only update
+  the vertex positions/normals via a mapped buffer or compute shader — do NOT
+  regenerate topology every frame. The index buffer and bone assignments are
+  static.
+
+  ---
+  Stylistic Constraints
+
+  - Low-poly aesthetic: Cross-sections should use 4-6 sides max. The character
+  should look deliberately geometric and faceted, matching the hex-grid terrain
+  style.
+  - No textures required: Color comes from per-vertex or per-bone uniform color.
+   Each bone segment can have a distinct color (e.g., torso = dark, limbs =
+  lighter).
+  - Silhouette priority: The mesh exists primarily to give the stick figure a
+  readable silhouette. Proportions should slightly exaggerate — broader
+  shoulders, thinner waist, slightly oversized head — to read well at isometric
+  camera distance.
+  - Vertex budget: Target under 500 vertices for the full character mesh. This
+  is a background element in a terrain-focused game.
+
+  ---
+  Runtime Behavior
+
+  - Generation happens once when the character is spawned. The mesh topology
+  (indices, bone assignments) is immutable after creation.
+  - Deformation happens every frame by updating vertex positions via skinning.
+  - Parameter hot-reload: During development, changing per-bone
+  radius/sides/taper parameters via ImGui should trigger a full mesh
+  regeneration so artists can tune the look interactively.
+  - Multiple characters: The system should support instancing — same mesh
+  topology with different skeleton poses rendered via per-instance bone
+  matrices.
+
+  ---
+  Integration Points
+
+  - The skeleton already exists and animates. The mesh system receives joint
+  world-space transforms each frame.
+  - The mesh feeds into the existing rendering pipeline as a standard
+  vertex/index buffer draw call, inserted in the frame after terrain and before
+  UI.
+  - Shaders should reuse the existing lighting infrastructure (cluster-based
+  light culling, lighting_common.glsl). The vertex shader applies bone
+  transforms; the fragment shader does standard diffuse+ambient with per-bone
+  color.
+
+  ---
+  Deliverables
+
+  1. A SkeletonMesh struct that holds the generated vertex/index buffers and
+  per-vertex bone assignments.
+  2. A generate_skeleton_mesh() function that takes the skeleton definition +
+  per-bone profile parameters and outputs a SkeletonMesh.
+  3. A deform_skeleton_mesh() function that takes current joint transforms and
+  updates vertex positions/normals in-place.
+  4. A vertex shader that accepts bone matrices and performs LBS.
+  5. ImGui controls for per-bone radius, sides, taper, and twist, wired to
+  trigger regeneration.

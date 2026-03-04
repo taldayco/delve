@@ -36,6 +36,10 @@ function loadSystemPrompt(): string {
   return loadFile(join(PROJECT_ROOT, ".pi/SYSTEM.md"));
 }
 
+function loadAgentSystemPrompt(): string {
+  return loadFile(join(PROJECT_ROOT, ".pi/SYSTEM_AGENT.md"));
+}
+
 // ─── Agent Config Loader ──────────────────────────────────────────────────
 
 interface AgentConfig {
@@ -529,9 +533,9 @@ const SUBSYSTEM_CONFIG: Record<string, { skill: string; rule: string; descriptio
  */
 function buildSubsystemPrompt(subsystem: string): string {
   const config = SUBSYSTEM_CONFIG[subsystem];
-  if (!config) return loadSystemPrompt();
+  if (!config) return loadAgentSystemPrompt();
 
-  const parts = [loadSystemPrompt()];
+  const parts = [loadAgentSystemPrompt()];
 
   const skill = loadSkill(config.skill);
   if (skill) parts.push("---\n\n" + skill);
@@ -638,7 +642,7 @@ export async function askMetaPlanner(opts: {
   task: string;
   codebaseContext: string;
 }): Promise<string> {
-  const systemPrompt = `${loadSystemPrompt()}
+  const systemPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -766,24 +770,18 @@ export async function askMetaImplementer(opts: {
   plan: string;
   task: string;
   files: string[];
+  subsystems?: string[];
 }): Promise<string> {
-  const systemPrompt = `${loadSystemPrompt()}
+  const skillNames = opts.subsystems || ["terrain", "engine", "shader", "actor"];
+  const skillSections = skillNames
+    .map((s) => loadSkill(s))
+    .filter(Boolean)
+    .map((s) => "---\n\n" + s)
+    .join("\n\n");
 
----
+  const systemPrompt = `${loadAgentSystemPrompt()}
 
-${loadSkill("terrain")}
-
----
-
-${loadSkill("engine")}
-
----
-
-${loadSkill("shader")}
-
----
-
-${loadSkill("actor")}
+${skillSections}
 
 ---
 
@@ -807,8 +805,11 @@ For each file, output:
 - Maintain hex coordinate invariants.
 - Size MapData vectors correctly.`;
 
+  const implementerConfig = loadAgentConfig("implementer");
+  const model = implementerConfig.model || "anthropic/claude-sonnet-4-6";
+
   // Compute remaining char budget for file contents
-  const limit = MODEL_CONTEXT_LIMITS["anthropic/claude-sonnet-4-6"] || 200_000;
+  const limit = MODEL_CONTEXT_LIMITS[model] || 200_000;
   const budgetTokens = Math.floor(limit * CONTEXT_BUDGET_RATIO);
   const systemTokens = estimateTokens(systemPrompt);
   const remainingChars = Math.max((budgetTokens - systemTokens) * 4 - 2000, 8000);
@@ -826,8 +827,9 @@ ${fileContents}`;
   const result = await spawnWithEscalation({
     prompt,
     systemPrompt,
-    model: "anthropic/claude-sonnet-4-6",
-    thinking: "low",
+    model,
+    thinking: implementerConfig.thinking || "low",
+    tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
     expectFileBlocks: true,
     agentName: "implementer",
   });
@@ -843,7 +845,7 @@ export async function askMetaTester(opts: {
   changedFiles: string[];
   implementationSummary: string;
 }): Promise<string> {
-  const systemPrompt = `${loadSystemPrompt()}
+  const systemPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -911,7 +913,7 @@ export async function askReviewer(opts: {
   diff: string;
   testResults: string;
 }): Promise<string> {
-  const systemPrompt = `${loadSystemPrompt()}
+  const systemPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -989,12 +991,48 @@ export async function askWorker(opts: {
     prompt += `\n\n## File Contents\n${fileSection}`;
   }
 
+  const workerConfig = loadAgentConfig("worker");
+
   return spawnSubagent({
     prompt,
     systemPrompt: opts.systemPrompt,
-    model: "anthropic/claude-haiku-4-5",
+    model: workerConfig.model || "anthropic/claude-haiku-4-5",
+    thinking: workerConfig.thinking || "off",
     agentName: "worker",
   });
+}
+
+// ─── Deterministic Worker Prompt Template ─────────────────────────────────────
+
+export function generateWorkerPromptSync(opts: {
+  taskType: string;
+  context: string;
+  constraints: string[];
+}): {
+  systemPrompt: string;
+  userPrompt: string;
+  requiredFiles: string[];
+} {
+  const systemPrompt = `You are a BUILD/TEST FIXER for a C++20 CMake project (Delve terrain generator).
+Task type: ${opts.taskType}
+${opts.constraints.map((c) => `- ${c}`).join("\n")}
+
+## Output Format
+For each file to fix, output the COMPLETE file:
+
+### FILE: <path>
+#### ACTION: MODIFY
+\`\`\`cpp
+[COMPLETE file content with fixes applied]
+\`\`\`
+
+CRITICAL: Output the ENTIRE file content, not just changed lines.`;
+
+  return {
+    systemPrompt,
+    userPrompt: opts.context,
+    requiredFiles: [],
+  };
 }
 
 // ─── Agent Tool: generate_worker_prompt (Sonnet) ────────────────────────────
@@ -1037,10 +1075,13 @@ ${opts.context}
 ## Constraints
 ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
 
+  const promptEngConfig = loadAgentConfig("prompt-engineer");
+
   const result = await spawnSubagent({
     prompt,
     systemPrompt,
-    model: "anthropic/claude-sonnet-4-6",
+    model: promptEngConfig.model || "anthropic/claude-sonnet-4-6",
+    thinking: promptEngConfig.thinking || "off",
     agentName: "prompt-engineer",
   });
 
@@ -1169,7 +1210,9 @@ export async function askDiagnoser(opts: {
   testOutput: string;
   recentCommits: string;
 }): Promise<string> {
-  const systemPrompt = `${loadSystemPrompt()}
+  const diagnoserConfig = loadAgentConfig("diagnoser");
+
+  const systemPrompt = `${loadAgentSystemPrompt()}
 
 ---
 
@@ -1210,8 +1253,9 @@ Diagnose the root cause of the test failures.`;
   return spawnSubagent({
     prompt,
     systemPrompt,
-    model: "anthropic/claude-sonnet-4-6",
-    tools: ["read", "bash"],
+    model: diagnoserConfig.model || "anthropic/claude-sonnet-4-6",
+    thinking: diagnoserConfig.thinking || "low",
+    tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
     agentName: "diagnoser",
   });
 }
@@ -1253,10 +1297,13 @@ ${opts.availablePhases.map((p) => `- ${p}`).join("\n")}
 
 Design the optimal pipeline for this task.`;
 
+  const bpGenConfig = loadAgentConfig("blueprint-gen");
+
   return spawnSubagent({
     prompt,
     systemPrompt,
-    model: "anthropic/claude-sonnet-4-6",
+    model: bpGenConfig.model || "anthropic/claude-sonnet-4-6",
+    thinking: bpGenConfig.thinking || "off",
     agentName: "blueprint-gen",
   });
 }

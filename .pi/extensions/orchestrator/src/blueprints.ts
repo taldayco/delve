@@ -12,6 +12,7 @@ import {
   parseSubtasks,
   writeState,
   readState,
+  generateWorkerPromptSync,
 } from "./agents.js";
 import {
   gitBranch,
@@ -143,6 +144,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
           plan: ctx.data.plan,
           task: taskWithDiagnosis,
           files: contextFiles,
+          subsystems: subsystems,
         });
       }
     } else {

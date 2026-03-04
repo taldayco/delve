@@ -362,6 +362,7 @@ export default function (pi: ExtensionAPI) {
 
       ctx.ui.notify(`Minion started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -375,6 +376,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         const wt = branchResult.worktreePath;
+        worktreePath = wt;
         state.worktreePath = wt;
         ctx.ui.notify(branchResult.summary, "success");
 
@@ -632,7 +634,7 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } finally {
-        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });
@@ -669,6 +671,7 @@ export default function (pi: ExtensionAPI) {
 
       ctx.ui.notify(`Minion-quick started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -682,6 +685,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
         const wt = branchResult.worktreePath;
+        worktreePath = wt;
         state.worktreePath = wt;
 
         // ── PHASE: Implement (single agent, no planner) ──────────────
@@ -765,7 +769,7 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } finally {
-        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });
@@ -791,6 +795,7 @@ export default function (pi: ExtensionAPI) {
       attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-refactor started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -800,6 +805,7 @@ export default function (pi: ExtensionAPI) {
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
+        worktreePath = wt;
         state.worktreePath = wt;
 
         // Implement
@@ -855,7 +861,7 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } finally {
-        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });
@@ -881,6 +887,7 @@ export default function (pi: ExtensionAPI) {
       attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-bugfix started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -890,6 +897,7 @@ export default function (pi: ExtensionAPI) {
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
+        worktreePath = wt;
         state.worktreePath = wt;
 
         // Diagnose: run tests first to collect failure output
@@ -975,7 +983,7 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } finally {
-        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });
@@ -1001,6 +1009,7 @@ export default function (pi: ExtensionAPI) {
       attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-shader started: ${prompt}`, "info");
 
+      let worktreePath: string | undefined;
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -1010,6 +1019,7 @@ export default function (pi: ExtensionAPI) {
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
         const wt = branchResult.worktreePath;
+        worktreePath = wt;
         state.worktreePath = wt;
 
         // Implement (force shader subsystem)
@@ -1062,7 +1072,7 @@ export default function (pi: ExtensionAPI) {
         detachAgentListeners();
         state = null;
       } finally {
-        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
+        if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
   });

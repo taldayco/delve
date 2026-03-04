@@ -5,7 +5,7 @@ import { execSync, spawn } from "node:child_process";
 import { readFileSync, existsSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, type Socket } from "node:net";
 import { join, resolve } from "node:path";
-import { compareFrames } from "./frame_diff.js";
+import { compareFrames, type FrameDiffResult } from "./frame_diff.js";
 
 // ─── Project Root Detection ─────────────────────────────────────────────────
 
@@ -639,6 +639,120 @@ server.tool(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// METRICS TOOLS
+// ═══════════════════════════════════════════════════════════════════════════
+
+server.tool(
+  "metrics_run",
+  "Build and run delve_metrics to produce per-domain JSON metric files. Returns manifest with available domains.",
+  {
+    seed: z.number().default(1337).describe("Random seed for terrain generation"),
+    size: z.number().default(128).describe("Map width/height"),
+    output_dir: z
+      .string()
+      .default(".pi/state/metrics")
+      .describe("Output directory for metric JSON files"),
+  },
+  async ({ seed, size, output_dir }) => {
+    // Build metrics binary
+    const build = shell(
+      "cmake --build build --target delve_metrics -j$(nproc) 2>&1"
+    );
+    if (!build.ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              phase: "build",
+              output: (build.stdout + build.stderr).slice(-3000),
+            }),
+          },
+        ],
+      };
+    }
+
+    const outputPath = resolve(PROJECT_ROOT, output_dir);
+    const configPath = join(PROJECT_ROOT, "config.json");
+    const configArg = existsSync(configPath) ? `--config ${configPath}` : "";
+
+    const run = shell(
+      `./build/delve_metrics --seed ${seed} --size ${size} ${configArg} --output-dir "${outputPath}" 2>&1`
+    );
+
+    if (!run.ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              phase: "run",
+              output: (run.stdout + run.stderr).slice(-3000),
+            }),
+          },
+        ],
+      };
+    }
+
+    // Read manifest
+    const manifestPath = join(outputPath, "manifest.json");
+    let manifest: any = {};
+    try {
+      manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    } catch { /* ignore */ }
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            output_dir: outputPath,
+            ...manifest,
+          }),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "metrics_read_domain",
+  "Read a specific domain's metric JSON file from the metrics output directory.",
+  {
+    domain: z
+      .enum(["terrain", "mesh", "performance", "manifest"])
+      .describe("Domain to read"),
+    metrics_dir: z
+      .string()
+      .default(".pi/state/metrics")
+      .describe("Metrics output directory"),
+  },
+  async ({ domain, metrics_dir }) => {
+    const filePath = join(
+      resolve(PROJECT_ROOT, metrics_dir),
+      `${domain}.json`
+    );
+    if (!existsSync(filePath)) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({ success: false, error: `File not found: ${filePath}` }),
+          },
+        ],
+      };
+    }
+    const content = readFileSync(filePath, "utf-8");
+    return {
+      content: [{ type: "text" as const, text: content }],
+    };
+  }
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // AGENT-APP INTERACTION TOOLS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1000,6 +1114,25 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description: "High-level project structure, build targets, and key entry points.",
     cost: "cheap",
   },
+  // Metrics tools
+  {
+    name: "metrics_run",
+    category: "metrics",
+    keywords: ["metrics", "verify", "quantitative", "headless", "terrain", "mesh", "performance"],
+    prerequisites: ["build_compile"],
+    enables: ["metrics_read_domain"],
+    description: "Run headless metrics pipeline. Produces per-domain JSON files (terrain, mesh, performance).",
+    cost: "expensive",
+  },
+  {
+    name: "metrics_read_domain",
+    category: "metrics",
+    keywords: ["metrics", "domain", "terrain", "mesh", "performance", "read", "analyze"],
+    prerequisites: ["metrics_run"],
+    enables: [],
+    description: "Read a specific domain's metric JSON file from the metrics output.",
+    cost: "cheap",
+  },
   // Agent-app interaction tools
   {
     name: "app_launch",
@@ -1126,6 +1259,7 @@ server.tool(
         "debug_build",
         "explore_codebase",
         "review_changes",
+        "verify_metrics",
       ])
       .describe("Workflow type"),
   },
@@ -1179,6 +1313,13 @@ server.tool(
         { step: 2, tool: "git_diff_from_main", purpose: "See what changed" },
         { step: 3, tool: "build_compile", purpose: "Verify build" },
         { step: 4, tool: "test_run", purpose: "Run tests" },
+      ],
+      verify_metrics: [
+        { step: 1, tool: "build_compile", purpose: "Build project" },
+        { step: 2, tool: "metrics_run", purpose: "Generate metric files" },
+        { step: 3, tool: "metrics_read_domain", purpose: "Read terrain metrics" },
+        { step: 4, tool: "metrics_read_domain", purpose: "Read mesh metrics" },
+        { step: 5, tool: "metrics_read_domain", purpose: "Read performance metrics" },
       ],
     };
 

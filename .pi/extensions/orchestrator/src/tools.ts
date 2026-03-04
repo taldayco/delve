@@ -391,6 +391,53 @@ export function runShaderValidation(): { ok: boolean; summary: string } {
   );
 }
 
+// ─── Deterministic Tool: run_metrics ───────────────────────────────────────
+
+export function runMetrics(cwd?: string): {
+  ok: boolean;
+  outputDir: string;
+  domains: string[];
+  summary: string;
+} {
+  const { mkdirSync, readFileSync, existsSync } = require("node:fs");
+  const { join } = require("node:path");
+  const baseCwd = cwd || process.cwd();
+  const outputDir = join(baseCwd, ".pi/state/metrics");
+
+  // Build metrics binary first
+  const build = silentShell(
+    "cmake --build build --target delve_metrics -j$(nproc) 2>&1",
+    30,
+    baseCwd
+  );
+  if (!build.ok) {
+    return { ok: false, outputDir, domains: [], summary: `Metrics build failed: ${build.summary}` };
+  }
+
+  // Run metrics with per-domain output
+  const configPath = join(baseCwd, "config.json");
+  const configArg = existsSync(configPath) ? `--config ${configPath}` : "";
+  const run = silentShell(
+    `./build/delve_metrics ${configArg} --output-dir "${outputDir}" 2>&1`,
+    30,
+    baseCwd
+  );
+
+  if (!run.ok) {
+    return { ok: false, outputDir, domains: [], summary: `Metrics run failed: ${run.summary}` };
+  }
+
+  // Read manifest to discover domains
+  const manifestPath = join(outputDir, "manifest.json");
+  let domains: string[] = [];
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
+    domains = manifest.domains || [];
+  } catch { /* ignore */ }
+
+  return { ok: true, outputDir, domains, summary: `Metrics: ${domains.length} domains emitted` };
+}
+
 // ─── File Block Parser (shared) ─────────────────────────────────────────────
 
 /**

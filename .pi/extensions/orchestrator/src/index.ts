@@ -26,6 +26,7 @@ import {
   readState,
   askDiagnoser,
   askBlueprintGenerator,
+  askVerifier,
   agentEvents,
 } from "./agents.js";
 import {
@@ -41,6 +42,7 @@ import {
   getCodebaseContext,
   resolveSubsystems,
   runShaderValidation,
+  runMetrics,
   cleanupMergedBranches,
   applyFileBlocks,
   MAX_BUILD_FIX_ROUNDS,
@@ -62,6 +64,7 @@ type Phase =
   | "fix-tests"
   | "review"
   | "shader-validate"
+  | "verify"
   | "commit-pr"
   | "done"
   | "failed";
@@ -288,6 +291,50 @@ export default function (pi: ExtensionAPI) {
           }),
         }],
       };
+    },
+  });
+
+  pi.registerTool({
+    name: "run_metrics",
+    label: "Run Metrics",
+    description:
+      "Build and run delve_metrics with per-domain JSON output. Emits terrain.json, mesh.json, performance.json into .pi/state/metrics/.",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
+      const result = runMetrics();
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            ok: result.ok,
+            domains: result.domains,
+            outputDir: result.outputDir,
+            summary: result.summary,
+          }),
+        }],
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "ask_verifier",
+    label: "Verifier",
+    description:
+      "Run headless metrics and verify quantitative results. Returns verification summary with per-domain pass/fail. (Sonnet coordinator + Haiku analyzers)",
+    parameters: Type.Object({
+      task: Type.String({ description: "Task description for context" }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const metrics = runMetrics();
+      if (!metrics.ok) {
+        return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: metrics.summary }) }] };
+      }
+      const result = await askVerifier({
+        task: (params as any).task,
+        metricsDir: metrics.outputDir,
+        domains: metrics.domains,
+      });
+      return { content: [{ type: "text", text: result }] };
     },
   });
 

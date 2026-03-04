@@ -10,16 +10,25 @@
 #include "game_state.h"
 #include "config.h"
 #include <nlohmann/json.hpp>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <string>
+
+static void write_domain_file(const std::string &dir, const std::string &name,
+                              const nlohmann::json &data) {
+  std::ofstream f(dir + "/" + name);
+  f << data.dump(2) << "\n";
+}
 
 int main(int argc, char *argv[]) {
   int seed = 1337;
   int map_width = Config::MAP_WIDTH;
   int map_height = Config::MAP_HEIGHT;
   std::string config_path;
+  std::string output_dir; // --output-dir: write per-domain JSON files
 
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--seed") == 0 && i + 1 < argc)
@@ -28,6 +37,8 @@ int main(int argc, char *argv[]) {
       config_path = argv[++i];
     else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
       map_width = map_height = std::atoi(argv[++i]);
+    } else if (std::strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
+      output_dir = argv[++i];
     }
   }
 
@@ -88,41 +99,112 @@ int main(int argc, char *argv[]) {
   TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
 
   // Compute metrics
+  auto t_start = std::chrono::steady_clock::now();
+
   auto elev_stats = elevation_stats(md.final_elevation);
   auto col_stats = hex_column_height_stats(md.columns);
+  auto elev_hist = elevation_distribution(md.final_elevation, 10);
 
-  nlohmann::json out;
-  out["seed"] = seed;
-  out["map_size"] = {{"width", map_width}, {"height", map_height}};
-  out["elevation"] = {
-    {"min", elev_stats.min}, {"max", elev_stats.max},
-    {"mean", elev_stats.mean}, {"stddev", elev_stats.stddev}
+  auto t_end = std::chrono::steady_clock::now();
+  double metrics_ms = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+
+  // ── Per-domain JSON objects ──────────────────────────────────────────────
+
+  nlohmann::json terrain_json = {
+    {"domain", "terrain"},
+    {"seed", seed},
+    {"map_size", {{"width", map_width}, {"height", map_height}}},
+    {"elevation", {
+      {"min", elev_stats.min}, {"max", elev_stats.max},
+      {"mean", elev_stats.mean}, {"stddev", elev_stats.stddev},
+      {"histogram_10", elev_hist}
+    }},
+    {"columns", {
+      {"count", md.columns.size()},
+      {"height_min", col_stats.min}, {"height_max", col_stats.max},
+      {"height_mean", col_stats.mean}, {"height_stddev", col_stats.stddev}
+    }},
+    {"lava", {
+      {"body_count", md.lava_bodies.size()},
+      {"coverage_pct", lava_region_ratio(md) * 100.0f}
+    }},
+    {"void", {
+      {"coverage_pct", void_region_ratio(md) * 100.0f}
+    }},
+    {"basalt", {
+      {"coverage_pct", basalt_coverage_ratio(md) * 100.0f}
+    }},
+    {"water", {
+      {"coverage_pct", water_coverage_percent(md.final_elevation)}
+    }},
+    {"contours", {
+      {"line_count", md.contour_lines.size()},
+      {"band_count", plateau_count(md.band_map, map_width, map_height)}
+    }}
   };
-  out["columns"] = {
-    {"count", md.columns.size()},
-    {"height_min", col_stats.min}, {"height_max", col_stats.max}
-  };
-  out["lava"] = {
-    {"body_count", md.lava_bodies.size()},
-    {"coverage_pct", lava_region_ratio(md) * 100.0f}
-  };
-  out["void"] = {
-    {"coverage_pct", void_region_ratio(md) * 100.0f}
-  };
-  out["basalt"] = {
-    {"coverage_pct", basalt_coverage_ratio(md) * 100.0f}
-  };
-  out["contours"] = {
-    {"line_count", md.contour_lines.size()}
-  };
-  out["mesh"] = {
+
+  nlohmann::json mesh_json = {
+    {"domain", "mesh"},
     {"vertex_count", mesh_vertex_count(mesh)},
     {"index_count", mesh_index_count(mesh)},
+    {"basalt_layers", mesh.basalt_layers.size()},
+    {"lava_vertices", mesh.lava_vertices.size()},
+    {"contour_vertices", mesh.contour_vertices.size()},
     {"degenerate_triangles", mesh_degenerate_triangles(mesh)},
     {"normal_validity", normal_validity(mesh)},
-    {"color_validity", vertex_color_validity(mesh)}
+    {"color_validity", vertex_color_validity(mesh)},
+    {"hex_roundtrip_accuracy", hex_roundtrip_accuracy(Config::HEX_SIZE, 10)}
   };
 
-  printf("%s\n", out.dump(2).c_str());
+  nlohmann::json performance_json = {
+    {"domain", "performance"},
+    {"metrics_computation_ms", metrics_ms},
+    {"map_pixels", map_width * map_height},
+    {"vertices_per_pixel", (double)mesh_vertex_count(mesh) / (map_width * map_height)},
+    {"indices_per_vertex", mesh_vertex_count(mesh) > 0
+      ? (double)mesh_index_count(mesh) / mesh_vertex_count(mesh) : 0.0}
+  };
+
+  // ── Output mode ──────────────────────────────────────────────────────────
+
+  if (!output_dir.empty()) {
+    // Per-domain JSON files mode
+    std::filesystem::create_directories(output_dir);
+
+    write_domain_file(output_dir, "terrain.json", terrain_json);
+    write_domain_file(output_dir, "mesh.json", mesh_json);
+    write_domain_file(output_dir, "performance.json", performance_json);
+
+    // Write manifest listing all emitted domains
+    nlohmann::json manifest = {
+      {"domains", {"terrain", "mesh", "performance"}},
+      {"seed", seed},
+      {"map_size", {{"width", map_width}, {"height", map_height}}}
+    };
+    write_domain_file(output_dir, "manifest.json", manifest);
+
+    printf("{\"ok\":true,\"output_dir\":\"%s\",\"domains\":[\"terrain\",\"mesh\",\"performance\"]}\n",
+           output_dir.c_str());
+  } else {
+    // Legacy monolithic JSON output (backwards compatible)
+    nlohmann::json out;
+    out["seed"] = seed;
+    out["map_size"] = {{"width", map_width}, {"height", map_height}};
+    out["elevation"] = terrain_json["elevation"];
+    out["columns"] = terrain_json["columns"];
+    out["lava"] = terrain_json["lava"];
+    out["void"] = terrain_json["void"];
+    out["basalt"] = terrain_json["basalt"];
+    out["contours"] = terrain_json["contours"];
+    out["mesh"] = {
+      {"vertex_count", mesh_json["vertex_count"]},
+      {"index_count", mesh_json["index_count"]},
+      {"degenerate_triangles", mesh_json["degenerate_triangles"]},
+      {"normal_validity", mesh_json["normal_validity"]},
+      {"color_validity", mesh_json["color_validity"]}
+    };
+    printf("%s\n", out.dump(2).c_str());
+  }
+
   return 0;
 }

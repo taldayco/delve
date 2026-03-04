@@ -3,6 +3,7 @@
 #include "ui/imgui_ui.h"
 #include "core/asset_manager.h"
 #include "agent_mode.h"
+#include "input/input_replay.h"
 #include "ipc/agent_server.h"
 #include <SDL3/SDL.h>
 #include <flecs.h>
@@ -38,6 +39,8 @@ protected:
 
 private:
   std::unique_ptr<AgentServer> agent_server;
+  InputReplay input_replay;
+  uint32_t frame_counter = 0;
   void setup_agent_commands();
   int run_internal();
 };

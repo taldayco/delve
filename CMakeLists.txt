@@ -129,6 +129,7 @@ add_library(topo_engine STATIC
     src/engine/gpu/frame_capture.cpp
     src/engine/ipc/agent_server.cpp
     src/engine/input/input.cpp
+    src/engine/input/input_replay.cpp
     src/engine/camera/camera.cpp
     src/engine/ui/imgui_ui.cpp
     src/engine/render/sprite.cpp
@@ -145,6 +146,7 @@ target_link_libraries(topo_engine PUBLIC
     imgui
     flecs::flecs_static
     glm::glm
+    nlohmann_json::nlohmann_json
 )
 
 # ---- topogen (executable) ----

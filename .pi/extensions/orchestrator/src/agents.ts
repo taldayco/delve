@@ -910,7 +910,7 @@ ${opts.implementationSummary}
 ## Changed Files
 ${fileContents}`;
 
-  const result = await spawnSubagent({
+  const result = await spawnWithEscalation({
     prompt,
     systemPrompt,
     model,
@@ -1250,11 +1250,17 @@ export async function askBlueprintGenerator(opts: {
   task: string;
   availablePhases: string[];
 }): Promise<string> {
-  const systemPrompt = `You are a PIPELINE ARCHITECT. Given a development task, design an optimal pipeline
+  // Load full agent body from blueprint-gen.md (contains detailed heuristics)
+  const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
+  const bodyStart = agentBody.indexOf("---", 3);
+  const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
+
+  const systemPrompt = agentInstructions.length > 100
+    ? agentInstructions
+    : `You are a PIPELINE ARCHITECT. Given a development task, design an optimal pipeline
 by selecting and ordering phases from the available list.
 
 ## Output Format (JSON only)
-\`\`\`json
 {
   "name": "descriptive-pipeline-name",
   "description": "What this pipeline does",
@@ -1262,7 +1268,6 @@ by selecting and ordering phases from the available list.
     { "name": "Human-readable phase name", "type": "deterministic|agentic", "handler": "handler_key" }
   ]
 }
-\`\`\`
 
 ## Rules
 - Use ONLY handlers from the available list.
@@ -1271,7 +1276,8 @@ by selecting and ordering phases from the available list.
 - Simple tasks need fewer phases — don't over-engineer.
 - For refactoring: skip test-writing (behavior should be preserved).
 - For bugfixes: include "diagnose" before "implement".
-- For shader-only tasks: use "shader_validate" instead of "test".`;
+- For shader-only tasks: use "shader_validate" instead of "test".
+- For changes that affect visual output: include "verify" after "build" or "test".`;
 
   const prompt = `## Task
 ${opts.task}
@@ -1290,6 +1296,97 @@ Design the optimal pipeline for this task.`;
     thinking: bpGenConfig.thinking || "off",
     agentName: "blueprint-gen",
   });
+}
+
+// ─── Agent Tool: ask_verifier (Sonnet) ──────────────────────────────────────
+
+export async function askVerifier(opts: {
+  task: string;
+  metricsDir: string;
+  domains: string[];
+}): Promise<string> {
+  const { readFileSync, existsSync } = require("node:fs");
+  const { join } = require("node:path");
+
+  // Read all domain metric files
+  const domainData: Record<string, string> = {};
+  for (const domain of opts.domains) {
+    const filePath = join(opts.metricsDir, `${domain}.json`);
+    if (existsSync(filePath)) {
+      domainData[domain] = readFileSync(filePath, "utf-8");
+    }
+  }
+
+  const domainSections = Object.entries(domainData)
+    .map(([domain, content]) => `### ${domain}.json\n\`\`\`json\n${content}\n\`\`\``)
+    .join("\n\n");
+
+  const agentBody = loadFile(join(AGENTS_DIR, "verifier.md"));
+  const verifierConfig = loadAgentConfig("verifier");
+
+  // Build system prompt from agent file body (after frontmatter)
+  const bodyStart = agentBody.indexOf("---", 3);
+  const systemPrompt = bodyStart >= 0
+    ? loadAgentSystemPrompt() + "\n\n" + agentBody.slice(bodyStart + 3).trim()
+    : loadAgentSystemPrompt();
+
+  const prompt = `## Task Being Verified
+${opts.task}
+
+## Available Metric Domains
+${opts.domains.join(", ")}
+
+## Metric Data
+
+${domainSections}
+
+Analyze the metrics above and provide your verification summary.`;
+
+  return spawnSubagent({
+    prompt,
+    systemPrompt,
+    model: verifierConfig.model || "anthropic/claude-sonnet-4-6",
+    thinking: verifierConfig.thinking || "low",
+    agentName: "verifier",
+  });
+}
+
+// ─── Dynamic Domain Analyzer (Haiku throwaway agents) ────────────────────────
+
+export async function spawnDomainAnalyzer(opts: {
+  domain: string;
+  metricData: string;
+  task: string;
+}): Promise<{ domain: string; result: string }> {
+  const systemPrompt = `You are a METRICS ANALYZER for the "${opts.domain}" domain of the Delve game engine.
+You receive JSON metric data and must determine if the metrics are healthy.
+
+Output EXACTLY one of:
+- PASS: [brief reason]
+- FAIL: [brief reason with the specific problematic metric and value]
+- WARNING: [brief reason]
+
+Be concise. One line only.`;
+
+  const prompt = `## Task Context
+${opts.task}
+
+## ${opts.domain}.json
+\`\`\`json
+${opts.metricData}
+\`\`\`
+
+Analyze these metrics. Is this domain healthy?`;
+
+  const result = await spawnSubagent({
+    prompt,
+    systemPrompt,
+    model: "anthropic/claude-haiku-4-5",
+    thinking: "off",
+    agentName: `analyzer-${opts.domain}`,
+  });
+
+  return { domain: opts.domain, result };
 }
 
 // ─── Failure Detection & Escalation ──────────────────────────────────────────
@@ -1317,6 +1414,20 @@ export function detectAgentFailure(output: string): FailureSignal {
   // Context failures
   if (/\b(context|file)\s+(missing|truncated|not found)\b/i.test(output)) {
     return { failed: true, reason: "Missing context", category: "context" };
+  }
+
+  // Explicit escalation request from worker
+  const escalateMatch = output.match(/\bESCALATE:\s*(.+)/i);
+  if (escalateMatch) {
+    const reason = escalateMatch[1].trim();
+    // Infer category from escalation reason
+    if (/\b(tool|command|permission)\b/i.test(reason)) {
+      return { failed: true, reason: `Escalation requested: ${reason}`, category: "tool" };
+    }
+    if (/\b(context|file|missing|truncated)\b/i.test(reason)) {
+      return { failed: true, reason: `Escalation requested: ${reason}`, category: "context" };
+    }
+    return { failed: true, reason: `Escalation requested: ${reason}`, category: "capability" };
   }
 
   return { failed: false, reason: "", category: "unknown" };

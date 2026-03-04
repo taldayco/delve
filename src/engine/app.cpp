@@ -22,6 +22,17 @@ int Application::run(const AgentModeConfig &agent_config) {
     }
   }
 
+  // Load input replay script if specified
+  if (!agent_config.replay_input_path.empty()) {
+    if (!input_replay.load(agent_config.replay_input_path)) {
+      SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to load replay input: %s",
+                   agent_config.replay_input_path.c_str());
+    } else {
+      SDL_Log("Input replay loaded: %zu events from %s",
+              input_replay.event_count(), agent_config.replay_input_path.c_str());
+    }
+  }
+
   int result = run_internal();
 
   if (agent_server) {
@@ -153,6 +164,11 @@ int Application::run_internal() {
     accumulator += frame_time;
 
 
+    // Inject replay input events before polling
+    if (input_replay.is_loaded()) {
+      input_replay.inject_events(frame_counter);
+    }
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
       ui_process_event(event);
@@ -171,6 +187,8 @@ int Application::run_internal() {
 
       on_event(event, ecs_world);
     }
+
+    frame_counter++;
 
 
     if (wants_game_window_open(ecs_world)) {

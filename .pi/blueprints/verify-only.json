@@ -1,0 +1,26 @@
+{
+  "name": "verify-only",
+  "description": "Run quantitative verification against headless metrics — no implementation, no PR.",
+  "phases": [
+    {
+      "name": "Create branch",
+      "type": "deterministic",
+      "handler": "branch"
+    },
+    {
+      "name": "Resolve subsystems",
+      "type": "deterministic",
+      "handler": "resolve_subsystem"
+    },
+    {
+      "name": "Build",
+      "type": "deterministic",
+      "handler": "build"
+    },
+    {
+      "name": "Verify metrics",
+      "type": "deterministic",
+      "handler": "verify"
+    }
+  ]
+}

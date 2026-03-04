@@ -1,0 +1,57 @@
+{
+  "name": "full-verified",
+  "description": "Full pipeline with quantitative verification — plan, implement, build, test, verify metrics, review, and ship.",
+  "phases": [
+    {
+      "name": "Create branch",
+      "type": "deterministic",
+      "handler": "branch"
+    },
+    {
+      "name": "Resolve subsystems",
+      "type": "deterministic",
+      "handler": "resolve_subsystem"
+    },
+    {
+      "name": "Plan",
+      "type": "agentic",
+      "handler": "plan"
+    },
+    {
+      "name": "Implement",
+      "type": "agentic",
+      "handler": "implement"
+    },
+    {
+      "name": "Build",
+      "type": "deterministic",
+      "handler": "build"
+    },
+    {
+      "name": "Write tests",
+      "type": "agentic",
+      "handler": "write_tests"
+    },
+    {
+      "name": "Run tests",
+      "type": "deterministic",
+      "handler": "test"
+    },
+    {
+      "name": "Verify metrics",
+      "type": "deterministic",
+      "handler": "verify"
+    },
+    {
+      "name": "Review",
+      "type": "agentic",
+      "handler": "review",
+      "optional": true
+    },
+    {
+      "name": "Commit & PR",
+      "type": "deterministic",
+      "handler": "commit_pr"
+    }
+  ]
+}

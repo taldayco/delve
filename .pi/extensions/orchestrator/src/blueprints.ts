@@ -8,6 +8,8 @@ import {
   askBuildFixer,
   askTestFixer,
   askDiagnoser,
+  askVerifier,
+  spawnDomainAnalyzer,
   getSubsystemAgent,
   parseSubtasks,
   writeState,
@@ -18,6 +20,7 @@ import {
   cleanupWorktree,
   runBuild,
   runTests,
+  runMetrics,
   gitCommitAndPr,
   getChangedFiles,
   getDiff,
@@ -272,7 +275,116 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const result = runShaderValidation();
     return { ok: result.ok, output: result.ok ? "Shader validation PASSED" : result.summary };
   },
+
+  verify: async (ctx) => {
+    const wt = ctx.data.worktreePath;
+
+    // Run headless metrics pipeline
+    const metrics = runMetrics(wt);
+    if (!metrics.ok) {
+      return { ok: false, output: metrics.summary };
+    }
+
+    if (metrics.domains.length === 0) {
+      return { ok: false, output: "No metric domains emitted" };
+    }
+
+    // Spawn throwaway Haiku analyzers per domain in parallel
+    const { readFileSync, existsSync } = require("node:fs");
+    const { join } = require("node:path");
+
+    const analyzerPromises = metrics.domains.map((domain: string) => {
+      const filePath = join(metrics.outputDir, `${domain}.json`);
+      if (!existsSync(filePath)) return null;
+      const metricData = readFileSync(filePath, "utf-8");
+      return spawnDomainAnalyzer({
+        domain,
+        metricData,
+        task: ctx.prompt,
+      });
+    }).filter(Boolean);
+
+    const results = await Promise.all(analyzerPromises);
+
+    // Aggregate results
+    const summary: string[] = [];
+    let allPass = true;
+
+    for (const r of results) {
+      if (!r) continue;
+      const passed = /^PASS/i.test(r.result.trim());
+      const warned = /^WARNING/i.test(r.result.trim());
+      if (!passed && !warned) allPass = false;
+      summary.push(`${r.domain}: ${r.result.trim()}`);
+    }
+
+    const verificationOutput = summary.join("\n");
+    writeState("verification.md", verificationOutput);
+
+    return {
+      ok: allPass,
+      output: allPass
+        ? `Verification PASSED (${metrics.domains.length} domains)`
+        : `Verification FAILED:\n${verificationOutput}`,
+    };
+  },
 };
+
+// ─── Phase Output Validation ────────────────────────────────────────────────
+
+interface ValidationResult {
+  valid: boolean;
+  warnings: string[];
+}
+
+const PHASE_VALIDATORS: Record<string, (output: string, ctx: BlueprintContext) => ValidationResult> = {
+  plan: (output) => {
+    const warnings: string[] = [];
+    if (output.length < 50) warnings.push("Plan is suspiciously short");
+    if (!/##?\s*(subtask|step|task)/i.test(output) && !/\d+\.\s/m.test(output)) {
+      warnings.push("Plan lacks structured subtasks (no ## Subtask or numbered steps found)");
+    }
+    return { valid: warnings.length === 0, warnings };
+  },
+
+  implement: (output) => {
+    const warnings: string[] = [];
+    const fileBlocks = (output.match(/###\s*FILE:/g) || []).length;
+    if (fileBlocks === 0) warnings.push("No FILE blocks produced — no code was generated");
+    if (output.length < 100) warnings.push("Implementation output is suspiciously short");
+    return { valid: fileBlocks > 0, warnings };
+  },
+
+  write_tests: (output) => {
+    const warnings: string[] = [];
+    const fileBlocks = (output.match(/###\s*FILE:/g) || []).length;
+    if (fileBlocks === 0) warnings.push("No FILE blocks in test output — no test code generated");
+    if (!/DELVE_TEST|TEST|test_/i.test(output)) {
+      warnings.push("Output doesn't appear to contain test definitions");
+    }
+    return { valid: fileBlocks > 0, warnings };
+  },
+
+  review: (output) => {
+    const warnings: string[] = [];
+    const hasVerdict = /\b(APPROVE|REQUEST_CHANGES)\b/.test(output);
+    if (!hasVerdict) warnings.push("Review lacks APPROVE/REQUEST_CHANGES verdict");
+    if (output.length < 30) warnings.push("Review is suspiciously short");
+    return { valid: hasVerdict, warnings };
+  },
+
+  diagnose: (output) => {
+    const warnings: string[] = [];
+    if (output.length < 50) warnings.push("Diagnosis is suspiciously short");
+    return { valid: output.length >= 50, warnings };
+  },
+};
+
+function validatePhaseOutput(handler: string, output: string, ctx: BlueprintContext): ValidationResult {
+  const validator = PHASE_VALIDATORS[handler];
+  if (!validator) return { valid: true, warnings: [] };
+  return validator(output, ctx);
+}
 
 // ─── Available Phase Names ──────────────────────────────────────────────────
 
@@ -391,6 +503,16 @@ export async function executeBlueprint(
       if (!result.ok && !phase.optional) {
         context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
         return;
+      }
+
+      // Validate agentic phase output quality
+      if (result.ok && phase.type === "agentic") {
+        const validation = validatePhaseOutput(phase.handler, result.output, context);
+        if (validation.warnings.length > 0) {
+          for (const w of validation.warnings) {
+            context.ctx.ui.notify(`[validation] ${phase.name}: ${w}`, "warning");
+          }
+        }
       }
 
       if (result.ok) {

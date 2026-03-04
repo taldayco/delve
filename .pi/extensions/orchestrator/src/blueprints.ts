@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   askMetaPlanner,
+  askParallelPlanner,
   askMetaImplementer,
   askMetaTester,
   askReviewer,
@@ -30,6 +31,7 @@ import {
   applyFileBlocks,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
+  getSubsystemCodebaseContext,
 } from "./tools.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -105,8 +107,22 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   plan: async (ctx) => {
-    const codebaseContext = getCodebaseContext(ctx.prompt);
-    const plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext });
+    const subsystems = ctx.data.subsystems || resolveSubsystems(ctx.prompt);
+    let plan: string;
+
+    if (subsystems.length > 1) {
+      // Parallel planning for multi-subsystem tasks
+      const subsystemContexts: Record<string, string> = {};
+      for (const sub of subsystems) {
+        subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+      }
+      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts });
+    } else {
+      // Single-agent planning for single-subsystem tasks
+      const codebaseContext = getCodebaseContext(ctx.prompt);
+      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext });
+    }
+
     ctx.data.plan = plan;
     return { ok: plan.length > 0, output: plan };
   },

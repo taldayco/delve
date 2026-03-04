@@ -15,7 +15,7 @@ function shell(cmd: string, cwd?: string): { ok: boolean; stdout: string; stderr
     const stdout = execSync(cmd, {
       cwd: cwd || process.cwd(),
       encoding: "utf-8",
-      timeout: 300_000,
+      timeout: 900_000,
       maxBuffer: 10 * 1024 * 1024,
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -342,6 +342,44 @@ export function getCodebaseContext(task: string): string {
     const ls = shell("find src/game -type f -name '*.h' | sort 2>/dev/null");
     if (ls.ok) {
       sections.push(`### Header files in src/game\n${ls.stdout.trim()}`);
+    }
+  }
+
+  return sections.join("\n\n");
+}
+
+/**
+ * Get codebase context scoped to a single canonical subsystem.
+ * Returns config.h + file listings only for that subsystem's directories.
+ */
+export function getSubsystemCodebaseContext(subsystem: string): string {
+  const { readFileSync, existsSync } = require("node:fs");
+  const { join } = require("node:path");
+  const cwd = process.cwd();
+  const sections: string[] = [];
+
+  // Always include project overview
+  const configPath = join(cwd, "src/game/config.h");
+  if (existsSync(configPath)) {
+    sections.push(`### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``);
+  }
+
+  // Find all fine-grained subsystem names that map to this canonical subsystem
+  const fineGrained = Object.entries(SUBSYSTEM_CANONICAL)
+    .filter(([_, canonical]) => canonical === subsystem)
+    .map(([fine]) => fine);
+
+  // Collect directories for this subsystem
+  const listedDirs = new Set<string>();
+  for (const fine of fineGrained) {
+    const dirs = SUBSYSTEM_DIRS[fine] || [];
+    for (const dir of dirs) {
+      if (listedDirs.has(dir)) continue;
+      listedDirs.add(dir);
+      const ls = shell(`find ${dir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) | sort 2>/dev/null`);
+      if (ls.ok && ls.stdout.trim()) {
+        sections.push(`### Files in ${dir}\n${ls.stdout.trim()}`);
+      }
     }
   }
 

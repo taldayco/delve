@@ -9,6 +9,7 @@ import {
 } from "./blueprints.js";
 import {
   askMetaPlanner,
+  askParallelPlanner,
   askMetaImplementer,
   askMetaTester,
   askReviewer,
@@ -55,6 +56,7 @@ import {
   runSystemAudit,
   detectMapCoverage,
   cleanupStaleState,
+  getSubsystemCodebaseContext,
 } from "./tools.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -110,6 +112,31 @@ export default function (pi: ExtensionAPI) {
       const result = await askMetaPlanner({
         task: (params as any).task,
         codebaseContext: (params as any).codebase_context,
+      });
+      return { content: [{ type: "text", text: result }] };
+    },
+  });
+
+  pi.registerTool({
+    name: "ask_parallel_planner",
+    label: "Parallel Planner",
+    description:
+      "Decompose a multi-subsystem task by spawning parallel per-subsystem planners. Faster and more reliable than ask_meta_planner for tasks touching 2+ subsystems. (Sonnet-tier, parallel)",
+    parameters: Type.Object({
+      task: Type.String({ description: "The feature/bug description" }),
+      subsystems: Type.Array(Type.String(), {
+        description: "Canonical subsystem names to plan for (e.g. ['terrain', 'shader', 'engine'])",
+      }),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const subsystems = (params as any).subsystems as string[];
+      const subsystemContexts: Record<string, string> = {};
+      for (const sub of subsystems) {
+        subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+      }
+      const result = await askParallelPlanner({
+        task: (params as any).task,
+        subsystemContexts,
       });
       return { content: [{ type: "text", text: result }] };
     },
@@ -484,22 +511,35 @@ export default function (pi: ExtensionAPI) {
           const agent = getSubsystemAgent(targetSubsystem);
           implementation = await agent({ task: prompt, files: contextFiles });
         } else {
-          // MULTIPLE SUBSYSTEMS: decompose via planner, then call each agent
-          ctx.ui.notify(`Multiple subsystems: [${subsystems.join(", ")}] — decomposing via planner`, "info");
-          const plan = await askMetaPlanner({ task: prompt, codebaseContext });
-          ctx.ui.notify(`Plan complete (${plan.length} chars)`, "success");
+          // MULTIPLE SUBSYSTEMS: parallel planning — one planner per subsystem
+          ctx.ui.notify(`Multiple subsystems: [${subsystems.join(", ")}] — parallel planning`, "info");
+
+          // Build per-subsystem scoped contexts
+          const subsystemContexts: Record<string, string> = {};
+          for (const sub of subsystems) {
+            subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+          }
+
+          const plan = await askParallelPlanner({ task: prompt, subsystemContexts });
+          ctx.ui.notify(`Parallel plan complete (${plan.length} chars, ${subsystems.length} subsystems)`, "success");
 
           // Parse per-subsystem subtasks from plan
           let subtasks = parseSubtasks(plan);
 
-          // Retry planner with format correction if no subtasks parsed
+          // Retry with single-agent planner as fallback if no subtasks parsed
           if (subtasks.length === 0) {
-            ctx.ui.notify("Planner output missing subtask tags — retrying with format correction", "warning");
-            const correctedPlan = await askMetaPlanner({
-              task: `Your previous output was:\n\n${plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
-              codebaseContext: "",
-            });
-            subtasks = parseSubtasks(correctedPlan);
+            ctx.ui.notify("Parallel planner output missing subtask tags — falling back to single planner", "warning");
+            const fallbackPlan = await askMetaPlanner({ task: prompt, codebaseContext });
+            subtasks = parseSubtasks(fallbackPlan);
+
+            if (subtasks.length === 0) {
+              ctx.ui.notify("Retrying with format correction", "warning");
+              const correctedPlan = await askMetaPlanner({
+                task: `Your previous output was:\n\n${fallbackPlan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
+                codebaseContext: "",
+              });
+              subtasks = parseSubtasks(correctedPlan);
+            }
           }
 
           const implementations: string[] = [];

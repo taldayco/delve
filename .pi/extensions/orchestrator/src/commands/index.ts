@@ -3,10 +3,14 @@ import { registerMinionCommand } from "./minion.js";
 import { registerMinionVariantCommands } from "./minion-variants.js";
 import { registerSubsystemCommands } from "./minion-subsystem.js";
 import { registerSystemCommands } from "./system.js";
+import { activatePixelReporter } from "../pixel-reporter.js";
+import { ensurePixelBridgeRunning } from "../pixel-bridge-launcher.js";
 
 export { registerTools } from "./tools.js";
 
 export function registerCommands(pi: ExtensionAPI) {
+  activatePixelReporter();
+  ensurePixelBridgeRunning().catch(() => {});
   registerMinionCommand(pi);
   registerMinionVariantCommands(pi);
   registerSubsystemCommands(pi);

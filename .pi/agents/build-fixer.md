@@ -1,7 +1,7 @@
 ---
 name: build-fixer
 description: Fixes C++ compilation errors — outputs complete corrected files
-tools: Read,Glob,Grep
+tools: read,bash
 model: anthropic/haiku
 ---
 

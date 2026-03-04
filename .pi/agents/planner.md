@@ -1,7 +1,7 @@
 ---
 name: planner
 description: Task planning agent — decomposes feature requests into ordered subtasks tagged by subsystem
-tools: Read,Glob,Grep
+tools: read,bash
 model: anthropic/sonnet
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: terrain-specialist
 description: Expert in Delve's terrain generation pipeline — noise, hex grid, contour, lava, mesh
-tools: Read,Write,Edit,Bash,Glob,Grep
+tools: read,write,edit,bash
 model: anthropic/sonnet
 ---
 

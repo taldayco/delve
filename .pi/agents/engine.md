@@ -1,7 +1,7 @@
 ---
 name: engine-specialist
 description: Expert in Delve's engine framework — app lifecycle, GPU context, camera, input, ECS, UI
-tools: Read,Write,Edit,Bash,Glob,Grep
+tools: read,write,edit,bash
 model: anthropic/sonnet
 ---
 

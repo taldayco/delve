@@ -1,7 +1,7 @@
 ---
 name: shader-specialist
 description: Expert in Delve's shader pipeline — GLSL 4.5, SPIR-V, vertex layouts, compute shaders
-tools: Read,Write,Edit,Bash,Glob,Grep
+tools: read,write,edit,bash
 model: anthropic/sonnet
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: reviewer
 description: Code review agent — reviews diffs for correctness, safety, and consistency
-tools: Read,Glob,Grep,Bash
+tools: read,bash
 model: anthropic/sonnet
 ---
 

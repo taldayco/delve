@@ -1,7 +1,7 @@
 ---
 name: actor-specialist
 description: Expert in Delve's actor system — skeleton, IK, gait cycles, proportions, animation
-tools: Read,Write,Edit,Bash,Glob,Grep
+tools: read,write,edit,bash
 model: anthropic/sonnet
 ---
 

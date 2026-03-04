@@ -102,7 +102,44 @@ const STATE_DIR = join(PROJECT_ROOT, ".pi/state");
 
 export function writeState(filename: string, content: string): void {
   mkdirSync(STATE_DIR, { recursive: true });
-  writeFileSync(join(STATE_DIR, filename), content, "utf-8");
+  const filePath = join(STATE_DIR, filename);
+
+  // Archive previous version before overwriting
+  if (existsSync(filePath)) {
+    const historyDir = join(STATE_DIR, "history", new Date().toISOString().replace(/[:.]/g, "-"));
+    mkdirSync(historyDir, { recursive: true });
+    try {
+      fs.copyFileSync(filePath, join(historyDir, filename));
+    } catch { /* ignore archive failures */ }
+    pruneStateHistory();
+  }
+
+  writeFileSync(filePath, content, "utf-8");
+}
+
+/**
+ * Keep only the last 5 history snapshots.
+ */
+function pruneStateHistory(): void {
+  const historyRoot = join(STATE_DIR, "history");
+  if (!existsSync(historyRoot)) return;
+  try {
+    const dirs = fs.readdirSync(historyRoot)
+      .filter((d) => {
+        try { return fs.statSync(join(historyRoot, d)).isDirectory(); } catch { return false; }
+      })
+      .sort();
+    while (dirs.length > 5) {
+      const oldest = dirs.shift()!;
+      const dirPath = join(historyRoot, oldest);
+      try {
+        for (const f of fs.readdirSync(dirPath)) {
+          fs.unlinkSync(join(dirPath, f));
+        }
+        fs.rmdirSync(dirPath);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
 }
 
 export function readState(filename: string): string {
@@ -195,14 +232,25 @@ function estimateTokens(text: string): number {
  * Section-aware truncation: keeps first (## Task) and last (## Constraints) sections,
  * drops middle sections (## File Contents) by size, largest first.
  */
-function smartTruncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) return text;
+interface TruncateResult {
+  text: string;
+  droppedSections: number;
+  droppedChars: number;
+}
+
+function smartTruncate(text: string, maxChars: number): TruncateResult {
+  if (text.length <= maxChars) return { text, droppedSections: 0, droppedChars: 0 };
 
   const sections = text.split(/(?=^## )/m);
   if (sections.length <= 2) {
     // No sections to drop — hard truncate
-    return text.slice(0, maxChars) +
-      "\n\n... [TRUNCATED: context budget exceeded. Focus on the information above.]";
+    const droppedChars = text.length - maxChars;
+    return {
+      text: text.slice(0, maxChars) +
+        "\n\n... [TRUNCATED: context budget exceeded. Focus on the information above.]",
+      droppedSections: 0,
+      droppedChars,
+    };
   }
 
   // Keep first and last section, trim middle sections largest-first
@@ -216,13 +264,17 @@ function smartTruncate(text: string, maxChars: number): string {
   const reserved = first.length + last.length;
   let remaining = maxChars - reserved;
   const kept: { text: string; index: number }[] = [];
+  let droppedSections = 0;
+  let droppedChars = 0;
 
   for (const section of middle) {
     if (remaining >= section.size) {
       remaining -= section.size;
       kept.push(section);
+    } else {
+      droppedSections++;
+      droppedChars += section.size;
     }
-    // else: drop this section
   }
 
   // Restore original order
@@ -230,10 +282,15 @@ function smartTruncate(text: string, maxChars: number): string {
 
   const result = [first, ...kept.map((s) => s.text), last].join("");
   if (result.length > maxChars) {
-    return result.slice(0, maxChars) +
-      "\n\n... [TRUNCATED: context budget exceeded. Focus on the information above.]";
+    droppedChars += result.length - maxChars;
+    return {
+      text: result.slice(0, maxChars) +
+        "\n\n... [TRUNCATED: context budget exceeded. Focus on the information above.]",
+      droppedSections,
+      droppedChars,
+    };
   }
-  return result;
+  return { text: result, droppedSections, droppedChars };
 }
 
 function enforceContextBudget(
@@ -266,9 +323,16 @@ function enforceContextBudget(
     `[context-budget] Over budget — truncating user prompt from ${userPrompt.length} to ${maxChars} chars.`
   );
 
-  const truncatedPrompt = smartTruncate(userPrompt, maxChars);
+  const truncResult = smartTruncate(userPrompt, maxChars);
 
-  return { systemPrompt, userPrompt: truncatedPrompt, truncated: true };
+  console.error(
+    `[context-budget] Dropped ${truncResult.droppedSections} sections (${truncResult.droppedChars} chars)`
+  );
+
+  // Prepend warning so the agent knows context was lost
+  const warningHeader = `> WARNING: CONTEXT TRUNCATED — ${truncResult.droppedSections} sections (${truncResult.droppedChars} chars) were dropped to fit within context budget. Some file contents or details may be missing.\n\n`;
+
+  return { systemPrompt, userPrompt: warningHeader + truncResult.text, truncated: true };
 }
 
 // ─── Pi Subagent Spawning ──────────────────────────────────────────────────
@@ -281,6 +345,7 @@ interface SpawnSubagentOpts {
   tools?: string[];
   signal?: AbortSignal;
   agentName?: string;
+  timeoutMs?: number;
 }
 
 /**
@@ -338,7 +403,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
     fs.writeFileSync(promptFile, `Task: ${effectivePrompt}`, { encoding: "utf-8", mode: 0o600 });
     args.push(`@${promptFile}`);
 
-    const SUBAGENT_TIMEOUT_MS = 300_000; // 5 minutes
+    const SUBAGENT_TIMEOUT_MS = opts.timeoutMs ?? 300_000; // 5 minutes
 
     const proc = spawn("pi", args, {
       cwd: PROJECT_ROOT,
@@ -407,15 +472,20 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       }
     });
 
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeoutHandle = setTimeout(() => {
         proc.kill("SIGTERM");
         setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
         reject(new Error(`Subagent '${agentName}' timed out after ${SUBAGENT_TIMEOUT_MS / 1000}s`));
       }, SUBAGENT_TIMEOUT_MS);
     });
 
-    return await Promise.race([spawnPromise, timeoutPromise]);
+    try {
+      return await Promise.race([spawnPromise, timeoutPromise]);
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
   } finally {
     // Clean up all temp files in the directory
     if (tmpDir) {

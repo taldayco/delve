@@ -45,24 +45,86 @@ export function elapsed(startTime: number): string {
   return `${Math.floor(secs / 60)}m${secs % 60}s`;
 }
 
-// ─── Deterministic Tool: git_branch ────────────────────────────────────────
+// ─── Deterministic Tool: cleanup_merged_branches ─────────────────────────
 
-export function gitBranch(branchName: string): { ok: boolean; summary: string } {
+export function cleanupMergedBranches(): { deleted: string[]; summary: string } {
+  // Fetch with prune to remove stale remote tracking refs
+  shell("git fetch --prune 2>&1");
+
+  // List remote minion/* branches that are merged into main
   const result = shell(
-    `git checkout main 2>&1 && git pull --ff-only 2>&1; git checkout -b "${branchName}" 2>&1`
+    "git branch -r --merged main 2>/dev/null | grep 'origin/minion' | sed 's|origin/||' | tr -d ' '"
+  );
+
+  if (!result.ok || !result.stdout.trim()) {
+    return { deleted: [], summary: "No merged minion branches to clean up" };
+  }
+
+  const branches = result.stdout.trim().split("\n").filter((b) => b.length > 0);
+  const deleted: string[] = [];
+
+  for (const branch of branches) {
+    // Delete remote branch
+    const delRemote = shell(`git push origin --delete "${branch}" 2>&1`);
+    // Delete local branch if it exists
+    shell(`git branch -d "${branch}" 2>&1`);
+    if (delRemote.ok) {
+      deleted.push(branch);
+    }
+  }
+
+  return {
+    deleted,
+    summary: deleted.length > 0
+      ? `Cleaned up ${deleted.length} merged branch(es): ${deleted.join(", ")}`
+      : "No merged minion branches to clean up",
+  };
+}
+
+// ─── Deterministic Tool: git_branch (worktree-based) ────────────────────────
+
+const WORKTREE_DIR = ".pi/worktrees";
+
+/**
+ * Create a git worktree for the given branch.
+ * Returns the worktree path on success.
+ */
+export function gitBranch(branchName: string): { ok: boolean; summary: string; worktreePath?: string } {
+  // Ensure we're on main and up to date
+  shell("git checkout main 2>&1 && git pull --ff-only 2>&1");
+
+  // Create worktree directory
+  const safeName = branchName.replace(/\//g, "-");
+  const worktreePath = `${WORKTREE_DIR}/${safeName}`;
+
+  // Clean up existing worktree at this path if it exists
+  shell(`git worktree remove --force "${worktreePath}" 2>&1`);
+
+  const result = shell(
+    `git worktree add -b "${branchName}" "${worktreePath}" main 2>&1`
   );
   if (!result.ok && !result.stderr.includes("already exists")) {
-    return { ok: false, summary: `Failed to create branch: ${result.stderr}` };
+    return { ok: false, summary: `Failed to create worktree: ${result.stderr}` };
   }
-  return { ok: true, summary: `Branch created: ${branchName}` };
+  return { ok: true, summary: `Worktree created: ${worktreePath} (branch: ${branchName})`, worktreePath };
+}
+
+/**
+ * Clean up a git worktree after pipeline completion.
+ */
+export function cleanupWorktree(worktreePath: string): void {
+  try {
+    shell(`git worktree remove --force "${worktreePath}" 2>&1`);
+  } catch { /* ignore */ }
 }
 
 // ─── Deterministic Tool: run_build ─────────────────────────────────────────
 
-export function runBuild(): { ok: boolean; summary: string; full: string } {
+export function runBuild(cwd?: string): { ok: boolean; summary: string; full: string } {
   const result = silentShell(
     "cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 && cmake --build build -j$(nproc) 2>&1",
-    50
+    50,
+    cwd
   );
   writeState("build_log.txt", result.full);
   return result;
@@ -70,7 +132,7 @@ export function runBuild(): { ok: boolean; summary: string; full: string } {
 
 // ─── Deterministic Tool: run_tests ─────────────────────────────────────────
 
-export function runTests(): {
+export function runTests(cwd?: string): {
   buildOk: boolean;
   testsOk: boolean;
   summary: string;
@@ -79,7 +141,8 @@ export function runTests(): {
   // Build tests first
   const build = silentShell(
     "cmake --build build --target delve_tests -j$(nproc) 2>&1",
-    30
+    30,
+    cwd
   );
   if (!build.ok) {
     writeState("test_results.json", JSON.stringify({ phase: "build", success: false }));
@@ -92,7 +155,7 @@ export function runTests(): {
   }
 
   // Run tests
-  const run = silentShell("./build/delve_tests 2>&1", 40);
+  const run = silentShell("./build/delve_tests 2>&1", 40, cwd);
   writeState(
     "test_results.json",
     JSON.stringify({ phase: "run", success: run.ok, output: run.summary })
@@ -112,21 +175,24 @@ export function gitCommitAndPr(opts: {
   branch: string;
   buildOk: boolean;
   testsOk: boolean;
+  cwd?: string;
 }): { ok: boolean; prUrl: string; summary: string } {
+  const cwd = opts.cwd;
+
   // Stage all changes
-  const addResult = shell("git add -A 2>&1");
+  const addResult = shell("git add -A 2>&1", cwd);
   if (!addResult.ok) {
     return { ok: false, prUrl: "", summary: `git add failed: ${addResult.stderr}` };
   }
 
   // Check for changes
-  const statusResult = shell("git status --porcelain 2>&1");
+  const statusResult = shell("git status --porcelain 2>&1", cwd);
   if (statusResult.stdout.trim().length === 0) {
     return { ok: false, prUrl: "", summary: "No changes to commit" };
   }
 
   // Collect changed files for PR body
-  const diffResult = shell("git diff --cached --name-only 2>/dev/null");
+  const diffResult = shell("git diff --cached --name-only 2>/dev/null", cwd);
   const changedFiles = diffResult.stdout
     .trim()
     .split("\n")
@@ -135,14 +201,15 @@ export function gitCommitAndPr(opts: {
   // Commit
   const commitMsg = `feat: ${opts.prompt}\n\nImplemented by Delve minion agent (meta-agentic).\nBuild: ${opts.buildOk ? "PASS" : "FAIL"}\nTests: ${opts.testsOk ? "PASS" : "FAIL"}`;
   const commitResult = shell(
-    `git commit -m "${commitMsg.replace(/"/g, '\\"')}" 2>&1`
+    `git commit -m "${commitMsg.replace(/"/g, '\\"')}" 2>&1`,
+    cwd
   );
   if (!commitResult.ok) {
     return { ok: false, prUrl: "", summary: `git commit failed: ${commitResult.stderr}` };
   }
 
   // Push
-  const pushResult = shell(`git push -u origin "${opts.branch}" 2>&1`);
+  const pushResult = shell(`git push -u origin "${opts.branch}" 2>&1`, cwd);
   if (!pushResult.ok) {
     return { ok: false, prUrl: "", summary: `git push failed: ${pushResult.stderr}` };
   }
@@ -151,7 +218,8 @@ export function gitCommitAndPr(opts: {
   const prTitle = `feat: ${opts.prompt.slice(0, 60)}`;
   const prBody = buildPrBody(opts.prompt, changedFiles, opts.buildOk, opts.testsOk);
   const prResult = shell(
-    `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body "${prBody.replace(/"/g, '\\"').replace(/\n/g, "\\n")}" 2>&1`
+    `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body "${prBody.replace(/"/g, '\\"').replace(/\n/g, "\\n")}" 2>&1`,
+    cwd
   );
 
   const prUrl = prResult.ok ? prResult.stdout.trim() : "";
@@ -164,8 +232,8 @@ export function gitCommitAndPr(opts: {
 
 // ─── Deterministic Tool: get_changed_files ─────────────────────────────────
 
-export function getChangedFiles(): string[] {
-  const result = shell("git diff --name-only main 2>/dev/null");
+export function getChangedFiles(cwd?: string): string[] {
+  const result = shell("git diff --name-only main 2>/dev/null", cwd);
   return result.stdout
     .trim()
     .split("\n")
@@ -174,8 +242,8 @@ export function getChangedFiles(): string[] {
 
 // ─── Deterministic Tool: get_diff ──────────────────────────────────────────
 
-export function getDiff(): string {
-  const result = shell("git diff main 2>/dev/null");
+export function getDiff(cwd?: string): string {
+  const result = shell("git diff main 2>/dev/null", cwd);
   // Truncate diff to keep token count manageable
   const full = result.stdout;
   if (full.length > 12000) {
@@ -321,6 +389,108 @@ export function runShaderValidation(): { ok: boolean; summary: string } {
       "-exec glslc --target-env=vulkan1.2 -o /dev/null {} \\; 2>&1",
     30
   );
+}
+
+// ─── File Block Parser (shared) ─────────────────────────────────────────────
+
+/**
+ * Parse ### FILE: blocks from agent output and write files directly.
+ * Uses a line-by-line parser instead of regex to correctly handle
+ * inner triple-backtick code blocks within file content.
+ * Returns the number of files written.
+ */
+export function applyFileBlocks(text: string, cwd?: string): number {
+  const { writeFileSync, mkdirSync } = require("node:fs");
+  const { dirname, join } = require("node:path");
+  const baseCwd = cwd || process.cwd();
+
+  const lines = text.split("\n");
+  let count = 0;
+  let currentFile: string | null = null;
+  let contentLines: string[] = [];
+  let inFence = false;
+  let fenceLength = 0; // number of backticks that opened the fence
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Detect ### FILE: header
+    const fileMatch = line.match(/^###\s*FILE:\s*(\S+)/);
+    if (fileMatch && !inFence) {
+      // Flush previous file if any
+      if (currentFile && contentLines.length > 0) {
+        writeFileBlock(currentFile, contentLines.join("\n"), baseCwd, writeFileSync, mkdirSync, dirname, join);
+        count++;
+      }
+      currentFile = fileMatch[1];
+      contentLines = [];
+      inFence = false;
+      fenceLength = 0;
+      continue;
+    }
+
+    // Skip #### ACTION: lines when not inside a fence
+    if (!inFence && currentFile && /^####\s*ACTION:/i.test(line)) {
+      continue;
+    }
+
+    // Detect opening fence (only when we have a currentFile and not already in a fence)
+    if (!inFence && currentFile) {
+      const openMatch = line.match(/^(`{3,})\w*\s*$/);
+      if (openMatch) {
+        inFence = true;
+        fenceLength = openMatch[1].length;
+        contentLines = [];
+        continue;
+      }
+    }
+
+    // Detect closing fence: line is solely backticks of equal or greater length
+    if (inFence && currentFile) {
+      const closeMatch = line.match(/^(`{3,})\s*$/);
+      if (closeMatch && closeMatch[1].length >= fenceLength) {
+        // Write the file
+        writeFileBlock(currentFile, contentLines.join("\n"), baseCwd, writeFileSync, mkdirSync, dirname, join);
+        count++;
+        currentFile = null;
+        contentLines = [];
+        inFence = false;
+        fenceLength = 0;
+        continue;
+      }
+    }
+
+    // Accumulate content lines inside fence
+    if (inFence && currentFile) {
+      contentLines.push(line);
+    }
+  }
+
+  // Flush any unclosed file (shouldn't happen with well-formed output, but be safe)
+  if (currentFile && contentLines.length > 0 && inFence) {
+    writeFileBlock(currentFile, contentLines.join("\n"), baseCwd, writeFileSync, mkdirSync, dirname, join);
+    count++;
+  }
+
+  return count;
+}
+
+function writeFileBlock(
+  filePath: string,
+  content: string,
+  cwd: string,
+  writeFileSync: Function,
+  mkdirSync: Function,
+  dirname: Function,
+  join: Function,
+): void {
+  const fullPath = filePath.startsWith("/") ? filePath : join(cwd, filePath);
+  try {
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, content, "utf-8");
+  } catch (e: any) {
+    console.error(`Failed to write ${fullPath}: ${e.message}`);
+  }
 }
 
 // ─── PR Body Builder ───────────────────────────────────────────────────────

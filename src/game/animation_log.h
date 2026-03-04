@@ -100,7 +100,9 @@ public:
                 legs.prev_foot[i].x, legs.prev_foot[i].y, legs.prev_foot[i].z,
                 legs.stepping[i] ? "true" : "false",
                 legs.progress[i],
-                foot_along_fwd, foot_lateral, foot_vertical,
+                foot_along_fwd,
+                foot_lateral,
+                foot_vertical,
                 reach, reach_ratio,
                 (reach > chain_len) ? "true" : "false");
         }
@@ -176,6 +178,75 @@ public:
             neck_off.x, neck_off.y, neck_off.z);
     }
 
+    void log_dynamics(const AnimationState &anim) {
+        if (!active || !file) return;
+        float smooth_speed = sqrtf(anim.smooth_vel_x * anim.smooth_vel_x +
+                                   anim.smooth_vel_y * anim.smooth_vel_y);
+        fprintf(file,
+            ",\"dynamics\":{"
+            "\"smooth_vel\":[%.4f,%.4f],"
+            "\"smooth_speed\":%.4f,"
+            "\"vel_spring\":[%.4f,%.4f],"
+            "\"lean\":[%.4f,%.4f],"
+            "\"sway_phase\":%.4f,"
+            "\"sway_amt\":%.4f}",
+            anim.smooth_vel_x, anim.smooth_vel_y,
+            smooth_speed,
+            anim.vel_spring_x, anim.vel_spring_y,
+            anim.lean_x, anim.lean_y,
+            anim.sway_phase,
+            anim.sway_amt);
+    }
+
+    void log_arm_swing(const SkeletonPose &pose, const Transform &t, const AnimationState &anim) {
+        if (!active || !file) return;
+        float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+
+        const auto &le = pose.joints[(int)Joint::L_ELBOW];
+        const auto &ls = pose.joints[(int)Joint::L_SHOULDER];
+        const auto &re = pose.joints[(int)Joint::R_ELBOW];
+        const auto &rs = pose.joints[(int)Joint::R_SHOULDER];
+
+        float l_fwd = (le.x - ls.x) * fwd_x + (le.y - ls.y) * fwd_y;
+        float r_fwd = (re.x - rs.x) * fwd_x + (re.y - rs.y) * fwd_y;
+
+        fprintf(file,
+            ",\"arm_swing\":{"
+            "\"arm_phase\":[%.4f,%.4f],"
+            "\"arm_delay\":[%.4f,%.4f],"
+            "\"l_elbow_fwd\":%.4f,"
+            "\"r_elbow_fwd\":%.4f,"
+            "\"antiphase\":%s}",
+            anim.arm_phase[0], anim.arm_phase[1],
+            anim.arm_delay[0], anim.arm_delay[1],
+            l_fwd, r_fwd,
+            (l_fwd * r_fwd < 0.0f) ? "true" : "false");
+    }
+
+    void log_grounding(const LegState &legs, const Transform &t) {
+        if (!active || !file) return;
+        bool both_stepping = legs.stepping[0] && legs.stepping[1];
+        bool both_planted  = !legs.stepping[0] && !legs.stepping[1];
+        float l_height = legs.foot[0].z - t.z;
+        float r_height = legs.foot[1].z - t.z;
+        fprintf(file,
+            ",\"grounding\":{"
+            "\"both_stepping\":%s,\"both_planted\":%s,"
+            "\"l_foot_height\":%.4f,\"r_foot_height\":%.4f,"
+            "\"l_progress\":%.4f,\"r_progress\":%.4f}",
+            both_stepping ? "true" : "false",
+            both_planted  ? "true" : "false",
+            l_height, r_height,
+            legs.progress[0], legs.progress[1]);
+    }
+
+    void log_camera(const CameraState &cam) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"camera\":{\"world_x\":%.4f,\"world_y\":%.4f,\"zoom\":%.4f,\"following\":%s}",
+            cam.world_x, cam.world_y, cam.zoom, cam.following ? "true" : "false");
+    }
+
     void log_finalize(float sway_phase, float sway_amount, float lean_x, float lean_y) {
         if (!active || !file) return;
         float sway_displacement = sinf(sway_phase) * sway_amount;
@@ -189,45 +260,6 @@ public:
             sway_phase, sway_amount, sway_displacement,
             lean_x, lean_y,
             sqrtf(lean_x * lean_x + lean_y * lean_y));
-    }
-
-    void log_dynamics(float smooth_vx, float smooth_vy, float accel_x, float accel_y) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"dynamics\":{"
-            "\"smooth_vx\":%.4f,\"smooth_vy\":%.4f,"
-            "\"accel_x\":%.4f,\"accel_y\":%.4f}",
-            smooth_vx, smooth_vy, accel_x, accel_y);
-    }
-
-    void log_arm_swing(float phase_l, float phase_r, float swing_l, float swing_r) {
-        if (!active || !file) return;
-        float diff = fabsf(phase_l - phase_r);
-        while (diff > 6.28318f) diff -= 6.28318f;
-        bool antiphase = fabsf(diff - 3.14159265f) < 0.5f;
-        fprintf(file,
-            ",\"arm_swing\":{"
-            "\"phase_l\":%.4f,\"phase_r\":%.4f,"
-            "\"swing_l\":%.4f,\"swing_r\":%.4f,"
-            "\"antiphase\":%s}",
-            phase_l, phase_r, swing_l, swing_r,
-            antiphase ? "true" : "false");
-    }
-
-    void log_grounding(float target_z, float current_z, float blend) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"grounding\":{"
-            "\"target_z\":%.4f,\"current_z\":%.4f,"
-            "\"blend\":%.4f,\"error\":%.4f}",
-            target_z, current_z, blend, fabsf(target_z - current_z));
-    }
-
-    void log_camera(const CameraState &cam) {
-        if (!active || !file) return;
-        fprintf(file,
-            ",\"camera\":{\"world_x\":%.4f,\"world_y\":%.4f,\"zoom\":%.4f,\"following\":%s}",
-            cam.world_x, cam.world_y, cam.zoom, cam.following ? "true" : "false");
     }
 
     void end_frame() {

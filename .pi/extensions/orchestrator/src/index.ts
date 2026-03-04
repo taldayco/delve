@@ -390,7 +390,18 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(`Plan complete (${plan.length} chars)`, "success");
 
           // Parse per-subsystem subtasks from plan
-          const subtasks = parseSubtasks(plan);
+          let subtasks = parseSubtasks(plan);
+
+          // Retry planner with format correction if no subtasks parsed
+          if (subtasks.length === 0) {
+            ctx.ui.notify("Planner output missing subtask tags — retrying with format correction", "warning");
+            const correctedPlan = await askMetaPlanner({
+              task: `Your previous output was:\n\n${plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
+              codebaseContext: "",
+            });
+            subtasks = parseSubtasks(correctedPlan);
+          }
+
           const implementations: string[] = [];
 
           setPhase("implement", ctx);

@@ -42,6 +42,7 @@ interface AgentConfig {
   name: string;
   tools: string[];
   model: string;
+  thinking?: string;
 }
 
 const agentConfigCache = new Map<string, AgentConfig>();
@@ -327,13 +328,15 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
     fs.writeFileSync(promptFile, `Task: ${effectivePrompt}`, { encoding: "utf-8", mode: 0o600 });
     args.push(`@${promptFile}`);
 
-    return await new Promise<string>((resolve, reject) => {
-      const proc = spawn("pi", args, {
-        cwd: PROJECT_ROOT,
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+    const SUBAGENT_TIMEOUT_MS = 300_000; // 5 minutes
 
+    const proc = spawn("pi", args, {
+      cwd: PROJECT_ROOT,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const spawnPromise = new Promise<string>((resolve, reject) => {
       let buffer = "";
       let finalText = "";
 
@@ -393,6 +396,16 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
         else opts.signal.addEventListener("abort", killProc, { once: true });
       }
     });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        proc.kill("SIGTERM");
+        setTimeout(() => { if (!proc.killed) proc.kill("SIGKILL"); }, 5000);
+        reject(new Error(`Subagent '${agentName}' timed out after ${SUBAGENT_TIMEOUT_MS / 1000}s`));
+      }, SUBAGENT_TIMEOUT_MS);
+    });
+
+    return await Promise.race([spawnPromise, timeoutPromise]);
   } finally {
     // Clean up all temp files in the directory
     if (tmpDir) {
@@ -606,20 +619,60 @@ export interface Subtask {
   task: string;
 }
 
+const SUBSYSTEM_PATH_PATTERNS: [RegExp, string][] = [
+  [/src\/game\/terrain\//i, "terrain"],
+  [/src\/game\/render\//i, "actor"],
+  [/src\/shaders\//i, "shader"],
+  [/src\/engine\//i, "engine"],
+  [/src\/test\//i, "engine"],
+];
+
+/**
+ * Infer subsystem from subtask body text by looking for file path patterns.
+ * Falls back to "engine" if no pattern matches.
+ */
+function inferSubsystem(text: string): string {
+  for (const [pattern, subsystem] of SUBSYSTEM_PATH_PATTERNS) {
+    if (pattern.test(text)) return subsystem;
+  }
+  // Keyword fallback
+  const lower = text.toLowerCase();
+  if (/\b(noise|hex|contour|plateau|lava|mesh|elevation)\b/.test(lower)) return "terrain";
+  if (/\b(skeleton|ik|gait|animation|actor|arm|leg|joint)\b/.test(lower)) return "actor";
+  if (/\b(glsl|spir-?v|vertex|fragment|compute|shader)\b/.test(lower)) return "shader";
+  return "engine";
+}
+
 /**
  * Parse a planner's output into per-subsystem subtasks.
- * Expects "## Subtask N [subsystem]" headers.
+ * Tolerates common LLM format deviations:
+ *   - ## or ### heading levels
+ *   - [tag] anywhere on the header line (not just after the number)
+ *   - em-dash descriptions, checkmarks, bold text in headers
+ *   - Missing [tag] (infers subsystem from body content)
  */
 export function parseSubtasks(plan: string): Subtask[] {
   const subtasks: Subtask[] = [];
-  const regex = /##\s*Subtask\s+\d+\s*\[(\w+)\]\s*\n([\s\S]*?)(?=##\s*Subtask\s+\d+|$)/gi;
   let match;
 
-  while ((match = regex.exec(plan)) !== null) {
+  // Pass 1: headers with explicit [subsystem] bracket tags
+  const taggedRegex = /#{2,3}\s*Subtask\s+\d+[^[\n]*\[(\w+)\][^\n]*\n([\s\S]*?)(?=#{2,3}\s*Subtask\s+\d+|$)/gi;
+  while ((match = taggedRegex.exec(plan)) !== null) {
     const subsystem = match[1].toLowerCase();
     const task = match[2].trim();
     if (task.length > 0) {
       subtasks.push({ subsystem, task });
+    }
+  }
+
+  if (subtasks.length > 0) return subtasks;
+
+  // Pass 2: headers without bracket tags — infer subsystem from body
+  const untaggedRegex = /#{2,3}\s*Subtask\s+\d+[^\n]*\n([\s\S]*?)(?=#{2,3}\s*Subtask\s+\d+|$)/gi;
+  while ((match = untaggedRegex.exec(plan)) !== null) {
+    const body = match[1].trim();
+    if (body.length > 0) {
+      subtasks.push({ subsystem: inferSubsystem(body), task: body });
     }
   }
 

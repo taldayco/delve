@@ -136,7 +136,18 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     let implementation: string;
 
     if (ctx.data.plan) {
-      const subtasks = parseSubtasks(ctx.data.plan);
+      let subtasks = parseSubtasks(ctx.data.plan);
+
+      // Retry planner with format correction if no subtasks parsed
+      if (subtasks.length === 0) {
+        const codebaseContext = getCodebaseContext(ctx.prompt);
+        const correctedPlan = await askMetaPlanner({
+          task: `Your previous output was:\n\n${ctx.data.plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
+          codebaseContext: "",
+        });
+        subtasks = parseSubtasks(correctedPlan);
+      }
+
       if (subtasks.length > 0) {
         const implementations: string[] = [];
         for (const sub of subtasks) {

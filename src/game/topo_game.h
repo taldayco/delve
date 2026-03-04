@@ -53,4 +53,7 @@ private:
   std::shared_ptr<MapData>     ready_map_pending;
   std::shared_ptr<ContourData> ready_contours_pending;
 
+  // Debounce timer (seconds) to avoid queuing rapid sequential regenerations
+  // when sliders are dragged continuously.
+  float regen_cooldown = 0.0f;
 };

@@ -1,0 +1,13 @@
+{
+  "name": "delve-orchestrator",
+  "version": "3.0.0",
+  "description": "Meta-agentic blueprint engine for Delve development team",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch"
+  },
+  "pi": {
+    "extensions": ["./src"]
+  }
+}

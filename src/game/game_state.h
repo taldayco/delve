@@ -39,6 +39,7 @@ struct TerrainState {
 // Async generation state — NOT a flecs component; owned by TopoGame.
 struct AsyncTerrainState {
   std::atomic<bool>            is_generating{false};
+  std::atomic<bool>            cancel_requested{false};
   std::shared_ptr<TerrainMesh> pending_mesh;
   std::shared_ptr<MapData>     pending_map;
   std::shared_ptr<ContourData> pending_contours;

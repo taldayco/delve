@@ -1,0 +1,65 @@
+#include "test_harness.h"
+#include "terrain/hex.h"
+#include "core/types.h"
+#include <cmath>
+#include <set>
+
+static constexpr float HEX = 8.0f;
+
+DELVE_TEST(hex_to_pixel_roundtrip) {
+  int total = 0, accurate = 0;
+  for (int q = -10; q <= 10; ++q) {
+    for (int r = -10; r <= 10; ++r) {
+      float px, py;
+      hex_to_pixel(q, r, HEX, px, py);
+      HexCoord back = pixel_to_hex(px, py, HEX);
+      ++total;
+      if (back.q == q && back.r == r) ++accurate;
+    }
+  }
+  EXPECT_GT((float)accurate / total, 0.95f);
+  return true;
+}
+
+DELVE_TEST(hex_to_pixel_origin) {
+  float px, py;
+  hex_to_pixel(0, 0, HEX, px, py);
+  EXPECT_NEAR(px, 0.0f, 0.01f);
+  EXPECT_NEAR(py, 0.0f, 0.01f);
+  return true;
+}
+
+DELVE_TEST(hex_corners_count_six) {
+  Vec2 corners[6];
+  get_hex_corners(0, 0, HEX, corners);
+  // All 6 should be distinct
+  std::set<std::pair<int,int>> unique;
+  for (int i = 0; i < 6; ++i) {
+    unique.insert({(int)(corners[i].x * 1000), (int)(corners[i].y * 1000)});
+  }
+  EXPECT_EQ((int)unique.size(), 6);
+  return true;
+}
+
+DELVE_TEST(hex_corners_equidistant_from_center) {
+  Vec2 corners[6];
+  get_hex_corners(0, 0, HEX, corners);
+  float first_dist = std::sqrt(corners[0].x * corners[0].x + corners[0].y * corners[0].y);
+  for (int i = 1; i < 6; ++i) {
+    float d = std::sqrt(corners[i].x * corners[i].x + corners[i].y * corners[i].y);
+    EXPECT_NEAR(d, first_dist, 0.01f);
+  }
+  return true;
+}
+
+DELVE_TEST(pixel_in_hex_center_is_inside) {
+  float px, py;
+  hex_to_pixel(3, 4, HEX, px, py);
+  EXPECT_TRUE(pixel_in_hex(px, py, 3, 4, HEX));
+  return true;
+}
+
+DELVE_TEST(pixel_in_hex_far_away_is_outside) {
+  EXPECT_FALSE(pixel_in_hex(10000.0f, 10000.0f, 0, 0, HEX));
+  return true;
+}

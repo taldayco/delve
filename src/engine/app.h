@@ -2,14 +2,19 @@
 #include "gpu/gpu.h"
 #include "ui/imgui_ui.h"
 #include "core/asset_manager.h"
+#include "agent_mode.h"
 #include <SDL3/SDL.h>
 #include <flecs.h>
+#include <memory>
+
+class AgentServer;
 
 class Application {
 public:
   virtual ~Application() = default;
 
   int run();
+  int run(const AgentModeConfig &agent_config);
 
 
   virtual void on_init(GpuContext &gpu, flecs::world &ecs) = 0;
@@ -31,4 +36,9 @@ protected:
   flecs::world ecs_world;
   AssetManager asset_manager;
   bool running = true;
+
+private:
+  std::unique_ptr<AgentServer> agent_server;
+  void setup_agent_commands();
+  int run_internal();
 };

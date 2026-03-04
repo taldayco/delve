@@ -505,6 +505,16 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
     return;
   }
 
+  // Hard cap: refuse to upload meshes that would blow out GPU/CPU memory.
+  constexpr uint32_t MAX_TRANSFER_SZ = 128u * 1024u * 1024u; // 128 MB
+  if (total_sz > MAX_TRANSFER_SZ) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "TerrainRenderer::upload_mesh: mesh too large (%u bytes > %u limit), skipping",
+                 total_sz, MAX_TRANSFER_SZ);
+    has_data = false;
+    return;
+  }
+
   SDL_GPUTransferBufferCreateInfo ti = {};
   ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
   ti.size  = total_sz;
@@ -722,7 +732,7 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
     }
 
     if (counter_reset_transfer) {
-      uint32_t *mapped = (uint32_t *)SDL_MapGPUTransferBuffer(gpu_device, counter_reset_transfer, false);
+      uint32_t *mapped = (uint32_t *)SDL_MapGPUTransferBuffer(gpu_device, counter_reset_transfer, true);
       if (mapped) {
         *mapped = 0;
         SDL_UnmapGPUTransferBuffer(gpu_device, counter_reset_transfer);

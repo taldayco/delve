@@ -14,7 +14,11 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Dependencies
-find_package(SDL3 REQUIRED)
+option(DELVE_HEADLESS_ONLY "Build only headless targets (no SDL/GPU)" OFF)
+
+if(NOT DELVE_HEADLESS_ONLY)
+  find_package(SDL3 REQUIRED)
+endif()
 
 include(FetchContent)
 
@@ -32,6 +36,8 @@ FetchContent_Declare(glm
 )
 
 FetchContent_MakeAvailable(flecs json glm)
+
+if(NOT DELVE_HEADLESS_ONLY)
 
 # ImGui
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
@@ -115,9 +121,13 @@ add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 # ---- topo_engine (static library) ----
 add_library(topo_engine STATIC
     src/engine/app.cpp
+    src/engine/agent_mode.cpp
     src/engine/core/asset_manager.cpp
     src/engine/core/task_system.cpp
+    src/engine/core/watchdog.cpp
     src/engine/gpu/gpu.cpp
+    src/engine/gpu/frame_capture.cpp
+    src/engine/ipc/agent_server.cpp
     src/engine/input/input.cpp
     src/engine/camera/camera.cpp
     src/engine/ui/imgui_ui.cpp
@@ -151,7 +161,6 @@ add_executable(topogen
     src/game/terrain/lava.cpp
     src/game/terrain/detail.cpp
     src/game/terrain/delve_render.cpp
-    src/game/terrain/terrain_generator.cpp
     src/game/terrain/map_gen.cpp
     src/game/terrain/terrain_mesh.cpp
     src/game/terrain/terrain_renderer.cpp
@@ -180,3 +189,67 @@ target_link_libraries(topogen PRIVATE
 )
 
 add_dependencies(topogen shaders)
+
+endif() # NOT DELVE_HEADLESS_ONLY
+
+# ---- Headless terrain pipeline sources (shared by test + metrics targets) ----
+set(TERRAIN_PIPELINE_SOURCES
+    src/game/terrain/noise.cpp
+    src/game/terrain/noise_layers.cpp
+    src/game/terrain/noise_composer.cpp
+    src/game/terrain/contour.cpp
+    src/game/terrain/hex.cpp
+    src/game/terrain/basalt.cpp
+    src/game/terrain/lava.cpp
+    src/game/terrain/terrain_mesh.cpp
+)
+
+# ---- delve_tests (headless test runner) ----
+add_executable(delve_tests EXCLUDE_FROM_ALL
+    src/test/test_main.cpp
+    src/test/tests/test_noise.cpp
+    src/test/tests/test_hex.cpp
+    src/test/tests/test_animation.cpp
+    src/test/tests/test_palettes.cpp
+    src/test/tests/test_terrain_pipeline.cpp
+    ${TERRAIN_PIPELINE_SOURCES}
+)
+
+target_include_directories(delve_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test/sdl_override  # Must be FIRST to intercept <SDL3/SDL.h>
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
+)
+
+target_compile_definitions(delve_tests PRIVATE
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    DELVE_HEADLESS=1
+)
+
+target_link_libraries(delve_tests PRIVATE
+    glm::glm
+)
+
+# ---- delve_metrics (headless metrics binary) ----
+add_executable(delve_metrics EXCLUDE_FROM_ALL
+    src/test/metrics_main.cpp
+    ${TERRAIN_PIPELINE_SOURCES}
+)
+
+target_include_directories(delve_metrics PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test/sdl_override
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
+)
+
+target_compile_definitions(delve_metrics PRIVATE
+    GLM_FORCE_DEPTH_ZERO_TO_ONE
+    DELVE_HEADLESS=1
+)
+
+target_link_libraries(delve_metrics PRIVATE
+    glm::glm
+    nlohmann_json::nlohmann_json
+)

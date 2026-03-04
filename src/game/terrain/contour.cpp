@@ -9,6 +9,9 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
                       std::vector<int> &out_band_map) {
   out_lines.clear();
 
+  // Hard cap to prevent OOM from pathological terracing patterns.
+  constexpr size_t MAX_CONTOUR_LINES = 500'000;
+
   int total = width * height;
   out_band_map.resize(total);
   for (int i = 0; i < total; ++i) {
@@ -18,6 +21,11 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
   for (float level = interval * 0.5f; level < 1.0f; level += interval) {
     for (int y = 0; y < height - 1; ++y) {
       for (int x = 0; x < width - 1; ++x) {
+        if (out_lines.size() >= MAX_CONTOUR_LINES) {
+          SDL_Log("extract_contours: hit %zu line cap, truncating", MAX_CONTOUR_LINES);
+          return;
+        }
+
         float h00 = heightmap[y * width + x];
         float h10 = heightmap[y * width + x + 1];
         float h01 = heightmap[(y + 1) * width + x];

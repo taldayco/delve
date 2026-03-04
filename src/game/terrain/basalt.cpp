@@ -1,7 +1,6 @@
 #include "terrain/basalt.h"
 #include "terrain/map_data.h"
 #include "terrain/palettes.h"
-#include "terrain/terrain_generator.h"
 #include "core/types.h"
 #include "terrain/util.h"
 #include <SDL3/SDL.h>

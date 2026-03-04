@@ -7,6 +7,7 @@
 #include "terrain/map_util.h"
 #include "terrain/hex.h"
 #include "ui/imgui_ui.h"
+#include "core/watchdog.h"
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 #include <fstream>
@@ -477,12 +478,15 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
     auto *contours = ecs.get_mut<ContourData>();
 
     if (map_data && ready_map_pending) {
-      auto old_map      = std::make_shared<MapData>(std::move(*map_data));
-      auto old_contours = std::make_shared<ContourData>(contours ? std::move(*contours) : ContourData{});
-      task_system.enqueue([old_map, old_contours]() {
-        (void)old_map;
-        (void)old_contours;
-      });
+      // Destroy old data immediately on main thread (scope-based) rather than
+      // deferring to the single worker thread. Deferred destruction caused old
+      // MapData objects to pile up behind in-flight generations, compounding
+      // memory usage across rapid seed changes.
+      {
+        MapData old_map = std::move(*map_data);
+        ContourData old_contours = contours ? std::move(*contours) : ContourData{};
+        // old_map and old_contours freed here at scope exit
+      }
 
       *map_data = std::move(*ready_map_pending);
       if (contours && ready_contours_pending)
@@ -565,6 +569,7 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
         if (cmd) {
           terrain_renderer.rebuild_clusters_if_needed(cmd, w, h, 16.0f, 24, 1.0f, 1000.0f);
           SDL_SubmitGPUCommandBuffer(cmd);
+          SDL_WaitForGPUIdle(gpu.device);
         }
       }
     }
@@ -598,10 +603,24 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
   auto *cache    = ecs.get_mut<NoiseCache>();
   auto *contours = ecs.get_mut<ContourData>();
 
-  // Kick off async generation when needed and not already running.
+  // Debounce: tick down cooldown each frame (~16ms at 60 FPS).
+  constexpr float REGEN_COOLDOWN_SEC = 0.2f;
+  if (regen_cooldown > 0.0f) regen_cooldown -= 1.0f / 60.0f;
+
+  // If a regeneration is requested while one is in-flight, signal cancellation.
+  if (ts && ts->need_regenerate && async_terrain.is_generating) {
+    async_terrain.cancel_requested.store(true, std::memory_order_relaxed);
+  }
+
+  // Kick off async generation when needed, not already running, and cooldown elapsed.
   if (ts && ts->need_regenerate && !async_terrain.is_generating) {
+    if (regen_cooldown > 0.0f) {
+      // Keep need_regenerate true; wait for cooldown to expire.
+    } else {
     ts->need_regenerate = false;
     async_terrain.is_generating = true;
+    async_terrain.cancel_requested.store(false, std::memory_order_relaxed);
+    regen_cooldown = REGEN_COOLDOWN_SEC;
 
     // Snapshot all ECS params by value — worker thread must not touch ECS.
     elev->map_scale = ts->map_scale;
@@ -625,14 +644,24 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       SDL_Log("Async regen: started");
       auto t0 = SDL_GetTicks();
 
+      // Helper: check if we should bail out early.
+      auto should_abort = [this]() {
+        return g_emergency_shutdown.load(std::memory_order_relaxed)
+            || async_terrain.cancel_requested.load(std::memory_order_relaxed);
+      };
+
       auto md = std::make_shared<MapData>();
       md->allocate(Config::MAP_WIDTH, Config::MAP_HEIGHT);
 
       // NoiseCache is ECS-owned and not thread-safe — pass nullptr.
       compose_layers(*md, elev_snap, river_snap, worley_snap, comp_snap, nullptr);
+      if (should_abort()) { async_terrain.is_generating = false; return; }
+
       md->columns = generate_basalt_columns_v2(*md, Config::HEX_SIZE);
+      if (should_abort()) { async_terrain.is_generating = false; return; }
 
       auto fill = generate_lava_and_void(*md, comp_snap.void_chance, worley_snap.seed);
+      if (should_abort()) { async_terrain.is_generating = false; return; }
       md->lava_bodies = std::move(fill.lava_bodies);
       md->void_bodies = std::move(fill.void_bodies);
 
@@ -644,6 +673,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       extract_contours(cd->heightmap, Config::MAP_WIDTH, Config::MAP_HEIGHT,
                        interval, cd->contour_lines, cd->band_map);
       simplify_contours(cd->contour_lines, 0.5f);
+      if (should_abort()) { async_terrain.is_generating = false; return; }
 
       // Reconstruct a TerrainState for build_terrain_mesh (reads only current_palette).
       TerrainState ts_for_build;
@@ -654,6 +684,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       ts_for_build.need_regenerate = false;
 
       auto mesh = std::make_shared<TerrainMesh>(build_terrain_mesh(ts_for_build, *md, *cd));
+      if (should_abort()) { async_terrain.is_generating = false; return; }
 
       // Hand off results to main thread under the pending_mtx lock.
       {
@@ -666,6 +697,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
       SDL_Log("Async regen: done in %llu ms", (unsigned long long)(SDL_GetTicks() - t0));
     });
+    } // else (cooldown expired)
   }
 
   // Main thread: pull completed async results out from under the mutex.
@@ -691,7 +723,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
   if (map_data) {
     const float inv = 1.0f / Config::HEX_SIZE;
     for (const auto &lava : map_data->lava_bodies) {
-      if (lava.pixels.empty()) continue;
       float cx = (lava.min_x + lava.max_x) * 0.5f * inv;
       float cy = (lava.min_y + lava.max_y) * 0.5f * inv;
       GpuPointLight pl;

@@ -157,7 +157,8 @@ SkeletonMesh generate_skeleton_mesh(const SkeletonPose     &bind_pose,
             add_vert(wp, n, lp, bi, 0.0f);
         }
 
-        // Connect rings with quads (2 triangles each).
+        // Connect rings with lines: start ring + end ring + longitudinal edges.
+        // Each side emits 3 line segments = 6 indices.
         for (int si = 0; si < sides; ++si) {
             int sn = (si + 1) % sides;
             uint32_t v00 = base_start + (uint32_t)si;
@@ -165,71 +166,13 @@ SkeletonMesh generate_skeleton_mesh(const SkeletonPose     &bind_pose,
             uint32_t v01 = base_end   + (uint32_t)si;
             uint32_t v11 = base_end   + (uint32_t)sn;
 
-            mesh.indices.push_back(v00); mesh.indices.push_back(v10); mesh.indices.push_back(v01);
-            mesh.indices.push_back(v10); mesh.indices.push_back(v11); mesh.indices.push_back(v01);
+            // Start ring edge
+            mesh.indices.push_back(v00); mesh.indices.push_back(v10);
+            // End ring edge
+            mesh.indices.push_back(v01); mesh.indices.push_back(v11);
+            // Longitudinal edge
+            mesh.indices.push_back(v00); mesh.indices.push_back(v01);
         }
-    }
-
-    // End caps for terminal joints.
-    for (int tj : TERMINAL_JOINTS) {
-        // Find the bone that ends at this joint.
-        int bone_idx = -1;
-        for (int bi = 0; bi < NUM_BONES; ++bi) {
-            if (BONES[bi].b == tj) { bone_idx = bi; break; }
-        }
-        if (bone_idx < 0) continue;
-
-        int bone_a = BONES[bone_idx].a;
-        int bone_b = BONES[bone_idx].b;
-
-        const BoneProfile &prof = profiles[(size_t)bone_idx];
-        int   sides = std::max(3, prof.sides);
-        float r1    = prof.radius_end;
-
-        BoneFrame frame = make_frame(bind_pose.joints[bone_a], bind_pose.joints[bone_b]);
-
-        const glm::vec3 &pb = bind_pose.joints[bone_b];
-
-        glm::vec3 lp_center = world_to_local(pb, frame);
-        uint32_t center_idx = add_vert(pb, frame.z, lp_center, bone_idx, 0.0f);
-
-        uint32_t ring_base = (uint32_t)mesh.vertices.size();
-        for (int si = 0; si < sides; ++si) {
-            float angle = si * (2.0f * glm::pi<float>() / sides);
-            glm::vec3 offset = frame.x * (cosf(angle) * r1) + frame.y * (sinf(angle) * r1);
-            glm::vec3 wp = pb + offset;
-            glm::vec3 lp = world_to_local(wp, frame);
-            add_vert(wp, frame.z, lp, bone_idx, 0.0f);
-        }
-
-        for (int si = 0; si < sides; ++si) {
-            int sn = (si + 1) % sides;
-            mesh.indices.push_back(center_idx);
-            mesh.indices.push_back(ring_base + (uint32_t)sn);
-            mesh.indices.push_back(ring_base + (uint32_t)si);
-        }
-    }
-
-    // Smooth normals: accumulate area-weighted face normals.
-    std::vector<glm::vec3> accum(mesh.vertices.size(), glm::vec3(0.0f));
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        uint32_t i0 = mesh.indices[i];
-        uint32_t i1 = mesh.indices[i + 1];
-        uint32_t i2 = mesh.indices[i + 2];
-
-        const glm::vec3 &p0 = mesh.vertices[i0].position;
-        const glm::vec3 &p1 = mesh.vertices[i1].position;
-        const glm::vec3 &p2 = mesh.vertices[i2].position;
-
-        glm::vec3 face_n = glm::cross(p1 - p0, p2 - p0);
-        accum[i0] += face_n;
-        accum[i1] += face_n;
-        accum[i2] += face_n;
-    }
-    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-        float len = glm::length(accum[i]);
-        if (len > 1e-6f)
-            mesh.vertices[i].normal = accum[i] / len;
     }
 
     return mesh;
@@ -268,25 +211,6 @@ void deform_skeleton_mesh(SkeletonMesh &mesh, const SkeletonPose &pose) {
         }
     }
 
-    // Recompute smooth normals from deformed positions.
-    std::vector<glm::vec3> accum(mesh.vertices.size(), glm::vec3(0.0f));
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        uint32_t i0 = mesh.indices[i];
-        uint32_t i1 = mesh.indices[i + 1];
-        uint32_t i2 = mesh.indices[i + 2];
-        const glm::vec3 &p0 = mesh.vertices[i0].position;
-        const glm::vec3 &p1 = mesh.vertices[i1].position;
-        const glm::vec3 &p2 = mesh.vertices[i2].position;
-        glm::vec3 face_n = glm::cross(p1 - p0, p2 - p0);
-        accum[i0] += face_n;
-        accum[i1] += face_n;
-        accum[i2] += face_n;
-    }
-    for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-        float len = glm::length(accum[i]);
-        if (len > 1e-6f)
-            mesh.vertices[i].normal = accum[i] / len;
-    }
 }
 
 // ---------------------------------------------------------------------------

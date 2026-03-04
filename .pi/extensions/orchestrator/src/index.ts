@@ -681,6 +681,8 @@ export default function (pi: ExtensionAPI) {
           state.phase = "failed";
           return;
         }
+        const wt = branchResult.worktreePath;
+        state.worktreePath = wt;
 
         // ── PHASE: Implement (single agent, no planner) ──────────────
         setPhase("implement", ctx);
@@ -700,7 +702,7 @@ export default function (pi: ExtensionAPI) {
           return;
         }
 
-        const appliedCount = applyFileBlocks(implementation);
+        const appliedCount = applyFileBlocks(implementation, wt);
         ctx.ui.notify(`Applied ${appliedCount} files`, "success");
 
         // ── PHASE: Build + fix (max 3 rounds) ───────────────────────
@@ -708,7 +710,7 @@ export default function (pi: ExtensionAPI) {
         for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
           state.buildFixRound = round + 1;
           setPhase("build", ctx);
-          const build = runBuild();
+          const build = runBuild(wt);
 
           if (build.ok) {
             ctx.ui.notify(`Build PASSED (round ${round + 1})`, "success");
@@ -725,7 +727,7 @@ export default function (pi: ExtensionAPI) {
             round: round + 1,
             maxRounds: MAX_BUILD_FIX_ROUNDS,
           });
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
 
         if (!buildOk) {
@@ -741,6 +743,7 @@ export default function (pi: ExtensionAPI) {
           branch,
           buildOk: true,
           testsOk: false,
+          cwd: wt,
         });
 
         if (prResult.ok) {
@@ -761,6 +764,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Minion-quick error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
       }
     },
   });

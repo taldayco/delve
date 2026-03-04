@@ -304,3 +304,87 @@ DELVE_TEST(no_simultaneous_stepping) {
   EXPECT_FALSE(both_stepping_ever);
   return true;
 }
+
+// ---- Isometric movement rotation tests ----
+
+// Helper: apply the same 45-degree ISO rotation used in actor_animation.cpp.
+static void apply_iso_rotation(float raw_x, float raw_y,
+                                float move_speed,
+                                float &out_x, float &out_y) {
+  static constexpr float COS_ISO = 0.70710678118f;
+  static constexpr float SIN_ISO = 0.70710678118f;
+  out_x = (raw_x * COS_ISO - raw_y * SIN_ISO) * move_speed;
+  out_y = (raw_x * SIN_ISO + raw_y * COS_ISO) * move_speed;
+}
+
+// W key (raw_y=-1) should produce equal negative x and negative y components.
+DELVE_TEST(iso_movement_W_moves_northwest) {
+  float vx, vy;
+  apply_iso_rotation(0.0f, -1.0f, 1.0f, vx, vy);
+  // W: desired_x = (0*cos - (-1)*sin) = sin = +0.707
+  // W: desired_y = (0*sin + (-1)*cos) = -cos = -0.707
+  EXPECT_NEAR(vx,  0.70710678118f, 1e-5f);
+  EXPECT_NEAR(vy, -0.70710678118f, 1e-5f);
+  return true;
+}
+
+// S key (raw_y=+1) should move southeast.
+DELVE_TEST(iso_movement_S_moves_southeast) {
+  float vx, vy;
+  apply_iso_rotation(0.0f, 1.0f, 1.0f, vx, vy);
+  EXPECT_NEAR(vx, -0.70710678118f, 1e-5f);
+  EXPECT_NEAR(vy,  0.70710678118f, 1e-5f);
+  return true;
+}
+
+// D key (raw_x=+1) should move northeast.
+DELVE_TEST(iso_movement_D_moves_northeast) {
+  float vx, vy;
+  apply_iso_rotation(1.0f, 0.0f, 1.0f, vx, vy);
+  EXPECT_NEAR(vx, 0.70710678118f, 1e-5f);
+  EXPECT_NEAR(vy, 0.70710678118f, 1e-5f);
+  return true;
+}
+
+// A key (raw_x=-1) should move southwest.
+DELVE_TEST(iso_movement_A_moves_southwest) {
+  float vx, vy;
+  apply_iso_rotation(-1.0f, 0.0f, 1.0f, vx, vy);
+  EXPECT_NEAR(vx, -0.70710678118f, 1e-5f);
+  EXPECT_NEAR(vy, -0.70710678118f, 1e-5f);
+  return true;
+}
+
+// Speed scaling: move_speed multiplies magnitude uniformly.
+DELVE_TEST(iso_movement_speed_scales_magnitude) {
+  float vx, vy;
+  apply_iso_rotation(1.0f, 0.0f, 3.5f, vx, vy);
+  float mag = sqrtf(vx * vx + vy * vy);
+  EXPECT_NEAR(mag, 3.5f, 1e-4f);
+  return true;
+}
+
+// Diagonal W+D input (raw_x=1, raw_y=-1) should produce a north-facing vector (vy < 0, vx ≈ 0).
+DELVE_TEST(iso_movement_WD_diagonal_moves_north) {
+  float vx, vy;
+  apply_iso_rotation(1.0f, -1.0f, 1.0f, vx, vy);
+  // W+D: desired_x = (cos + sin) = 1.414 * cos(45)... actually:
+  // raw_x=1, raw_y=-1:
+  // desired_x = (1*cos - (-1)*sin) = cos+sin = 1.4142...
+  // desired_y = (1*sin + (-1)*cos) = sin-cos = 0
+  EXPECT_NEAR(vy, 0.0f, 1e-4f);
+  EXPECT_GT(vx, 1.0f);
+  return true;
+}
+
+// W+A diagonal should move west (vx < 0, vy ≈ 0).
+DELVE_TEST(iso_movement_WA_diagonal_moves_west) {
+  float vx, vy;
+  apply_iso_rotation(-1.0f, -1.0f, 1.0f, vx, vy);
+  // raw_x=-1, raw_y=-1:
+  // desired_x = (-cos + sin) = 0
+  // desired_y = (-sin - cos) = -1.4142...
+  EXPECT_NEAR(vx, 0.0f, 1e-4f);
+  EXPECT_LT(vy, -1.0f);
+  return true;
+}

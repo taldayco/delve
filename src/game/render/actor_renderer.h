@@ -158,4 +158,8 @@ private:
 
     // Set by draw_ui when profile sliders change; consumed by topo_game to re-generate mesh.
     bool skel_profiles_dirty_ = false;
+
+    // Cached skeleton mesh — updated by generate_skeleton_mesh when profiles change.
+    // upload_mesh() uploads this to skel_vbo/skel_ibo each frame after deform.
+    SkeletonMesh cached_mesh;
 };

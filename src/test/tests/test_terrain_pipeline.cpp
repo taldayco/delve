@@ -107,3 +107,101 @@ DELVE_TEST(pipeline_mesh_valid_normals) {
   EXPECT_GT(validity, 0.99f);
   return true;
 }
+
+DELVE_TEST(mesh_has_two_basalt_layers) {
+  // terrain_mesh must produce exactly 2 layers: [0]=sides, [1]=tops
+  auto md = run_pipeline();
+  TerrainState ts; ts.current_palette = 0; ts.map_scale = 1.0f;
+  ContourData cd;
+  cd.heightmap.assign(md.basalt_height.begin(), md.basalt_height.end());
+  cd.contour_lines = md.contour_lines;
+  cd.band_map = md.band_map;
+
+  TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
+  EXPECT_EQ((int)mesh.basalt_layers.size(), 2);
+  // Both layers must be non-empty when columns exist
+  if (!md.columns.empty()) {
+    EXPECT_GT((float)mesh.basalt_layers[0].vertices.size(), 0.0f); // sides
+    EXPECT_GT((float)mesh.basalt_layers[1].vertices.size(), 0.0f); // tops
+  }
+  return true;
+}
+
+DELVE_TEST(mesh_top_layer_indices_in_bounds) {
+  auto md = run_pipeline();
+  TerrainState ts; ts.current_palette = 0; ts.map_scale = 1.0f;
+  ContourData cd;
+  cd.heightmap.assign(md.basalt_height.begin(), md.basalt_height.end());
+  cd.contour_lines = md.contour_lines;
+  cd.band_map = md.band_map;
+
+  TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
+  for (auto &layer : mesh.basalt_layers) {
+    for (uint32_t idx : layer.indices) {
+      EXPECT_TRUE(idx < (uint32_t)layer.vertices.size());
+    }
+  }
+  return true;
+}
+
+DELVE_TEST(mesh_vertex_colors_valid) {
+  auto md = run_pipeline();
+  TerrainState ts; ts.current_palette = 0; ts.map_scale = 1.0f;
+  ContourData cd;
+  cd.heightmap.assign(md.basalt_height.begin(), md.basalt_height.end());
+  cd.contour_lines = md.contour_lines;
+  cd.band_map = md.band_map;
+
+  TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
+  float validity = vertex_color_validity(mesh);
+  EXPECT_GT(validity, 0.99f);
+  return true;
+}
+
+DELVE_TEST(hex_roundtrip_accuracy_full) {
+  float accuracy = hex_roundtrip_accuracy(Config::HEX_SIZE, 20);
+  EXPECT_GT(accuracy, 0.99f);
+  return true;
+}
+
+DELVE_TEST(mesh_side_normals_horizontal) {
+  // Side face normals (layer 0) must be mostly horizontal (nz near 0)
+  auto md = run_pipeline();
+  TerrainState ts; ts.current_palette = 0; ts.map_scale = 1.0f;
+  ContourData cd;
+  cd.heightmap.assign(md.basalt_height.begin(), md.basalt_height.end());
+  cd.contour_lines = md.contour_lines;
+  cd.band_map = md.band_map;
+
+  TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
+  if (mesh.basalt_layers[0].vertices.empty()) return true;
+
+  int horiz = 0;
+  for (auto &v : mesh.basalt_layers[0].vertices) {
+    if (std::abs(v.nz) < 0.1f) ++horiz;
+  }
+  float ratio = (float)horiz / mesh.basalt_layers[0].vertices.size();
+  EXPECT_GT(ratio, 0.95f);
+  return true;
+}
+
+DELVE_TEST(mesh_top_normals_upward) {
+  // Top face normals (layer 1) must point mostly upward (nz near 1)
+  auto md = run_pipeline();
+  TerrainState ts; ts.current_palette = 0; ts.map_scale = 1.0f;
+  ContourData cd;
+  cd.heightmap.assign(md.basalt_height.begin(), md.basalt_height.end());
+  cd.contour_lines = md.contour_lines;
+  cd.band_map = md.band_map;
+
+  TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
+  if (mesh.basalt_layers[1].vertices.empty()) return true;
+
+  int upward = 0;
+  for (auto &v : mesh.basalt_layers[1].vertices) {
+    if (v.nz > 0.9f) ++upward;
+  }
+  float ratio = (float)upward / mesh.basalt_layers[1].vertices.size();
+  EXPECT_GT(ratio, 0.99f);
+  return true;
+}

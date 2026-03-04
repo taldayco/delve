@@ -46,4 +46,8 @@ struct Config {
   static constexpr uint32_t BACKGROUND_COLOR = 0xFF000000;
   static constexpr uint32_t LAVA_COLOR = 0xFFFF8C00;
   static constexpr float DEFAULT_CONTOUR_OPACITY = 0.35f;
+
+  static constexpr int ACTOR_MAX_VERTICES = 500;
+  static constexpr int ACTOR_BONE_INFLUENCES = 2;
+  static constexpr int ACTOR_DEFAULT_CROSS_SECTION_SIDES = 4;
 };

@@ -1,16 +1,20 @@
 #pragma once
-#include "actor.h"
-#include "animation_log.h"
-#include "input/input.h"
-#include "camera/camera.h"
 #include <flecs.h>
 
-// Register all 6 animation ECS systems into the world.
-// Systems run in PostUpdate phase after input is processed.
-// player_entity must have: Transform, Velocity, AnimationState, ActorConfig,
-//                          ProceduralGait, LegState, SkeletonPose components.
-void register_animation_systems(
-    flecs::world &ecs,
-    flecs::entity player_entity,
-    InputSystem &input,
-    AnimationLogger &anim_log);
+class InputSystem;
+class CameraState;
+class AnimationLogger;
+
+// Register all 6 procedural animation ECS systems into the world.
+// Systems run in PostUpdate phase, in this order:
+//   1. PlayerMovementSystem  — input → SmoothDamp velocity → position
+//   2. ActorGroundingSystem  — snap actor Z to terrain height (adaptive spring)
+//   3. GaitSystem            — procedural foot placement (one-foot-planted)
+//   4. IKSystem              — two-bone leg IK + pendulum arm swing
+//   5. SkeletonFinaliseSystem — hip sway, spine lean, idle micro-motion
+//   6. AnimationLogSystem    — JSONL telemetry via AnimationLogger
+void register_animation_systems(flecs::world &ecs,
+                                 InputSystem    &input,
+                                 CameraState    &camera,
+                                 AnimationLogger &anim_log,
+                                 flecs::entity   player_entity);

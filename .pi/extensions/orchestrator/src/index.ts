@@ -799,6 +799,8 @@ export default function (pi: ExtensionAPI) {
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        const wt = branchResult.worktreePath;
+        state.worktreePath = wt;
 
         // Implement
         setPhase("implement", ctx);
@@ -811,25 +813,25 @@ export default function (pi: ExtensionAPI) {
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
-        applyFileBlocks(implementation);
+        applyFileBlocks(implementation, wt);
 
         // Build + fix
         let buildOk = false;
         for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
           state.buildFixRound = round + 1;
           setPhase("build", ctx);
-          const build = runBuild();
+          const build = runBuild(wt);
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
         // Review (with extra constraint: reject if behavior changes)
         setPhase("review", ctx);
-        const diff = getDiff();
+        const diff = getDiff(wt);
         const review = await askReviewer({
           task: prompt + "\n\nCRITICAL REVIEW CONSTRAINT: Reject if observable behavior changes. This is a refactoring — behavior must be preserved.",
           diff,
@@ -840,7 +842,7 @@ export default function (pi: ExtensionAPI) {
 
         // Commit + PR
         setPhase("commit-pr", ctx);
-        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk: false });
+        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk: false, cwd: wt });
         ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
 
         state.phase = "done";
@@ -852,6 +854,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Minion-refactor error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
       }
     },
   });
@@ -885,10 +889,12 @@ export default function (pi: ExtensionAPI) {
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        const wt = branchResult.worktreePath;
+        state.worktreePath = wt;
 
         // Diagnose: run tests first to collect failure output
         setPhase("diagnose", ctx);
-        const initialTests = runTests();
+        const initialTests = runTests(wt);
         const { execSync } = require("node:child_process");
         let recentCommits = "";
         try {
@@ -917,19 +923,19 @@ export default function (pi: ExtensionAPI) {
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
-        applyFileBlocks(implementation);
+        applyFileBlocks(implementation, wt);
 
         // Build + fix
         let buildOk = false;
         for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
           state.buildFixRound = round + 1;
           setPhase("build", ctx);
-          const build = runBuild();
+          const build = runBuild(wt);
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
@@ -938,7 +944,7 @@ export default function (pi: ExtensionAPI) {
         for (let round = 0; round < MAX_TEST_FIX_ROUNDS; round++) {
           state.testFixRound = round + 1;
           setPhase("test", ctx);
-          const testResult = runTests();
+          const testResult = runTests(wt);
           if (testResult.buildOk && testResult.testsOk) { testsOk = true; break; }
           if (round + 1 >= MAX_TEST_FIX_ROUNDS) break;
           setPhase("fix-tests", ctx);
@@ -948,12 +954,12 @@ export default function (pi: ExtensionAPI) {
             maxRounds: MAX_TEST_FIX_ROUNDS,
             isBuildFailure: !testResult.buildOk,
           });
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
 
         // Commit + PR (skip review for bugfixes)
         setPhase("commit-pr", ctx);
-        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk });
+        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk, cwd: wt });
         ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
 
         state.phase = "done";
@@ -968,6 +974,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Minion-bugfix error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
       }
     },
   });
@@ -1001,6 +1009,8 @@ export default function (pi: ExtensionAPI) {
         setPhase("branch", ctx);
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state.phase = "failed"; ctx.ui.notify(branchResult.summary, "error"); return; }
+        const wt = branchResult.worktreePath;
+        state.worktreePath = wt;
 
         // Implement (force shader subsystem)
         setPhase("implement", ctx);
@@ -1010,19 +1020,19 @@ export default function (pi: ExtensionAPI) {
 
         const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
         if (fileBlockCount === 0) { state.phase = "failed"; ctx.ui.notify("No file changes produced — FAIL", "error"); return; }
-        applyFileBlocks(implementation);
+        applyFileBlocks(implementation, wt);
 
         // Build + fix
         let buildOk = false;
         for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
           state.buildFixRound = round + 1;
           setPhase("build", ctx);
-          const build = runBuild();
+          const build = runBuild(wt);
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
           setPhase("fix-build", ctx);
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS });
-          applyFileBlocks(fix);
+          applyFileBlocks(fix, wt);
         }
         if (!buildOk) { state.phase = "failed"; ctx.ui.notify("Build FAILED after max attempts", "error"); return; }
 
@@ -1036,7 +1046,7 @@ export default function (pi: ExtensionAPI) {
 
         // Commit + PR
         setPhase("commit-pr", ctx);
-        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk: shaderResult.ok });
+        const prResult = gitCommitAndPr({ prompt, branch, buildOk, testsOk: shaderResult.ok, cwd: wt });
         ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
 
         state.phase = "done";
@@ -1051,6 +1061,8 @@ export default function (pi: ExtensionAPI) {
         ctx.ui.notify(`Minion-shader error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
+      } finally {
+        if (state?.worktreePath) cleanupWorktree(state.worktreePath);
       }
     },
   });

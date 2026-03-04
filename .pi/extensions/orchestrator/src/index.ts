@@ -26,6 +26,7 @@ import {
   readState,
   askDiagnoser,
   askBlueprintGenerator,
+  agentEvents,
 } from "./agents.js";
 import {
   slugify,
@@ -353,6 +354,7 @@ export default function (pi: ExtensionAPI) {
         buildFixRound: 0,
         testFixRound: 0,
       };
+      attachAgentListeners(ctx);
 
       ctx.ui.notify(`Minion started: ${prompt}`, "info");
 
@@ -580,10 +582,12 @@ export default function (pi: ExtensionAPI) {
           `Minion complete in ${elapsed(state.startTime)}. Build: ${buildOk ? "PASS" : "FAIL"} | Tests: ${testsOk ? "PASS" : "FAIL"} | Review: ${reviewDecision}`,
           "success"
         );
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -617,6 +621,7 @@ export default function (pi: ExtensionAPI) {
         buildFixRound: 0,
         testFixRound: 0,
       };
+      attachAgentListeners(ctx);
 
       ctx.ui.notify(`Minion-quick started: ${prompt}`, "info");
 
@@ -702,10 +707,12 @@ export default function (pi: ExtensionAPI) {
           `Minion-quick complete in ${elapsed(state.startTime)}. Build: PASS`,
           "success"
         );
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion-quick error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -729,6 +736,7 @@ export default function (pi: ExtensionAPI) {
       const branch = `minion-refactor/${timestamp}-${slugify(prompt)}`;
 
       state = { prompt, branch, phase: "branch", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 };
+      attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-refactor started: ${prompt}`, "info");
 
       try {
@@ -782,10 +790,12 @@ export default function (pi: ExtensionAPI) {
 
         state.phase = "done";
         ctx.ui.notify(`Minion-refactor complete in ${elapsed(state.startTime)}`, "success");
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion-refactor error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -809,6 +819,7 @@ export default function (pi: ExtensionAPI) {
       const branch = `minion-bugfix/${timestamp}-${slugify(prompt)}`;
 
       state = { prompt, branch, phase: "branch", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 };
+      attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-bugfix started: ${prompt}`, "info");
 
       try {
@@ -892,10 +903,12 @@ export default function (pi: ExtensionAPI) {
           `Minion-bugfix complete in ${elapsed(state.startTime)}. Build: ${buildOk ? "PASS" : "FAIL"} | Tests: ${testsOk ? "PASS" : "FAIL"}`,
           "success"
         );
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion-bugfix error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -919,6 +932,7 @@ export default function (pi: ExtensionAPI) {
       const branch = `minion-shader/${timestamp}-${slugify(prompt)}`;
 
       state = { prompt, branch, phase: "branch", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 };
+      attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-shader started: ${prompt}`, "info");
 
       try {
@@ -969,10 +983,12 @@ export default function (pi: ExtensionAPI) {
           `Minion-shader complete in ${elapsed(state.startTime)}. Build: PASS | Shaders: ${shaderResult.ok ? "PASS" : "FAIL"}`,
           "success"
         );
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion-shader error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -995,6 +1011,7 @@ export default function (pi: ExtensionAPI) {
       const branch = `minion-meta/${timestamp}-${slugify(prompt)}`;
 
       state = { prompt, branch, phase: "plan", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 };
+      attachAgentListeners(ctx);
       ctx.ui.notify(`Minion-meta started: ${prompt}`, "info");
 
       try {
@@ -1045,10 +1062,12 @@ export default function (pi: ExtensionAPI) {
           `Minion-meta complete in ${elapsed(state.startTime)}. Blueprint: ${blueprint.name}`,
           "success"
         );
+        detachAgentListeners();
         state = null;
       } catch (error: any) {
         state!.phase = "failed";
         ctx.ui.notify(`Minion-meta error: ${error.message}`, "error");
+        detachAgentListeners();
         state = null;
       }
     },
@@ -1089,10 +1108,40 @@ export default function (pi: ExtensionAPI) {
 
   // ── Status line tracking ────────────────────────────────────────────────
 
+  let _agentStartListener: ((...args: any[]) => void) | null = null;
+  let _agentEndListener: ((...args: any[]) => void) | null = null;
+
+  function attachAgentListeners(ctx: any) {
+    detachAgentListeners();
+    _agentStartListener = ({ name }: { name: string }) => {
+      if (state) {
+        ctx.ui.setStatus("minion", `${state.phase}: ${name} [${elapsed(state.startTime)}]`);
+      }
+    };
+    _agentEndListener = ({ name }: { name: string }) => {
+      if (state) {
+        ctx.ui.setStatus("minion", `${state.phase}: ${name} done [${elapsed(state.startTime)}]`);
+      }
+    };
+    agentEvents.on("agent:start", _agentStartListener);
+    agentEvents.on("agent:end", _agentEndListener);
+  }
+
+  function detachAgentListeners() {
+    if (_agentStartListener) {
+      agentEvents.removeListener("agent:start", _agentStartListener);
+      _agentStartListener = null;
+    }
+    if (_agentEndListener) {
+      agentEvents.removeListener("agent:end", _agentEndListener);
+      _agentEndListener = null;
+    }
+  }
+
   function setPhase(phase: Phase, ctx: any) {
     if (state) {
       state.phase = phase;
-      ctx.ui.setStatus("minion", `Minion: ${phase} [${elapsed(state.startTime)}]`);
+      ctx.ui.setStatus("minion", `${phase} [${elapsed(state.startTime)}]`);
     }
   }
 }

@@ -3,6 +3,11 @@ import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from "no
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { join } from "node:path";
+import { EventEmitter } from "node:events";
+
+// ─── Agent Status Events ────────────────────────────────────────────────────
+
+export const agentEvents = new EventEmitter();
 
 // ─── Skill & Rule Loader ───────────────────────────────────────────────────
 
@@ -268,6 +273,7 @@ interface SpawnSubagentOpts {
   model?: string;
   tools?: string[];
   signal?: AbortSignal;
+  agentName?: string;
 }
 
 /**
@@ -286,7 +292,11 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
   const effectiveSystemPrompt = budget.systemPrompt;
   const effectivePrompt = budget.userPrompt;
 
+  const agentName = opts.agentName || "subagent";
+
   try {
+    agentEvents.emit("agent:start", { name: agentName, model });
+
     const args: string[] = [
       "--mode", "json",
       "-p",
@@ -350,6 +360,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
 
       proc.on("close", (code: number | null) => {
         if (buffer.trim()) processLine(buffer);
+        agentEvents.emit("agent:end", { name: agentName, model });
         if (code !== 0 && !finalText) {
           reject(new Error(`Subagent exited with code ${code}`));
         } else {
@@ -477,6 +488,7 @@ async function callSubsystemAgent(
     model,
     tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
     expectFileBlocks: true,
+    agentName: subsystem,
   });
 
   writeState(`${subsystem}_changes.md`, result);
@@ -563,6 +575,7 @@ ${opts.codebaseContext}`;
     systemPrompt,
     model: plannerConfig.model || "sonnet",
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
+    agentName: "planner",
   });
 
   writeState("plan.md", plan);
@@ -664,6 +677,7 @@ ${fileContents}`;
     systemPrompt,
     model: "sonnet",
     expectFileBlocks: true,
+    agentName: "implementer",
   });
 
   writeState("changes.md", result);
@@ -731,6 +745,7 @@ ${fileContents}`;
     systemPrompt,
     model,
     tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
+    agentName: "tester",
   });
 
   return result;
@@ -791,6 +806,7 @@ ${opts.testResults}`;
     systemPrompt,
     model: reviewerConfig.model || "sonnet",
     tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
+    agentName: "reviewer",
   });
 
   writeState("review.md", result);
@@ -823,6 +839,7 @@ export async function askWorker(opts: {
     prompt,
     systemPrompt: opts.systemPrompt,
     model: "haiku",
+    agentName: "worker",
   });
 }
 
@@ -870,6 +887,7 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
     prompt,
     systemPrompt,
     model: "sonnet",
+    agentName: "prompt-engineer",
   });
 
   // Parse JSON from the response
@@ -933,6 +951,7 @@ Fix the compilation errors.`,
     systemPrompt,
     model: config.model || "haiku",
     tools: config.tools.length > 0 ? config.tools : undefined,
+    agentName: "build-fixer",
   });
 }
 
@@ -983,6 +1002,7 @@ Fix the errors.`,
     systemPrompt,
     model: config.model || "haiku",
     tools: config.tools.length > 0 ? config.tools : undefined,
+    agentName: "test-fixer",
   });
 }
 
@@ -1036,6 +1056,7 @@ Diagnose the root cause of the test failures.`;
     systemPrompt,
     model: "sonnet",
     tools: ["Read", "Glob", "Grep"],
+    agentName: "diagnoser",
   });
 }
 
@@ -1080,6 +1101,7 @@ Design the optimal pipeline for this task.`;
     prompt,
     systemPrompt,
     model: "sonnet",
+    agentName: "blueprint-gen",
   });
 }
 

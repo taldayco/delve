@@ -12,6 +12,7 @@ import {
   parseSubtasks,
   writeState,
   readState,
+  agentEvents,
 } from "./agents.js";
 import {
   gitBranch,
@@ -364,27 +365,45 @@ export async function executeBlueprint(
   blueprint: Blueprint,
   context: BlueprintContext,
 ): Promise<void> {
-  for (const phase of blueprint.phases) {
-    const handler = PHASE_HANDLERS[phase.handler];
-    if (!handler) {
-      throw new Error(`Unknown phase handler: ${phase.handler}`);
+  let currentPhase = "";
+
+  const onAgentStart = ({ name }: { name: string }) => {
+    context.ctx.ui.setStatus("minion", `${blueprint.name}: ${currentPhase} — ${name}`);
+  };
+  const onAgentEnd = ({ name }: { name: string }) => {
+    context.ctx.ui.setStatus("minion", `${blueprint.name}: ${currentPhase} — ${name} done`);
+  };
+
+  agentEvents.on("agent:start", onAgentStart);
+  agentEvents.on("agent:end", onAgentEnd);
+
+  try {
+    for (const phase of blueprint.phases) {
+      const handler = PHASE_HANDLERS[phase.handler];
+      if (!handler) {
+        throw new Error(`Unknown phase handler: ${phase.handler}`);
+      }
+
+      currentPhase = phase.name;
+      context.ctx.ui.setStatus("minion", `${blueprint.name}: ${phase.name}`);
+      context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
+
+      const result = await handler(context);
+
+      if (!result.ok && !phase.optional) {
+        context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
+        return;
+      }
+
+      if (result.ok) {
+        context.ctx.ui.notify(`${phase.name}: ${result.output}`, "success");
+      } else {
+        context.ctx.ui.notify(`${phase.name} (optional): ${result.output}`, "warning");
+      }
     }
-
-    context.ctx.ui.setStatus("minion", `${blueprint.name}: ${phase.name}`);
-    context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
-
-    const result = await handler(context);
-
-    if (!result.ok && !phase.optional) {
-      context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
-      return;
-    }
-
-    if (result.ok) {
-      context.ctx.ui.notify(`${phase.name}: ${result.output}`, "success");
-    } else {
-      context.ctx.ui.notify(`${phase.name} (optional): ${result.output}`, "warning");
-    }
+  } finally {
+    agentEvents.removeListener("agent:start", onAgentStart);
+    agentEvents.removeListener("agent:end", onAgentEnd);
   }
 }
 

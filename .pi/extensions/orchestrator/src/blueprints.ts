@@ -55,6 +55,7 @@ export interface BlueprintContext {
   branch: string;
   startTime: number;
   ctx: any;
+  signal?: AbortSignal;
   data: {
     subsystems?: string[];
     contextFiles?: string[];
@@ -66,6 +67,13 @@ export interface BlueprintContext {
     reviewDecision?: string;
     worktreePath?: string;
   };
+}
+
+export interface BlueprintResult {
+  ok: boolean;
+  failedPhase?: string;
+  completedPhases: string[];
+  worktreePath?: string;
 }
 
 // applyFileBlocks is imported from tools.ts (shared line-by-line parser)
@@ -118,11 +126,11 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       for (const sub of subsystems) {
         subsystemContexts[sub] = getSubsystemCodebaseContext(sub, wt);
       }
-      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts, cwd: wt });
+      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts, cwd: wt, signal: ctx.signal });
     } else {
       // Single-agent planning for single-subsystem tasks
       const codebaseContext = getCodebaseContext(ctx.prompt, wt);
-      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext, cwd: wt });
+      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext, cwd: wt, signal: ctx.signal });
     }
 
     ctx.data.plan = plan;
@@ -149,6 +157,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
           task: `Your previous output was:\n\n${ctx.data.plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
           codebaseContext: "",
           cwd: wt,
+          signal: ctx.signal,
         });
         subtasks = parseSubtasks(correctedPlan);
       }
@@ -158,7 +167,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         for (const sub of subtasks) {
           const agent = getSubsystemAgent(sub.subsystem);
           const subFiles = extractFilePaths(sub.task).concat(contextFiles);
-          implementations.push(await agent({ task: sub.task, files: subFiles, cwd: wt }));
+          implementations.push(await agent({ task: sub.task, files: subFiles, cwd: wt, signal: ctx.signal }));
         }
         implementation = implementations.join("\n\n");
       } else {
@@ -168,12 +177,13 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
           files: contextFiles,
           subsystems: subsystems,
           cwd: wt,
+          signal: ctx.signal,
         });
       }
     } else {
       const targetSubsystem = subsystems[0] || "engine";
       const agent = getSubsystemAgent(targetSubsystem);
-      implementation = await agent({ task: taskWithDiagnosis, files: contextFiles, cwd: wt });
+      implementation = await agent({ task: taskWithDiagnosis, files: contextFiles, cwd: wt, signal: ctx.signal });
     }
 
     const fileBlockCount = (implementation.match(/###\s*FILE:/g) || []).length;
@@ -198,6 +208,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         round: round + 1,
         maxRounds: MAX_BUILD_FIX_ROUNDS,
         cwd: wt,
+        signal: ctx.signal,
       });
       applyFileBlocks(fix, wt);
     }
@@ -213,6 +224,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       changedFiles,
       implementationSummary: (ctx.data.implementation || "").slice(0, 2000),
       cwd: wt,
+      signal: ctx.signal,
     });
     applyFileBlocks(testCode, wt);
     return { ok: true, output: "Tests written" };
@@ -231,6 +243,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         maxRounds: MAX_TEST_FIX_ROUNDS,
         isBuildFailure: !testResult.buildOk,
         cwd: wt,
+        signal: ctx.signal,
       });
       applyFileBlocks(fix, wt);
     }
@@ -247,6 +260,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       diff,
       testResults: ctx.data.testsOk ? "All tests PASSED." : `Tests FAILED.\n${testResults}`,
       cwd: wt,
+      signal: ctx.signal,
     });
 
     const decision = /\bAPPROVE\b/.test(review) && !/\bREQUEST_CHANGES\b/.test(review)
@@ -292,6 +306,7 @@ const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       testOutput: testResult.summary,
       recentCommits,
       cwd: ctx.data.worktreePath,
+      signal: ctx.signal,
     });
     ctx.data.diagnosis = diagnosis;
     writeState("diagnosis.md", diagnosis);
@@ -499,12 +514,19 @@ export function loadBlueprint(name: string): Blueprint | null {
 export async function executeBlueprint(
   blueprint: Blueprint,
   context: BlueprintContext,
-): Promise<void> {
+): Promise<BlueprintResult> {
   // Agent listeners are managed by MinionDisplay in index.ts — no need to
   // duplicate them here. We just notify on phase transitions.
-  let allPhasesOk = true;
+  const completedPhases: string[] = [];
+
   try {
     for (const phase of blueprint.phases) {
+      // Check for cancellation before each phase
+      if (context.signal?.aborted) {
+        console.error("[blueprint] Aborted before phase:", phase.name);
+        return { ok: false, failedPhase: phase.name, completedPhases, worktreePath: context.data.worktreePath };
+      }
+
       const handler = PHASE_HANDLERS[phase.handler];
       if (!handler) {
         throw new Error(`Unknown phase handler: ${phase.handler}`);
@@ -515,10 +537,11 @@ export async function executeBlueprint(
       const result = await handler(context);
 
       if (!result.ok && !phase.optional) {
-        allPhasesOk = false;
         context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
-        return;
+        return { ok: false, failedPhase: phase.name, completedPhases, worktreePath: context.data.worktreePath };
       }
+
+      completedPhases.push(phase.name);
 
       // Validate agentic phase output quality
       if (result.ok && phase.type === "agentic") {
@@ -536,15 +559,11 @@ export async function executeBlueprint(
         context.ctx.ui.notify(`${phase.name} (optional): ${result.output}`, "warning");
       }
     }
-  } finally {
-    if (context.data.worktreePath) {
-      if (allPhasesOk) {
-        cleanupWorktree(context.data.worktreePath);
-      } else {
-        console.error(`[blueprint] Worktree preserved for debugging: ${context.data.worktreePath}`);
-      }
-    }
+  } catch (error: any) {
+    return { ok: false, failedPhase: "unknown", completedPhases, worktreePath: context.data.worktreePath };
   }
+
+  return { ok: true, completedPhases, worktreePath: context.data.worktreePath };
 }
 
 // ─── Blueprint Validator ────────────────────────────────────────────────────

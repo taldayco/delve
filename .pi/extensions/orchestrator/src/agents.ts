@@ -686,6 +686,7 @@ interface SubsystemAgentOpts {
   task: string;
   files: string[];
   cwd?: string;
+  signal?: AbortSignal;
 }
 
 async function callSubsystemAgent(
@@ -718,6 +719,7 @@ async function callSubsystemAgent(
     tools: agentConfig.tools.length > 0 ? agentConfig.tools : undefined,
     agentName: `${subsystem}-meta`,
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -786,6 +788,7 @@ async function askSubsystemPlanner(opts: {
   subsystem: string;
   codebaseContext: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -830,6 +833,7 @@ ${opts.codebaseContext}`;
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
     agentName: `planner-${opts.subsystem}`,
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 }
 
@@ -843,6 +847,7 @@ export async function askParallelPlanner(opts: {
   task: string;
   subsystemContexts: Record<string, string>;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const subsystems = Object.keys(opts.subsystemContexts);
 
@@ -853,6 +858,7 @@ export async function askParallelPlanner(opts: {
       subsystem,
       codebaseContext: opts.subsystemContexts[subsystem],
       cwd: opts.cwd,
+      signal: opts.signal,
     })
   );
 
@@ -891,6 +897,7 @@ export async function askMetaPlanner(opts: {
   task: string;
   codebaseContext: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -942,6 +949,7 @@ ${opts.codebaseContext}`;
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
     agentName: "planner",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   writeState("plan.md", plan);
@@ -1176,6 +1184,7 @@ export async function askMetaImplementer(opts: {
   files: string[];
   subsystems?: string[];
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const skillNames = opts.subsystems || ["terrain", "engine", "shader", "actor"];
   const skillSections = skillNames
@@ -1251,6 +1260,7 @@ ${fileContents}`;
     tools: implementerConfig.tools.length > 0 ? implementerConfig.tools : undefined,
     agentName: "implementer-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1288,6 +1298,7 @@ export async function askMetaTester(opts: {
   changedFiles: string[];
   implementationSummary: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const systemPrompt = `${loadAgentSystemPrompt()}
 
@@ -1361,6 +1372,7 @@ ${fileContents}`;
     tools: testerConfig.tools.length > 0 ? testerConfig.tools : undefined,
     agentName: "tester-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1395,6 +1407,7 @@ export async function askReviewer(opts: {
   diff: string;
   testResults: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const reviewerConfig = loadAgentConfig("reviewer");
   const model = reviewerConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1456,6 +1469,7 @@ ${opts.testResults}`;
     tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
     agentName: "reviewer-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1495,6 +1509,7 @@ You are a CODE REVIEWER. Return APPROVE or REQUEST_CHANGES. No middle ground.
       tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
       agentName: "reviewer",
       cwd: opts.cwd,
+      signal: opts.signal,
     });
     writeState("review.md", result);
     return result;
@@ -1566,6 +1581,7 @@ Synthesize a final review verdict.`;
     thinking: reviewerConfig.thinking || "medium",
     agentName: "reviewer-synthesizer",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   writeState("review.md", result);
@@ -1685,6 +1701,7 @@ export async function askBuildFixer(opts: {
   round: number;
   maxRounds: number;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const config = loadAgentConfig("build-fixer");
   const model = config.model || "anthropic/claude-sonnet-4-6";
@@ -1737,6 +1754,7 @@ Decompose these errors into per-file fix tasks.`;
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "build-fixer-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1775,6 +1793,7 @@ export async function askTestFixer(opts: {
   maxRounds: number;
   isBuildFailure: boolean;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const what = opts.isBuildFailure ? "TEST BUILD" : "TESTS";
   const config = loadAgentConfig("test-fixer");
@@ -1829,6 +1848,7 @@ Decompose these failures into per-file fix tasks.`;
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "test-fixer-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1866,6 +1886,7 @@ export async function askDiagnoser(opts: {
   testOutput: string;
   recentCommits: string;
   cwd?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const diagnoserConfig = loadAgentConfig("diagnoser");
   const model = diagnoserConfig.model || "anthropic/claude-sonnet-4-6";
@@ -1926,6 +1947,7 @@ Decompose these test failures into per-error analysis tasks.`;
     tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
     agentName: "diagnoser-meta",
     cwd: opts.cwd,
+    signal: opts.signal,
   });
 
   const parsed = parseMetaDecomposition(decomposition);
@@ -1961,6 +1983,7 @@ Do NOT propose fixes — only diagnose.
       tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
       agentName: "diagnoser",
       cwd: opts.cwd,
+      signal: opts.signal,
     });
   }
 

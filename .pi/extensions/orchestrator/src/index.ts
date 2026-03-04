@@ -6,6 +6,7 @@ import {
   validateBlueprint,
   getAvailablePhases,
   type BlueprintContext,
+  type BlueprintResult,
 } from "./blueprints.js";
 import {
   askMetaPlanner,
@@ -1277,6 +1278,15 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify(`Minion-meta started: ${prompt}`, "info");
 
       let worktreePath: string | undefined;
+      let blueprintResult: BlueprintResult | undefined;
+      const context: BlueprintContext = {
+        prompt,
+        branch,
+        startTime: Date.now(),
+        ctx,
+        data: {},
+      };
+
       try {
         // Silently clean up merged minion branches
         cleanupMergedBranches();
@@ -1313,35 +1323,36 @@ export default function (pi: ExtensionAPI) {
         writeState("blueprint.json", JSON.stringify(blueprint, null, 2));
 
         // Execute the blueprint
-        const context: BlueprintContext = {
-          prompt,
-          branch,
-          startTime: Date.now(),
-          ctx,
-          data: {},
-        };
+        blueprintResult = await executeBlueprint(blueprint, context);
+        worktreePath = blueprintResult.worktreePath;
 
-        await executeBlueprint(blueprint, context);
-
-        // Track worktree path from state in case executeBlueprint set it
-        worktreePath = state?.worktreePath;
-
-        state.phase = "done";
-        ctx.ui.notify(
-          `Minion-meta complete in ${elapsed(state.startTime)}. Blueprint: ${blueprint.name}`,
-          "success"
-        );
+        if (!blueprintResult.ok) {
+          recordFailure("blueprint", `Failed at phase: ${blueprintResult.failedPhase}`);
+          if (state) state.phase = "failed";
+        } else {
+          state.phase = "done";
+          ctx.ui.notify(
+            `Minion-meta complete in ${elapsed(state.startTime)}. Blueprint: ${blueprint.name}`,
+            "success"
+          );
+        }
         detachAgentListeners();
         state = null;
       } catch (error: any) {
-        worktreePath = worktreePath || state?.worktreePath;
+        worktreePath = worktreePath || context.data.worktreePath;
         if (state) state.phase = "failed";
         recordFailure("blueprint", error.message);
         ctx.ui.notify(`Minion-meta error: ${error.message}`, "error");
         detachAgentListeners();
         state = null;
       } finally {
-        if (worktreePath) cleanupWorktree(worktreePath);
+        if (worktreePath) {
+          if (blueprintResult?.ok) {
+            cleanupWorktree(worktreePath);
+          } else {
+            console.error(`[minion-meta] Worktree preserved for debugging: ${worktreePath}`);
+          }
+        }
       }
     },
   });

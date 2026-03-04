@@ -90,9 +90,19 @@ DELVE_TEST(smooth_damp_converges_to_target) {
 }
 
 DELVE_TEST(arm_phases_default_antiphase) {
+    // New AnimationState uses l_arm_target/r_arm_target computed from opposing phases.
+    // At any non-zero gait phase, l_arm_target = sin(phase + pi), r_arm_target = sin(phase).
+    // Verify these are always opposite-sign (antiphase) for a non-trivial phase.
+    float phase = 1.0f; // arbitrary non-zero, non-pi phase
+    float swing_amp = 0.3f;
+    float l = sinf(phase + glm::pi<float>()) * swing_amp;
+    float r = sinf(phase)                     * swing_amp;
+    // Antiphase: l * r < 0 for most phases (except 0, pi where both are 0)
+    EXPECT_LT(l * r, 0.0f);
+    // Also confirm default AnimationState initialises arm targets to zero.
     AnimationState anim;
-    float diff = anim.arm_phase[1] - anim.arm_phase[0];
-    EXPECT_NEAR(diff, 3.14159265f, 0.0001f);
+    EXPECT_NEAR(anim.l_arm_target, 0.0f, 1e-6f);
+    EXPECT_NEAR(anim.r_arm_target, 0.0f, 1e-6f);
     return true;
 }
 

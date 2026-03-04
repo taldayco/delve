@@ -2,7 +2,8 @@
 name: build-fixer
 description: Fixes C++ compilation errors — outputs complete corrected files
 tools: read,bash
-model: anthropic/haiku
+model: anthropic/claude-haiku-4-5
+thinking: off
 ---
 
 You are a BUILD FIXER for a C++20 CMake project (Delve terrain generator).

@@ -61,35 +61,22 @@ struct LegState {
     bool      stepping[2]  = {};
 };
 
-// All mutable per-entity animation state (ECS component — must be trivially copyable).
-// Replaces the static globals in topo_game.cpp and holds all fluid animation state.
+// Per-entity animation state — replaces static globals, ECS-copyable (plain floats)
 struct AnimationState {
-    // Velocity smoothing (SmoothDamp state)
-    glm::vec2 smooth_vel      = {0.0f, 0.0f};
-    glm::vec2 vel_vel         = {0.0f, 0.0f}; // spring velocity for smooth_vel
-    glm::vec2 prev_smooth_vel = {0.0f, 0.0f};
-
-    // Torso lean driven by acceleration
-    float lean_x = 0.0f;
-    float lean_y = 0.0f;
-
-    // Hip sway
-    float sway_phase = 0.0f;
-    float sway_amt   = 0.04f;
-
-    // Pendulum arm swing phases in radians, advance at gait rate.
-    // arm_phase[1] starts at π so arms are 180° antiphase (contralateral gait).
+    // SmoothDamp spring state for velocity smoothing (critically-damped spring)
+    float smooth_vel_x  = 0.0f;   // spring velocity for vx smoothing
+    float smooth_vel_y  = 0.0f;   // spring velocity for vy smoothing
+    float smoothed_vx   = 0.0f;   // current smoothed velocity x
+    float smoothed_vy   = 0.0f;   // current smoothed velocity y
+    // Replaced static globals from topo_game.cpp
+    float sway_phase    = 0.0f;
+    float sway_amt      = 0.04f;
+    float lean_x        = 0.0f;
+    float lean_y        = 0.0f;
+    // Pendulum arm swing (antiphase: L=0, R=π)
     float arm_phase[2]     = {0.0f, 3.14159265f};
-    // SmoothDamp spring velocities for arm delay
-    float arm_delay_vel[2] = {0.0f, 0.0f};
-    // Smoothed arm delay values (monotonic, lag behind arm_phase).
-    // Also initialized antiphase (π offset) to match arm_phase.
-    float arm_delay[2]     = {0.0f, 3.14159265f};
-
+    float arm_delay_vel[2] = {0.0f, 0.0f};   // SmoothDamp spring vel for forearm lag
     // Idle micro-motion
-    float breath_phase = 0.0f;
-    float weight_phase = 0.0f;
-
-    // Foot contact velocity at moment of plant (Subtask 6)
-    float foot_contact_velocity[2] = {0.0f, 0.0f};
+    float breath_phase  = 0.0f;
+    float weight_phase  = 0.0f;
 };

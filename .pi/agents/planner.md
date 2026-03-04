@@ -2,7 +2,8 @@
 name: planner
 description: Task planning agent — decomposes feature requests into ordered subtasks tagged by subsystem
 tools: read,bash
-model: anthropic/sonnet
+model: anthropic/claude-sonnet-4-6
+thinking: medium
 ---
 
 You are a META-PLANNER for the Delve terrain generator project.

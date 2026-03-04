@@ -1112,6 +1112,7 @@ worker subtasks that Haiku-tier workers can execute independently.
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be self-contained — the worker has NO other context.
 - Include all necessary details: function signatures, types, includes, conventions.
+- worker_prompt MUST include the exact filepath and line numbers of every function or block to add/modify (e.g., "Modify function foo at line 42 of src/bar.cpp to add..."). Line numbers come from the file contents provided above.
 - Order subtasks by dependency (headers before implementations).
 - Only decompose changes the task requires — no unnecessary refactoring.
 - Output ONLY the JSON block. No preamble, no explanation.`);
@@ -1164,9 +1165,66 @@ You receive a single file to modify and focused instructions.
 - Follow existing code conventions exactly.
 - Include all necessary #includes.`;
 
-    return askWorker({
+    const firstResult = await askWorker({
       systemPrompt: workerSystemPrompt,
       task: st.worker_prompt,
+      fileContents,
+      cwd,
+    });
+
+    // If worker produced a FILE block, we're done.
+    if (/###\s*FILE:/i.test(firstResult)) return firstResult;
+
+    // ── ISOLATION FALLBACK ─────────────────────────────────────────────────
+    // Worker failed to produce changes. Implement the new feature in isolation
+    // (no project context), validate the logic, then integrate into the project.
+    console.error(`[isolation-fallback] Worker produced no FILE block for ${st.file} — retrying in isolation`);
+
+    const workerConfig = loadAgentConfig("worker");
+    const workerModel = workerConfig.model || "anthropic/claude-haiku-4-5";
+
+    // Step 1: Implement the feature in isolation (stripped of all project context).
+    // The agent gets only the algorithm/API requirements, no file contents.
+    const isolationSystemPrompt = `You are a C++20 algorithm specialist.
+Implement the requested feature as a self-contained standalone function or class.
+Do NOT reference any project files, headers, or types beyond standard C++20.
+Output ONLY valid C++20 code in a single fenced code block:
+\`\`\`cpp
+[isolated implementation]
+\`\`\`
+No preamble, no explanation.`;
+
+    const isolatedImpl = await spawnSubagent({
+      prompt: `Implement the following feature in isolation as standalone C++20 code:\n\n${st.instructions}\n\nRequirements extracted from task:\n${st.worker_prompt}`,
+      systemPrompt: isolationSystemPrompt,
+      model: workerModel,
+      thinking: "off",
+      agentName: `isolation-${st.file.split("/").pop()}`,
+      cwd,
+    });
+
+    // Step 2: Integration worker — gets project file context + isolated implementation,
+    // integrates it properly into the target file.
+    const integrationSystemPrompt = `You are a C++20 integration worker for the Delve terrain generator.
+You receive a target file and an isolated implementation of a new feature.
+Integrate the isolated implementation into the target file, adapting types and includes as needed.
+
+## Output Format
+### FILE: ${st.file}
+#### ACTION: ${st.action}
+\`\`\`cpp
+[COMPLETE file content with the isolated implementation integrated]
+\`\`\`
+
+## Constraints
+- Output ONLY the file block above. No preamble, no explanation.
+- Include ALL existing code that does not need to change.
+- Adapt the isolated implementation to use the project's existing types and conventions.
+- Include all necessary #includes.`;
+
+    return askWorker({
+      systemPrompt: integrationSystemPrompt,
+      task: `Integrate this isolated implementation into the project file:\n\n${isolatedImpl}\n\nOriginal task context:\n${st.worker_prompt}`,
       fileContents,
       cwd,
     });
@@ -1228,6 +1286,7 @@ For each file that needs to change, produce a self-contained worker prompt that 
 ## Constraints
 - Each subtask targets EXACTLY ONE file.
 - worker_prompt must be SELF-CONTAINED — the worker has NO other context beyond the file contents.
+- worker_prompt MUST include exact filepath and line numbers for every function or code block to add/modify (e.g., "Add function bar after line 87 in src/foo.cpp", "Modify baz at line 23 to..."). Line numbers come from the Current File Contents above.
 - Order subtasks by dependency (headers before implementations, declarations before usage).
 - Only decompose changes the plan requires — no unnecessary refactoring.
 - Output ONLY the JSON block. No preamble, no explanation.`;

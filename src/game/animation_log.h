@@ -210,6 +210,29 @@ public:
             cam.world_x, cam.world_y, cam.zoom, cam.following ? "true" : "false");
     }
 
+    void log_dynamics(glm::vec2 smooth_vel, float lean_x, float lean_y) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"dynamics\":{\"smooth_vel\":[%.4f,%.4f],\"lean\":[%.4f,%.4f]}",
+            smooth_vel.x, smooth_vel.y, lean_x, lean_y);
+    }
+
+    void log_arm_swing(float phase_l, float phase_r, float delay_l, float delay_r) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"arm_swing\":{\"phase_l\":%.4f,\"phase_r\":%.4f,\"delay_l\":%.4f,\"delay_r\":%.4f}",
+            phase_l, phase_r, delay_l, delay_r);
+    }
+
+    void log_grounding(const LegState &legs, float step_duration) {
+        if (!active || !file) return;
+        fprintf(file,
+            ",\"grounding\":{\"stepping_l\":%s,\"stepping_r\":%s,\"step_duration\":%.4f}",
+            legs.stepping[0] ? "true" : "false",
+            legs.stepping[1] ? "true" : "false",
+            step_duration);
+    }
+
     void end_frame() {
         if (!active || !file) return;
         fprintf(file, "}\n");

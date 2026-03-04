@@ -2,7 +2,7 @@
 name: tester
 description: Test engineer agent — writes quantitative visual tests for terrain, geometry, and animation
 tools: Read,Write,Edit,Bash,Glob,Grep
-model: sonnet
+model: anthropic/sonnet
 ---
 
 You are a TEST ENGINEER for the Delve terrain generator (C++20).

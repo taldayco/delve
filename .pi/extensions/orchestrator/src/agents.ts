@@ -54,7 +54,7 @@ function loadAgentConfig(agentName: string): AgentConfig {
   const cached = agentConfigCache.get(agentName);
   if (cached) return cached;
 
-  const defaults: AgentConfig = { name: agentName, tools: [], model: "sonnet" };
+  const defaults: AgentConfig = { name: agentName, tools: [], model: "anthropic/sonnet" };
   const filePath = join(AGENTS_DIR, `${agentName}.md`);
   const content = loadFile(filePath);
   if (!content) return defaults;
@@ -165,9 +165,9 @@ export function silentShell(
 // Approximate tokens as chars/4 (rough but practical).
 // Model context windows (conservative estimates for usable input):
 const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  opus: 200_000,
-  sonnet: 200_000,
-  haiku: 200_000,
+  "anthropic/opus": 200_000,
+  "anthropic/sonnet": 200_000,
+  "anthropic/haiku": 200_000,
 };
 
 // Target: no agent should use more than 40% of its context window
@@ -287,7 +287,7 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
   let tmpFile: string | null = null;
 
   // Enforce context budget before spawning
-  const model = opts.model || "sonnet";
+  const model = opts.model || "anthropic/sonnet";
   const budget = enforceContextBudget(opts.systemPrompt, opts.prompt, model);
   const effectiveSystemPrompt = budget.systemPrompt;
   const effectivePrompt = budget.userPrompt;
@@ -301,6 +301,9 @@ async function spawnSubagent(opts: SpawnSubagentOpts): Promise<string> {
       "--mode", "json",
       "-p",
       "--no-session",
+      "--no-extensions",
+      "--no-skills",
+      "--no-prompt-templates",
       "--model", model,
     ];
 
@@ -470,7 +473,7 @@ async function callSubsystemAgent(
   const systemPrompt = buildSubsystemPrompt(subsystem);
   const agentName = SUBSYSTEM_AGENT_MAP[subsystem] || subsystem;
   const agentConfig = loadAgentConfig(agentName);
-  const model = agentConfig.model || "sonnet";
+  const model = agentConfig.model || "anthropic/sonnet";
 
   // Compute remaining char budget for file contents
   const limit = MODEL_CONTEXT_LIMITS[model] || 200_000;
@@ -573,7 +576,7 @@ ${opts.codebaseContext}`;
   const plan = await spawnSubagent({
     prompt,
     systemPrompt,
-    model: plannerConfig.model || "sonnet",
+    model: plannerConfig.model || "anthropic/sonnet",
     tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
     agentName: "planner",
   });
@@ -657,7 +660,7 @@ For each file, output:
 - Size MapData vectors correctly.`;
 
   // Compute remaining char budget for file contents
-  const limit = MODEL_CONTEXT_LIMITS["sonnet"] || 200_000;
+  const limit = MODEL_CONTEXT_LIMITS["anthropic/sonnet"] || 200_000;
   const budgetTokens = Math.floor(limit * CONTEXT_BUDGET_RATIO);
   const systemTokens = estimateTokens(systemPrompt);
   const remainingChars = Math.max((budgetTokens - systemTokens) * 4 - 2000, 8000);
@@ -675,7 +678,7 @@ ${fileContents}`;
   const result = await spawnWithEscalation({
     prompt,
     systemPrompt,
-    model: "sonnet",
+    model: "anthropic/sonnet",
     expectFileBlocks: true,
     agentName: "implementer",
   });
@@ -722,7 +725,7 @@ Include CMakeLists.txt updates if new test files are added.
 - Use DELVE_TEST macro and EXPECT_* assertions.`;
 
   const testerConfig = loadAgentConfig("tester");
-  const model = testerConfig.model || "sonnet";
+  const model = testerConfig.model || "anthropic/sonnet";
 
   // Compute remaining char budget for file contents
   const limit = MODEL_CONTEXT_LIMITS[model] || 200_000;
@@ -804,7 +807,7 @@ ${opts.testResults}`;
   const result = await spawnSubagent({
     prompt,
     systemPrompt,
-    model: reviewerConfig.model || "sonnet",
+    model: reviewerConfig.model || "anthropic/sonnet",
     tools: reviewerConfig.tools.length > 0 ? reviewerConfig.tools : undefined,
     agentName: "reviewer",
   });
@@ -838,7 +841,7 @@ export async function askWorker(opts: {
   return spawnSubagent({
     prompt,
     systemPrompt: opts.systemPrompt,
-    model: "haiku",
+    model: "anthropic/haiku",
     agentName: "worker",
   });
 }
@@ -886,7 +889,7 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
   const result = await spawnSubagent({
     prompt,
     systemPrompt,
-    model: "sonnet",
+    model: "anthropic/sonnet",
     agentName: "prompt-engineer",
   });
 
@@ -949,7 +952,7 @@ ${opts.buildOutput}
 
 Fix the compilation errors.`,
     systemPrompt,
-    model: config.model || "haiku",
+    model: config.model || "anthropic/haiku",
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "build-fixer",
   });
@@ -1000,7 +1003,7 @@ ${opts.testOutput}
 
 Fix the errors.`,
     systemPrompt,
-    model: config.model || "haiku",
+    model: config.model || "anthropic/haiku",
     tools: config.tools.length > 0 ? config.tools : undefined,
     agentName: "test-fixer",
   });
@@ -1054,7 +1057,7 @@ Diagnose the root cause of the test failures.`;
   return spawnSubagent({
     prompt,
     systemPrompt,
-    model: "sonnet",
+    model: "anthropic/sonnet",
     tools: ["Read", "Glob", "Grep"],
     agentName: "diagnoser",
   });
@@ -1100,7 +1103,7 @@ Design the optimal pipeline for this task.`;
   return spawnSubagent({
     prompt,
     systemPrompt,
-    model: "sonnet",
+    model: "anthropic/sonnet",
     agentName: "blueprint-gen",
   });
 }
@@ -1141,18 +1144,18 @@ export function escalate(opts: {
   currentTools: string[];
 }): { model: string; tools: string[] } {
   // Never auto-escalate to opus
-  if (opts.currentModel === "sonnet" || opts.currentModel === "opus") {
+  if (opts.currentModel === "anthropic/sonnet" || opts.currentModel === "anthropic/opus") {
     return { model: opts.currentModel, tools: opts.currentTools };
   }
 
   switch (opts.failureCategory) {
     case "capability":
       // Upgrade haiku → sonnet
-      return { model: "sonnet", tools: opts.currentTools };
+      return { model: "anthropic/sonnet", tools: opts.currentTools };
     case "tool":
       // Add write tools, upgrade model
       return {
-        model: "sonnet",
+        model: "anthropic/sonnet",
         tools: [...new Set([...opts.currentTools, "Write", "Edit", "Bash"])],
       };
     case "context":
@@ -1162,7 +1165,7 @@ export function escalate(opts: {
         tools: [...new Set([...opts.currentTools, "Read", "Glob", "Grep"])],
       };
     default:
-      return { model: "sonnet", tools: opts.currentTools };
+      return { model: "anthropic/sonnet", tools: opts.currentTools };
   }
 }
 
@@ -1176,7 +1179,7 @@ export async function spawnWithEscalation(
   const noBlocks = opts.expectFileBlocks && !result.match(/###\s*FILE:/g);
 
   if ((failure.failed || noBlocks) && (opts.depth || 0) < MAX_ESCALATION_DEPTH) {
-    const currentModel = opts.model || "sonnet";
+    const currentModel = opts.model || "anthropic/sonnet";
     const esc = escalate({
       failureCategory: failure.failed ? failure.category : "capability",
       currentModel,
@@ -1184,7 +1187,7 @@ export async function spawnWithEscalation(
     });
 
     // Never auto-escalate to opus
-    if (esc.model === "opus") return result;
+    if (esc.model === "anthropic/opus") return result;
     // No change? Don't retry
     if (esc.model === currentModel && JSON.stringify(esc.tools) === JSON.stringify(opts.tools || [])) return result;
 

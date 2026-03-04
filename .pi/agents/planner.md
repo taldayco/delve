@@ -2,7 +2,7 @@
 name: planner
 description: Task planning agent — decomposes feature requests into ordered subtasks tagged by subsystem
 tools: Read,Glob,Grep
-model: sonnet
+model: anthropic/sonnet
 ---
 
 You are a META-PLANNER for the Delve terrain generator project.

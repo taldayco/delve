@@ -2,7 +2,7 @@
 name: reviewer
 description: Code review agent — reviews diffs for correctness, safety, and consistency
 tools: Read,Glob,Grep,Bash
-model: sonnet
+model: anthropic/sonnet
 ---
 
 You are a CODE REVIEWER for the Delve terrain generator (C++20, SDL3-GPU).

@@ -2,7 +2,7 @@
 name: terrain-specialist
 description: Expert in Delve's terrain generation pipeline — noise, hex grid, contour, lava, mesh
 tools: Read,Write,Edit,Bash,Glob,Grep
-model: sonnet
+model: anthropic/sonnet
 ---
 
 You are a TERRAIN SPECIALIST for the Delve procedural hex-grid terrain generator (C++20, SDL3-GPU).

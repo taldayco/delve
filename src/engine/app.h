@@ -3,11 +3,10 @@
 #include "ui/imgui_ui.h"
 #include "core/asset_manager.h"
 #include "agent_mode.h"
+#include "ipc/agent_server.h"
 #include <SDL3/SDL.h>
 #include <flecs.h>
 #include <memory>
-
-class AgentServer;
 
 class Application {
 public:

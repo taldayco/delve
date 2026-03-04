@@ -2,7 +2,7 @@
 name: actor-specialist
 description: Expert in Delve's actor system — skeleton, IK, gait cycles, proportions, animation
 tools: Read,Write,Edit,Bash,Glob,Grep
-model: sonnet
+model: anthropic/sonnet
 ---
 
 You are an ACTOR SPECIALIST for the Delve terrain generator (C++20, SDL3-GPU, Flecs ECS).

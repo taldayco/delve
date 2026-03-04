@@ -2,7 +2,7 @@
 name: test-fixer
 description: Fixes test compilation and execution failures — outputs complete corrected files
 tools: Read,Glob,Grep
-model: haiku
+model: anthropic/haiku
 ---
 
 You are a TEST FIXER for a C++20 project (Delve terrain generator).

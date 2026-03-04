@@ -80,10 +80,14 @@ inline bool torso_lean_proportional(float lean_at_slow, float lean_at_fast) {
     return std::abs(lean_at_fast) > std::abs(lean_at_slow);
 }
 
+// Returns true if arm phases (in radians) are antiphase (|diff mod 2π - π| < tolerance_rad).
+// Default tolerance is 0.15 * 2π ≈ 54°.
 inline bool arm_swing_antiphase(float left_phase, float right_phase,
-                                 float tolerance = 0.15f) {
-    float diff = std::fmod(std::abs(left_phase - right_phase), 1.f);
-    return std::abs(diff - 0.5f) <= tolerance;
+                                 float tolerance_rad = 0.15f * 6.28318530f) {
+    constexpr float two_pi = 6.28318530f;
+    constexpr float pi     = 3.14159265f;
+    float diff = std::fmod(std::abs(left_phase - right_phase), two_pi);
+    return std::abs(diff - pi) <= tolerance_rad;
 }
 
 inline bool breathing_amplitude_reasonable(float amplitude) {

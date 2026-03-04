@@ -75,11 +75,19 @@ struct AnimationState {
     float sway_phase = 0.0f;
     float sway_amt   = 0.04f;
 
-    // Pendulum arm swing
-    float arm_phase[2] = {0.0f, 0.5f};
-    float arm_delay[2] = {0.0f, 0.0f}; // SmoothDamp forearm lag state
+    // Pendulum arm swing phases in radians, advance at gait rate.
+    // arm_phase[1] starts at π so arms are 180° antiphase (contralateral gait).
+    float arm_phase[2]     = {0.0f, 3.14159265f};
+    // SmoothDamp spring velocities for arm delay
+    float arm_delay_vel[2] = {0.0f, 0.0f};
+    // Smoothed arm delay values (monotonic, lag behind arm_phase).
+    // Also initialized antiphase (π offset) to match arm_phase.
+    float arm_delay[2]     = {0.0f, 3.14159265f};
 
     // Idle micro-motion
     float breath_phase = 0.0f;
     float weight_phase = 0.0f;
+
+    // Foot contact velocity at moment of plant (Subtask 6)
+    float foot_contact_velocity[2] = {0.0f, 0.0f};
 };

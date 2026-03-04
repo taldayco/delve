@@ -89,12 +89,15 @@ DELVE_TEST(torso_lean_proportional) {
 }
 
 DELVE_TEST(arm_swing_antiphase) {
-  // Left arm at phase 0.0, right arm at phase 0.5 — exactly antiphase
-  EXPECT_TRUE(arm_swing_antiphase(0.0f, 0.5f));
-  // Phases within tolerance of 0.5 difference also pass
-  EXPECT_TRUE(arm_swing_antiphase(0.1f, 0.6f));
+  constexpr float pi = 3.14159265f;
+  // Left at 0.0, right at π — exactly antiphase in radians
+  EXPECT_TRUE(arm_swing_antiphase(0.0f, pi));
+  // Phases within tolerance also pass (e.g. slight drift after some frames)
+  EXPECT_TRUE(arm_swing_antiphase(0.1f, pi + 0.1f));
   // Same phase is NOT antiphase
   EXPECT_FALSE(arm_swing_antiphase(0.0f, 0.0f));
+  // Offset by only 0.5 rad (~28°) is NOT antiphase
+  EXPECT_FALSE(arm_swing_antiphase(0.0f, 0.5f));
   return true;
 }
 

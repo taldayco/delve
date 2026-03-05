@@ -413,15 +413,13 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         using J = Joint;
         auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 
-        // ---- Ground traces: hip + foot projections to ground plane ----
+        // ---- Foundation: World Root ground marker + parenting tether to Hips ----
         {
             glm::vec3 trace_color(0.3f, 0.85f, 0.85f);  // teal
             float ground_z = j(J::ROOT).z;
 
-            // Hip trace
-            glm::vec3 hip_ground(j(J::HIPS).x, j(J::HIPS).y, ground_z);
-            emit_cylinder(j(J::HIPS), hip_ground, 0.012f, trace_color, 4, verts);
-            emit_flat_circle(hip_ground, cfg.torso_radius * 1.5f, trace_color, 16, verts);
+            emit_flat_circle(j(J::ROOT), cfg.torso_radius * 1.5f, trace_color, 16, verts);
+            emit_cylinder(j(J::ROOT), j(J::HIPS), 0.012f, trace_color, 4, verts);
 
             // Left foot trace
             glm::vec3 lfoot_ground(j(J::L_FOOT).x, j(J::L_FOOT).y, ground_z);
@@ -434,16 +432,28 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
             emit_flat_circle(rfoot_ground, cfg.leg_radius * 1.2f, trace_color, 12, verts);
         }
 
-        // ---- Spine / torso chain — bone-shaped octahedrons ----
+        // ---- Legs (emitted after root tether so they draw on top) ----
+        emit_bone_oct(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
+        emit_bone_oct(j(J::L_UPPER_LEG), j(J::L_LOWER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_LOWER_LEG), j(J::L_FOOT),      cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_FOOT),      j(J::L_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
+
+        emit_bone_oct(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
+        emit_bone_oct(j(J::R_UPPER_LEG), j(J::R_LOWER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_LOWER_LEG), j(J::R_FOOT),      cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_FOOT),      j(J::R_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
+
+        // ---- Pelvis bar ----
+        emit_bone_oct(j(J::L_UPPER_LEG), j(J::R_UPPER_LEG), cfg.leg_radius * 1.2f, body_color, verts);
+
+        // ---- Spine / torso chain (2 segments: abdomen + chest) ----
         emit_bone_oct(j(J::HIPS),     j(J::SPINE_01), cfg.torso_radius,        body_color, verts);
-        emit_bone_oct(j(J::SPINE_01), j(J::SPINE_02), cfg.torso_radius,        body_color, verts);
-        emit_bone_oct(j(J::SPINE_02), j(J::CHEST),    cfg.torso_radius,        body_color, verts);
+        emit_bone_oct(j(J::SPINE_01), j(J::CHEST),    cfg.torso_radius,        body_color, verts);
+
+        // ---- Neck / Head chain ----
         emit_bone_oct(j(J::CHEST),    j(J::NECK),     cfg.head_radius * 0.55f, body_color, verts);
         emit_bone_oct(j(J::NECK),     j(J::HEAD),     cfg.head_radius * 0.55f, body_color, verts);
-
-        // Head skull: full octahedron at HEAD position + skull-top nub
-        emit_diamond(j(J::HEAD), cfg.head_radius, body_color, verts);
-        emit_bone_oct(j(J::HEAD), j(J::HEAD_END), cfg.head_radius * 0.4f, body_color, verts);
+        emit_bone_oct(j(J::HEAD),     j(J::HEAD_END), cfg.head_radius * 0.4f,  body_color, verts);
 
         // ---- Left arm chain (with clavicle) ----
         emit_bone_oct(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius * 1.4f,  body_color, verts);
@@ -457,21 +467,8 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         emit_bone_oct(j(J::R_UPPER_ARM), j(J::R_LOWER_ARM), cfg.arm_radius,         body_color, verts);
         emit_bone_oct(j(J::R_LOWER_ARM), j(J::R_HAND),      cfg.arm_radius * 0.75f, body_color, verts);
 
-        // ---- Left leg chain (with toe) ----
-        emit_bone_oct(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
-        emit_bone_oct(j(J::L_UPPER_LEG), j(J::L_LOWER_LEG), cfg.leg_radius,         body_color, verts);
-        emit_bone_oct(j(J::L_LOWER_LEG), j(J::L_FOOT),      cfg.leg_radius,         body_color, verts);
-        emit_bone_oct(j(J::L_FOOT),      j(J::L_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
-
-        // ---- Right leg chain (with toe) ----
-        emit_bone_oct(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
-        emit_bone_oct(j(J::R_UPPER_LEG), j(J::R_LOWER_LEG), cfg.leg_radius,         body_color, verts);
-        emit_bone_oct(j(J::R_LOWER_LEG), j(J::R_FOOT),      cfg.leg_radius,         body_color, verts);
-        emit_bone_oct(j(J::R_FOOT),      j(J::R_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
-
-        // ---- Hierarchy V/A frames: shoulder girdle + pelvis bar ----
+        // ---- Shoulder bar ----
         emit_bone_oct(j(J::L_UPPER_ARM), j(J::R_UPPER_ARM), cfg.arm_radius * 1.0f, body_color, verts);
-        emit_bone_oct(j(J::L_UPPER_LEG), j(J::R_UPPER_LEG), cfg.leg_radius * 1.2f, body_color, verts);
 
         // ---- Joint pivot spheres + RGB axis tripods (structural joints 0–23) ----
         {

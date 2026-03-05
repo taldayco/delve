@@ -21,13 +21,13 @@ inline constexpr float ISO_VERT_SCALE = 0.8165f;
 struct ActorConfig {
     float hip_width      = 0.25f;
     float shoulder_width = 0.35f;
-    float leg_len        = 0.490f;  // 0.60 * ISO_VERT_SCALE
-    float shin_len       = 0.449f;  // 0.55 * ISO_VERT_SCALE
-    float torso_len      = 0.653f;  // 0.80 * ISO_VERT_SCALE
+    float leg_len        = 0.430f;  // thigh — shortened for proportional legs
+    float shin_len       = 0.390f;  // shin  — shortened for proportional legs
+    float torso_len      = 0.612f;  // torso — slightly shortened
     float neck_len       = 0.122f;  // 0.15 * ISO_VERT_SCALE
     float head_radius    = 0.163f;  // 0.20 * ISO_VERT_SCALE
-    float arm_len        = 0.286f;  // 0.35 * ISO_VERT_SCALE
-    float forearm_len    = 0.245f;  // 0.30 * ISO_VERT_SCALE
+    float arm_len        = 0.318f;  // upper arm — lengthened
+    float forearm_len    = 0.270f;  // forearm   — lengthened
     float limb_radius    = 0.07f;
     float torso_radius   = 0.14f;
 };
@@ -35,7 +35,7 @@ struct ActorConfig {
 struct ProceduralGait {
     float phase         = 0.0f;
     float stride_len    = 0.60f;
-    float step_height   = 0.147f;  // 0.18 * ISO_VERT_SCALE
+    float step_height   = 0.130f;  // proportional to shorter legs
     float step_duration = 0.25f;
     float move_speed    = 4.0f;
 };

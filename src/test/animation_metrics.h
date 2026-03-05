@@ -1,5 +1,5 @@
 #pragma once
-#include "actor.h"
+#include "rig.h"
 #include <cmath>
 #include <glm/glm.hpp>
 
@@ -18,16 +18,16 @@ inline glm::vec3 joint_direction(const glm::vec3 &from, const glm::vec3 &to) {
   return glm::normalize(to - from);
 }
 
-inline float pose_symmetry_score(const SkeletonPose &pose) {
+inline float pose_symmetry_score(const RigPose &pose) {
   // Compare left/right joint pairs
   struct Pair { Joint left; Joint right; };
   static const Pair pairs[] = {
-    {Joint::L_SHOULDER, Joint::R_SHOULDER},
-    {Joint::L_ELBOW,    Joint::R_ELBOW},
-    {Joint::L_WRIST,    Joint::R_WRIST},
-    {Joint::L_HIP,      Joint::R_HIP},
-    {Joint::L_KNEE,     Joint::R_KNEE},
-    {Joint::L_ANKLE,    Joint::R_ANKLE},
+    {Joint::L_UPPER_ARM,  Joint::R_UPPER_ARM},
+    {Joint::L_LOWER_ARM,  Joint::R_LOWER_ARM},
+    {Joint::L_HAND,       Joint::R_HAND},
+    {Joint::L_UPPER_LEG,  Joint::R_UPPER_LEG},
+    {Joint::L_LOWER_LEG,  Joint::R_LOWER_LEG},
+    {Joint::L_FOOT,       Joint::R_FOOT},
   };
 
   float total_diff = 0;
@@ -42,7 +42,7 @@ inline float pose_symmetry_score(const SkeletonPose &pose) {
   return 1.0f / (1.0f + total_diff);
 }
 
-inline float skeleton_height(const SkeletonPose &pose) {
+inline float skeleton_height(const RigPose &pose) {
   float max_z = pose.joints[0].z, min_z = pose.joints[0].z;
   for (int i = 0; i < (int)Joint::COUNT; ++i) {
     max_z = std::max(max_z, pose.joints[i].z);
@@ -71,9 +71,9 @@ inline float joint_lag_ratio(float shoulder_lag, float wrist_lag) {
   return wrist_lag / shoulder_lag;
 }
 
-// Returns the foot contact velocity from AnimationState for the given leg (0=left, 1=right).
+// Returns the foot contact velocity from RigState for the given leg (0=left, 1=right).
 // Lower is better: 0 = perfect plant, high values indicate skating.
-inline float foot_contact_velocity(const AnimationState &anim, int leg) {
+inline float foot_contact_velocity(const RigState &anim, int leg) {
   return anim.foot_contact_velocity[leg];
 }
 

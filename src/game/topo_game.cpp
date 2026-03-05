@@ -1,5 +1,5 @@
 #include "topo_game.h"
-#include "render/actor_animation.h"
+#include "render/rig_animation.h"
 #include "terrain/basalt.h"
 #include "terrain/lava.h"
 #include "terrain/noise_composer.h"
@@ -158,11 +158,11 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<ActorConfig>({})
       .set<ProceduralGait>({})
       .set<LegState>({})
-      .set<SkeletonPose>({})
-      .set<AnimationState>({});
+      .set<RigPose>({})
+      .set<RigState>({});
 
   // Register all 6 animation ECS systems.
-  register_animation_systems(ecs, input, camera, anim_log, player_entity);
+  register_rig_systems(ecs, input, camera, anim_log, player_entity);
 }
 
 void TopoGame::on_event(const SDL_Event &event, flecs::world &ecs) {
@@ -291,7 +291,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                              SDL_GetGPUSwapchainTextureFormat(gpu.device, gpu.game_window),
                              terrain_renderer.get_depth_format(),
                              asset_manager);
-    actor_renderer.init(gpu.device,
+    rig_renderer.init(gpu.device,
                         terrain_renderer.get_terrain_pipeline(),
                         terrain_renderer.get_dummy_ssbo(),
                         &asset_manager);
@@ -456,15 +456,15 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           uniforms, point_lights,
                           gpu.upload_manager);
 
-    if (actor_renderer.is_initialized()) {
-      uint32_t actor_vert_count = actor_renderer.prepare(frame.cmd, ecs);
+    if (rig_renderer.is_initialized()) {
+      uint32_t actor_vert_count = rig_renderer.prepare(frame.cmd, ecs);
       if (actor_vert_count > 0) {
         SDL_GPURenderPass *actor_pass =
             terrain_renderer.begin_render_pass_load_preserve_depth(
                 frame.cmd, frame.swapchain,
                 frame.swapchain_w, frame.swapchain_h);
         if (actor_pass) {
-          actor_renderer.draw(actor_pass, frame.cmd, uniforms,
+          rig_renderer.draw(actor_pass, frame.cmd, uniforms,
                               terrain_renderer.get_point_light_ssbo(),
                               actor_vert_count);
           SDL_EndGPURenderPass(actor_pass);
@@ -481,7 +481,7 @@ void TopoGame::on_cleanup(flecs::world &ecs) {
   task_system.shutdown();
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
-  actor_renderer.cleanup(gpu_ctx.device);
+  rig_renderer.cleanup(gpu_ctx.device);
 }
 
 bool TopoGame::wants_game_window_open(flecs::world &ecs) {

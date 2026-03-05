@@ -1,5 +1,5 @@
 #pragma once
-#include "actor.h"
+#include "rig.h"
 #include "camera/camera.h"
 #include <cstdio>
 #include <cstdint>
@@ -110,14 +110,16 @@ public:
         fprintf(file, "}");
     }
 
-    void log_joints(const SkeletonPose &pose, const Transform &t) {
+    void log_joints(const RigPose &pose, const Transform &t) {
         if (!active || !file) return;
         static const char *joint_names[(int)Joint::COUNT] = {
-            "ROOT", "SPINE", "CHEST", "NECK", "HEAD",
-            "L_SHOULDER", "L_ELBOW", "L_WRIST",
-            "R_SHOULDER", "R_ELBOW", "R_WRIST",
-            "L_HIP", "L_KNEE", "L_ANKLE",
-            "R_HIP", "R_KNEE", "R_ANKLE"
+            "ROOT", "HIPS", "SPINE_01", "SPINE_02", "CHEST", "NECK", "HEAD", "HEAD_END",
+            "L_CLAVICLE", "L_UPPER_ARM", "L_LOWER_ARM", "L_HAND",
+            "R_CLAVICLE", "R_UPPER_ARM", "R_LOWER_ARM", "R_HAND",
+            "L_UPPER_LEG", "L_LOWER_LEG", "L_FOOT", "L_TOE",
+            "R_UPPER_LEG", "R_LOWER_LEG", "R_FOOT", "R_TOE",
+            "POLE_KNEE_L", "POLE_KNEE_R", "POLE_ELBOW_L", "POLE_ELBOW_R",
+            "IK_FOOT_L", "IK_FOOT_R", "IK_HAND_L", "IK_HAND_R"
         };
 
         fprintf(file, ",\"joints\":{");
@@ -137,16 +139,16 @@ public:
 
         float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
 
-        auto l_elbow_off = rel(J::L_ELBOW, J::L_SHOULDER);
-        auto r_elbow_off = rel(J::R_ELBOW, J::R_SHOULDER);
+        auto l_elbow_off = rel(J::L_LOWER_ARM, J::L_UPPER_ARM);
+        auto r_elbow_off = rel(J::R_LOWER_ARM, J::R_UPPER_ARM);
         float l_arm_swing = l_elbow_off.x * fwd_x + l_elbow_off.y * fwd_y;
         float r_arm_swing = r_elbow_off.x * fwd_x + r_elbow_off.y * fwd_y;
 
-        auto l_shoulder_off = rel(J::L_SHOULDER, J::CHEST);
-        auto r_shoulder_off = rel(J::R_SHOULDER, J::CHEST);
+        auto l_shoulder_off = rel(J::L_UPPER_ARM, J::CHEST);
+        auto r_shoulder_off = rel(J::R_UPPER_ARM, J::CHEST);
 
-        float root_offset_x = pose.joints[(int)J::ROOT].x - t.x;
-        float root_offset_y = pose.joints[(int)J::ROOT].y - t.y;
+        float root_offset_x = pose.joints[(int)J::HIPS].x - t.x;
+        float root_offset_y = pose.joints[(int)J::HIPS].y - t.y;
 
         fprintf(file,
             ",\"arm_diagnostics\":{"
@@ -164,8 +166,8 @@ public:
             r_shoulder_off.x, r_shoulder_off.y, r_shoulder_off.z,
             (l_arm_swing == r_arm_swing) ? "true" : "false");
 
-        auto spine_off = rel(J::SPINE, J::ROOT);
-        auto chest_off = rel(J::CHEST, J::SPINE);
+        auto spine_off = rel(J::SPINE_01, J::HIPS);
+        auto chest_off = rel(J::CHEST, J::SPINE_01);
         auto neck_off  = rel(J::NECK, J::CHEST);
         fprintf(file,
             ",\"spine_diagnostics\":{"
@@ -208,7 +210,7 @@ public:
         frame_count++;
     }
 
-    void log_dynamics(const AnimationState &anim, const Velocity &vel, float dt) {
+    void log_dynamics(const RigState &anim, const Velocity &vel, float dt) {
         if (!active || !file) return;
         glm::vec3 cur_vel(vel.x, vel.y, 0.0f);
         glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - prev_velocity_log) / dt)
@@ -230,7 +232,7 @@ public:
             anim.smooth_velocity.x, anim.smooth_velocity.y);
     }
 
-    void log_arm_swing(const AnimationState &anim) {
+    void log_arm_swing(const RigState &anim) {
         if (!active || !file) return;
         float l_shoulder_lag = fabsf(anim.l_arm_target - anim.l_shoulder_smooth);
         float l_elbow_lag    = fabsf(anim.l_shoulder_smooth - anim.l_elbow_smooth);
@@ -247,7 +249,7 @@ public:
             fabsf(anim.r_elbow_smooth - anim.r_wrist_smooth));
     }
 
-    void log_grounding(const AnimationState &anim, const LegState &legs) {
+    void log_grounding(const RigState &anim, const LegState &legs) {
         if (!active || !file) return;
         fprintf(file,
             ",\"grounding\":{"

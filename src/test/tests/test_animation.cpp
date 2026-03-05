@@ -1,4 +1,4 @@
-#include "actor.h"
+#include "rig.h"
 #include "animation_metrics.h"
 #include "config.h"
 #include "test_harness.h"
@@ -29,8 +29,8 @@ DELVE_TEST(default_actor_config_proportional) {
 }
 
 DELVE_TEST(skeleton_pose_joint_count) {
-  EXPECT_EQ((int)Joint::COUNT, 17);
-  SkeletonPose pose;
+  EXPECT_EQ((int)Joint::COUNT, 32);
+  RigPose pose;
   for (int i = 0; i < (int)Joint::COUNT; ++i) {
     EXPECT_NEAR(pose.joints[i].x, 0.0f, 1e-6f);
     EXPECT_NEAR(pose.joints[i].y, 0.0f, 1e-6f);
@@ -40,31 +40,31 @@ DELVE_TEST(skeleton_pose_joint_count) {
 }
 
 DELVE_TEST(skeleton_symmetry_at_rest) {
-  SkeletonPose pose;
+  RigPose pose;
   ActorConfig cfg;
-  pose.joints[(int)Joint::ROOT] = {0, 0, 0};
-  pose.joints[(int)Joint::SPINE] = {0, 0, cfg.torso_len * 0.3f};
-  pose.joints[(int)Joint::CHEST] = {0, 0, cfg.torso_len * 0.7f};
-  pose.joints[(int)Joint::NECK] = {0, 0, cfg.torso_len};
-  pose.joints[(int)Joint::HEAD] = {0, 0, cfg.torso_len + cfg.neck_len};
-  pose.joints[(int)Joint::L_SHOULDER] = {-cfg.shoulder_width, 0, cfg.torso_len};
-  pose.joints[(int)Joint::R_SHOULDER] = {cfg.shoulder_width, 0, cfg.torso_len};
-  pose.joints[(int)Joint::L_ELBOW] = {-cfg.shoulder_width - cfg.arm_len,
-                                      0, cfg.torso_len};
-  pose.joints[(int)Joint::R_ELBOW] = {cfg.shoulder_width + cfg.arm_len,
-                                      0, cfg.torso_len};
-  pose.joints[(int)Joint::L_WRIST] = {
+  pose.joints[(int)Joint::HIPS]     = {0, 0, 0};
+  pose.joints[(int)Joint::SPINE_01] = {0, 0, cfg.torso_len * 0.3f};
+  pose.joints[(int)Joint::CHEST]    = {0, 0, cfg.torso_len * 0.7f};
+  pose.joints[(int)Joint::NECK]     = {0, 0, cfg.torso_len};
+  pose.joints[(int)Joint::HEAD]     = {0, 0, cfg.torso_len + cfg.neck_len};
+  pose.joints[(int)Joint::L_UPPER_ARM] = {-cfg.shoulder_width, 0, cfg.torso_len};
+  pose.joints[(int)Joint::R_UPPER_ARM] = {cfg.shoulder_width, 0, cfg.torso_len};
+  pose.joints[(int)Joint::L_LOWER_ARM] = {-cfg.shoulder_width - cfg.arm_len,
+                                          0, cfg.torso_len};
+  pose.joints[(int)Joint::R_LOWER_ARM] = {cfg.shoulder_width + cfg.arm_len,
+                                          0, cfg.torso_len};
+  pose.joints[(int)Joint::L_HAND] = {
       -cfg.shoulder_width - cfg.arm_len - cfg.forearm_len, 0, cfg.torso_len};
-  pose.joints[(int)Joint::R_WRIST] = {
+  pose.joints[(int)Joint::R_HAND] = {
       cfg.shoulder_width + cfg.arm_len + cfg.forearm_len, 0, cfg.torso_len};
-  pose.joints[(int)Joint::L_HIP] = {-cfg.hip_width, 0, 0};
-  pose.joints[(int)Joint::R_HIP] = {cfg.hip_width, 0, 0};
-  pose.joints[(int)Joint::L_KNEE] = {-cfg.hip_width, 0, -cfg.leg_len};
-  pose.joints[(int)Joint::R_KNEE] = {cfg.hip_width, 0, -cfg.leg_len};
-  pose.joints[(int)Joint::L_ANKLE] = {-cfg.hip_width,
-                                      0, -cfg.leg_len - cfg.shin_len};
-  pose.joints[(int)Joint::R_ANKLE] = {cfg.hip_width,
-                                      0, -cfg.leg_len - cfg.shin_len};
+  pose.joints[(int)Joint::L_UPPER_LEG] = {-cfg.hip_width, 0, 0};
+  pose.joints[(int)Joint::R_UPPER_LEG] = {cfg.hip_width, 0, 0};
+  pose.joints[(int)Joint::L_LOWER_LEG] = {-cfg.hip_width, 0, -cfg.leg_len};
+  pose.joints[(int)Joint::R_LOWER_LEG] = {cfg.hip_width, 0, -cfg.leg_len};
+  pose.joints[(int)Joint::L_FOOT] = {-cfg.hip_width,
+                                     0, -cfg.leg_len - cfg.shin_len};
+  pose.joints[(int)Joint::R_FOOT] = {cfg.hip_width,
+                                     0, -cfg.leg_len - cfg.shin_len};
 
   float sym = pose_symmetry_score(pose);
   EXPECT_GT(sym, 0.95f);
@@ -410,12 +410,12 @@ DELVE_TEST(grounding_offset_equals_leg_plus_shin) {
 DELVE_TEST(spine_chain_ascending_in_z) {
   ActorConfig cfg;
   float base_z = 10.0f;
-  glm::vec3 root = {0, 0, base_z};
-  glm::vec3 spine = root + glm::vec3(0, 0, cfg.torso_len * 0.4f);
-  glm::vec3 chest = root + glm::vec3(0, 0, cfg.torso_len);
+  glm::vec3 hips = {0, 0, base_z};
+  glm::vec3 spine = hips + glm::vec3(0, 0, cfg.torso_len * 0.4f);
+  glm::vec3 chest = hips + glm::vec3(0, 0, cfg.torso_len);
   glm::vec3 neck = chest + glm::vec3(0, 0, cfg.neck_len);
   glm::vec3 head = neck + glm::vec3(0, 0, cfg.head_radius);
-  EXPECT_GT(spine.z, root.z);
+  EXPECT_GT(spine.z, hips.z);
   EXPECT_GT(chest.z, spine.z);
   EXPECT_GT(neck.z, chest.z);
   EXPECT_GT(head.z, neck.z);

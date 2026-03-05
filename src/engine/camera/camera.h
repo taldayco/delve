@@ -5,8 +5,8 @@
 struct CameraState {
   float world_x = 0.0f;
   float world_y = 0.0f;
-  float zoom = 1.0f;
-  float target_zoom = 1.0f;
+  float zoom = 1.5f;
+  float target_zoom = 1.5f;
 
   float follow_x = 0.0f;
   float follow_y = 0.0f;

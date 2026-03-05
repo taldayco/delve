@@ -467,6 +467,8 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::HIPS]     += sway_vec;
                 pose.joints[(int)J::SPINE_01] += sway_vec;
                 pose.joints[(int)J::CHEST]    += sway_vec;
+                pose.joints[(int)J::NECK]     += sway_vec;
+                pose.joints[(int)J::HEAD]     += sway_vec;
 
                 // Fix 3: Hip counter-animation (CoM shift + double-bounce).
                 float walk_blend = std::min(1.0f, speed / (gait.move_speed * 0.3f));
@@ -549,6 +551,8 @@ void register_rig_systems(flecs::world &ecs,
                 glm::vec3 idle_sway_vec(rght_x * idle_sway, rght_y * idle_sway, 0.0f);
                 pose.joints[(int)J::HIPS]     += idle_sway_vec;
                 pose.joints[(int)J::SPINE_01] += idle_sway_vec;
+                pose.joints[(int)J::NECK]     += idle_sway_vec;
+                pose.joints[(int)J::HEAD]     += idle_sway_vec;
 
                 // ---- Idle weight shift ----
                 if (idle_blend > 0.1f) {

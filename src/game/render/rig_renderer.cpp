@@ -451,9 +451,8 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         emit_bone_oct(j(J::SPINE_01), j(J::CHEST),    cfg.torso_radius,        body_color, verts);
 
         // ---- Neck / Head chain ----
-        emit_bone_oct(j(J::CHEST),    j(J::NECK),     cfg.head_radius * 0.55f, body_color, verts);
-        emit_bone_oct(j(J::NECK),     j(J::HEAD),     cfg.head_radius * 0.55f, body_color, verts);
-        emit_bone_oct(j(J::HEAD),     j(J::HEAD_END), cfg.head_radius * 0.4f,  body_color, verts);
+        emit_bone_oct(j(J::CHEST),    j(J::NECK),     cfg.head_radius * 0.3f, body_color, verts);
+        emit_bone_oct(j(J::NECK),     j(J::HEAD_END), cfg.head_radius * 0.55f, body_color, verts);
 
         // ---- Left arm chain (with clavicle) ----
         emit_bone_oct(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius * 1.4f,  body_color, verts);

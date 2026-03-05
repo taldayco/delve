@@ -2,6 +2,7 @@
 #include "animation_metrics.h"
 #include "config.h"
 #include "test_harness.h"
+
 #include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
@@ -174,19 +175,18 @@ DELVE_TEST(velocity_smoothing_has_weight) {
   return true;
 }
 
-// Test: Fix 1 — Elliptical foot path via cosine-ease has peak XY velocity at
-// mid-stride. ts_xy = (1 - cos(p*PI)) / 2  →  d(ts_xy)/dp ∝ sin(p*PI), peaks at
-// p=0.5.
+// Test: Fix 1 — Smootherstep foot path has peak XY velocity at mid-stride.
+// smootherstep(t) = 6t^5 - 15t^4 + 10t^3
+// Derivative peaks at t=0.5 and has zero first+second derivatives at endpoints.
 DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
-  auto cosease = [](float p) {
-    return (1.0f - cosf(p * glm::pi<float>())) * 0.5f;
+  auto smootherstep = [](float t) {
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
   };
   float dp = 0.05f;
-  float t_start = cosease(0.00f + dp) - cosease(0.00f);
-  float t_mid = cosease(0.50f + dp) - cosease(0.50f);
-  float t_end = cosease(1.00f) - cosease(1.00f - dp);
-  // Mid-stride velocity is strictly greater than start and end (elliptical
-  // acceleration).
+  float t_start = smootherstep(0.00f + dp) - smootherstep(0.00f);
+  float t_mid   = smootherstep(0.50f + dp) - smootherstep(0.50f);
+  float t_end   = smootherstep(1.00f)      - smootherstep(1.00f - dp);
+  // Mid-stride velocity is strictly greater than start and end.
   EXPECT_GT(t_mid, t_start);
   EXPECT_GT(t_mid, t_end);
   // Endpoints are slow: less than half the mid-stride rate.
@@ -196,26 +196,27 @@ DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
 }
 
 // Test: Fix 2 — Directional multiplier is higher for isometric-vertical
-// movement. Moving along world(-1,-1)/sqrt(2) (screen "up") gives multiplier
-// > 1.3. Moving along world(+1,0) gives a lower multiplier.
+// movement. Screen-up direction = world(-1,-1)/sqrt(2) gives iso_vert=1.0
+// and multiplier ~1.41. Screen-right direction = world(1,-1)/sqrt(2) gives
+// iso_vert=0 and multiplier=1.0. Coefficient 0.41 ≈ sqrt(2)-1.
 DELVE_TEST(directional_multiplier_isometric_vertical) {
   static constexpr float ISO_AXIS_X = -0.70710678118f;
   static constexpr float ISO_AXIS_Y = -0.70710678118f;
+  static constexpr float DIR_SCALE  =  0.41f;  // AnimationConfig::directional_speed_scale
 
-  // Direction along isometric vertical (NW in world = up on screen).
+  // Screen-up = world(-1,-1)/sqrt(2): dot with ISO_AXIS = 1.0
   float vel_dx_up = -0.70710678118f, vel_dy_up = -0.70710678118f;
   float iso_vert_up = fabsf(vel_dx_up * ISO_AXIS_X + vel_dy_up * ISO_AXIS_Y);
-  float mult_up = 1.0f + iso_vert_up * 0.5f;
+  float mult_up = 1.0f + iso_vert_up * DIR_SCALE;
 
-  // True isometric screen-horizontal direction = world (1, -1)/sqrt(2).
+  // Screen-right = world(1,-1)/sqrt(2): dot with ISO_AXIS = 0.0
   float vel_dx_right = 0.70710678118f, vel_dy_right = -0.70710678118f;
-  float iso_vert_right =
-      fabsf(vel_dx_right * ISO_AXIS_X + vel_dy_right * ISO_AXIS_Y);
-  float mult_right = 1.0f + iso_vert_right * 0.5f;
+  float iso_vert_right = fabsf(vel_dx_right * ISO_AXIS_X + vel_dy_right * ISO_AXIS_Y);
+  float mult_right = 1.0f + iso_vert_right * DIR_SCALE;
 
   EXPECT_GT(mult_up, mult_right); // vertical axis → higher multiplier
-  EXPECT_GT(mult_up, 1.3f);       // meaningful boost (≥+30%)
-  EXPECT_LT(mult_right, 1.05f);   // near 1.0 (no boost for screen-horizontal)
+  EXPECT_GT(mult_up, 1.35f);      // ≥sqrt(2)-ish boost
+  EXPECT_NEAR(mult_right, 1.0f, 0.01f); // no boost for screen-horizontal
   return true;
 }
 
@@ -322,8 +323,8 @@ DELVE_TEST(no_simultaneous_stepping) {
       if (legs.stepping[leg]) {
         legs.progress[leg] += dt / adaptive_duration;
         float progress = std::min(legs.progress[leg], 1.0f);
-        // Use cosine-ease for XY (Fix 1).
-        float ts = (1.0f - cosf(progress * glm::pi<float>())) * 0.5f;
+        // Use smootherstep for XY — matches live GaitSystem.
+        float ts = progress * progress * progress * (progress * (progress * 6.0f - 15.0f) + 10.0f);
 
         legs.foot[leg].x = legs.prev_foot[leg].x +
                            (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
@@ -438,4 +439,246 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
   EXPECT_LT(max_bob, 0.026f);
   EXPECT_GT(max_bob, 0.0f);
   return true;
+}
+
+// ---- Tests for walk animation math (update_walk_animation, compute_hip_counter_animation,
+//      compute_foot_position formulas verified inline) ----
+
+// Inline helpers mirroring actor_animation.cpp pure-math functions so tests
+// have no SDL/Flecs/ECS dependency.
+
+// Mirrors the live GaitSystem direction-multiplier formula:
+// iso_vert = |dot(vel_dir, (-1,-1)/sqrt(2))|, multiplier = 1 + iso_vert * coeff.
+static float test_advance_phase(float phase, float dt, float speed,
+                                 glm::vec2 dir, float dir_scale_coeff = 0.41f) {
+    static constexpr float ISO_AXIS_X = -0.70710678118f;
+    static constexpr float ISO_AXIS_Y = -0.70710678118f;
+    float iso_vert = std::abs(dir.x * ISO_AXIS_X + dir.y * ISO_AXIS_Y);
+    float dir_scale = 1.0f + iso_vert * dir_scale_coeff;
+    return phase + speed * dt * dir_scale;
+}
+
+struct TestHipState {
+    float hip_rotation_deg   = 0.0f;
+    float hip_drop_fraction  = 0.0f;
+    float hip_bob_y          = 0.0f;
+};
+
+static TestHipState test_compute_hip_counter(float stride_phase,
+                                              float hip_sway_deg    = 5.0f,
+                                              float hip_drop_max    = 0.03f,
+                                              float hip_bob_amp     = 0.02f) {
+    float two_pi_phase = stride_phase * 2.0f * glm::pi<float>();
+    TestHipState s;
+    s.hip_rotation_deg  = hip_sway_deg  * std::sin(two_pi_phase);
+    s.hip_drop_fraction = hip_drop_max  * (1.0f - std::abs(std::cos(two_pi_phase)));
+    s.hip_bob_y         = hip_bob_amp   * std::abs(std::sin(two_pi_phase));
+    return s;
+}
+
+static glm::vec3 test_compute_foot_position(float t,
+                                             glm::vec3 prev, glm::vec3 target, float step_height) {
+    // Smootherstep — matches live actor_animation.cpp GaitSystem formula.
+    float warped_t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+    float ts_z     = t * t * (3.0f - 2.0f * t);
+    glm::vec3 out;
+    out.x = prev.x + (target.x - prev.x) * warped_t;
+    out.y = prev.y + (target.y - prev.y) * warped_t;
+    out.z = prev.z + (target.z - prev.z) * ts_z + std::sin(t * glm::pi<float>()) * step_height;
+    return out;
+}
+
+// Test: phase advances proportional to speed; double speed → double advance.
+DELVE_TEST(walk_animation_phase_proportional_to_speed) {
+    float dt = 1.0f / 60.0f;
+    // Pure-X world direction: iso_vert = 0.707 (neither max nor min)
+    glm::vec2 dir(1.0f, 0.0f);
+
+    float p1 = test_advance_phase(0.0f, dt, 1.0f, dir);
+    float p2 = test_advance_phase(0.0f, dt, 2.0f, dir);
+
+    EXPECT_GT(p2, p1 * 1.8f);
+    EXPECT_LT(p2, p1 * 2.2f);
+    return true;
+}
+
+// Test: screen-up movement advances phase faster than screen-right movement.
+// Screen-up = world(-1,-1)/sqrt(2): iso_vert=1.0 → max multiplier.
+// Screen-right = world(1,-1)/sqrt(2): iso_vert=0 → no boost.
+DELVE_TEST(walk_animation_directional_scale_y_greater_than_x) {
+    float dt = 1.0f / 60.0f;
+    // screen-right direction in world space
+    glm::vec2 dir_right(0.70710678118f, -0.70710678118f);
+    // screen-up direction in world space
+    glm::vec2 dir_up(-0.70710678118f, -0.70710678118f);
+
+    float px = test_advance_phase(0.0f, dt, 1.0f, dir_right);
+    float py = test_advance_phase(0.0f, dt, 1.0f, dir_up);
+
+    EXPECT_GT(py, px);
+    float ratio = py / px;
+    // Expected: (1 + 1.0*0.41) / (1 + 0.0*0.41) = 1.41
+    EXPECT_GT(ratio, 1.35f);
+    EXPECT_LT(ratio, 1.50f);
+    return true;
+}
+
+// Test: hip_rotation_deg bounded to ±hip_sway_deg, bob ≥ 0, drop ≥ 0.
+DELVE_TEST(hip_counter_animation_bounds) {
+    bool rotation_ok = true, bob_ok = true, drop_ok = true;
+    const float sway_deg = 5.0f, drop_max = 0.03f, bob_amp = 0.02f;
+
+    for (int i = 0; i < 100; ++i) {
+        auto s = test_compute_hip_counter((float)i / 100.0f, sway_deg, drop_max, bob_amp);
+        if (std::abs(s.hip_rotation_deg) > sway_deg + 1e-4f)   rotation_ok = false;
+        if (s.hip_bob_y < -1e-4f || s.hip_bob_y > bob_amp + 1e-4f) bob_ok = false;
+        if (s.hip_drop_fraction < -1e-4f || s.hip_drop_fraction > drop_max + 1e-4f) drop_ok = false;
+    }
+    EXPECT_TRUE(rotation_ok);
+    EXPECT_TRUE(bob_ok);
+    EXPECT_TRUE(drop_ok);
+    return true;
+}
+
+// Test: hip_bob_y (|sin(2π*phase)|) peaks exactly twice per [0,1) cycle.
+DELVE_TEST(hip_bob_two_peaks_per_cycle) {
+    float prev = 0.0f, pprev = 0.0f;
+    int peaks = 0;
+    for (int i = 0; i <= 200; ++i) {
+        float cur = test_compute_hip_counter((float)i / 200.0f).hip_bob_y;
+        if (i >= 2 && pprev < prev && cur < prev)
+            ++peaks;
+        pprev = prev; prev = cur;
+    }
+    EXPECT_EQ(peaks, 2);
+    return true;
+}
+
+// Test: foot Z-lift = 0 at t=0 and t=1, peaks near step_height at t=0.5.
+DELVE_TEST(foot_position_z_lift_arc) {
+    glm::vec3 prev{0,0,0}, target{1,0,0};
+    float sh = 0.5f;
+    glm::vec3 at0  = test_compute_foot_position(0.0f, prev, target, sh);
+    glm::vec3 at05 = test_compute_foot_position(0.5f, prev, target, sh);
+    glm::vec3 at1  = test_compute_foot_position(1.0f, prev, target, sh);
+
+    EXPECT_NEAR(at0.z,  0.0f, 1e-4f);
+    EXPECT_NEAR(at1.z,  0.0f, 1e-4f);
+    EXPECT_NEAR(at05.z, sh,   0.02f);
+    EXPECT_GT(at05.z, at0.z);
+    EXPECT_GT(at05.z, at1.z);
+    return true;
+}
+
+// Test: foot XY velocity peaks at mid-stride (sine-warp easing).
+DELVE_TEST(foot_position_xy_velocity_peaks_at_midstride) {
+    glm::vec3 prev{0,0,0}, target{2,0,0};
+    float dp = 0.05f;
+    float v_start = test_compute_foot_position(dp, prev, target, 0.0f).x
+                  - test_compute_foot_position(0.0f, prev, target, 0.0f).x;
+    float v_mid   = test_compute_foot_position(0.5f + dp, prev, target, 0.0f).x
+                  - test_compute_foot_position(0.5f, prev, target, 0.0f).x;
+    float v_end   = test_compute_foot_position(1.0f, prev, target, 0.0f).x
+                  - test_compute_foot_position(1.0f - dp, prev, target, 0.0f).x;
+
+    EXPECT_GT(v_mid, v_start);
+    EXPECT_GT(v_mid, v_end);
+    EXPECT_LT(v_start, v_mid * 0.5f);
+    return true;
+}
+
+// Test: foot position XY reaches target exactly at t=1 (Z also reaches target when sh=0).
+DELVE_TEST(foot_position_reaches_target_at_t1) {
+    glm::vec3 prev{3,-1,2}, target{5,2,1};
+    glm::vec3 at1 = test_compute_foot_position(1.0f, prev, target, 0.0f);
+    EXPECT_NEAR(at1.x, target.x, 1e-4f);
+    EXPECT_NEAR(at1.y, target.y, 1e-4f);
+    EXPECT_NEAR(at1.z, target.z, 1e-4f);
+    return true;
+}
+
+// ---- ISO height foreshortening tests ----
+
+// Test: AnimationConfig::ISO_CHAR_HEIGHT_SCALE = 0.816 * 0.92 ≈ 0.751.
+// This constant squashes character height for correct 2:1 isometric proportions.
+DELVE_TEST(iso_char_height_scale_value) {
+    float scale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
+    // Should be ~0.751 (within 1% tolerance).
+    EXPECT_GT(scale, 0.74f);
+    EXPECT_LT(scale, 0.76f);
+    return true;
+}
+
+// Test: Foreshortening reduces skeleton height relative to foot_z.
+// After applying ISO_CHAR_HEIGHT_SCALE, the vertical extent above foot_z
+// is strictly less than before (and greater than 0).
+DELVE_TEST(iso_foreshortening_reduces_height) {
+    ActorConfig cfg;
+    float foot_z = 0.0f;
+
+    // Build a simple spine stack above foot_z.
+    float heights_before[5] = {
+        0.0f,
+        cfg.leg_len,
+        cfg.leg_len + cfg.shin_len,
+        cfg.leg_len + cfg.shin_len + cfg.torso_len,
+        cfg.leg_len + cfg.shin_len + cfg.torso_len + cfg.neck_len + cfg.head_radius
+    };
+
+    float scale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
+    float top_before = heights_before[4];
+    float top_after  = foot_z + (top_before - foot_z) * scale;
+
+    EXPECT_LT(top_after, top_before);
+    EXPECT_GT(top_after, 0.0f);
+    // Foot level stays planted (foot_z is the reference, not scaled).
+    float foot_after = foot_z + (foot_z - foot_z) * scale;
+    EXPECT_NEAR(foot_after, foot_z, 1e-6f);
+    return true;
+}
+
+// Test: AnimationConfig default directional_speed_scale is 0.41 ≈ sqrt(2)-1.
+// For screen-up movement (iso_vert=1.0): multiplier = 1 + 1.0*0.41 = 1.41 ≈ sqrt(2).
+// This is the 2:1 iso correction factor for vertical-axis visual distance.
+DELVE_TEST(animation_config_directional_speed_scale_default) {
+    AnimationConfig cfg;
+    EXPECT_NEAR(cfg.directional_speed_scale, 0.41f, 1e-4f);
+    float screen_up_scale = 1.0f + 1.0f * cfg.directional_speed_scale; // iso_vert=1.0 for screen-up
+    // Should be close to sqrt(2) (1.414) — the 2:1 iso correction factor.
+    EXPECT_GT(screen_up_scale, 1.38f);
+    EXPECT_LT(screen_up_scale, 1.45f);
+    return true;
+}
+
+// Test: AnimationConfig hip counter-animation defaults are non-zero and bounded.
+DELVE_TEST(animation_config_hip_defaults_valid) {
+    AnimationConfig acfg;
+    EXPECT_GT(acfg.hip_sway_deg,      0.0f);
+    EXPECT_LT(acfg.hip_sway_deg,     15.0f);
+    EXPECT_GT(acfg.hip_drop_max,      0.0f);
+    EXPECT_LT(acfg.hip_drop_max,      0.1f);
+    EXPECT_GT(acfg.hip_bob_amplitude, 0.0f);
+    EXPECT_LT(acfg.hip_bob_amplitude, 0.1f);
+    return true;
+}
+
+// Test: Smootherstep is strictly steeper than cosine-ease at midpoint.
+// Both are S-curves: smootherstep has zero 1st+2nd derivatives at endpoints,
+// giving faster transit through midpoint than cosine-ease.
+DELVE_TEST(smootherstep_steeper_than_cosine_ease_at_midpoint) {
+    auto smootherstep = [](float t) {
+        return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+    };
+    auto cosease = [](float t) {
+        return (1.0f - std::cos(t * glm::pi<float>())) * 0.5f;
+    };
+    float dp = 0.02f;
+    float ss_mid = smootherstep(0.5f + dp) - smootherstep(0.5f);
+    float ce_mid = cosease(0.5f + dp)      - cosease(0.5f);
+    // Smootherstep has higher velocity at midpoint (the curves are distinct).
+    EXPECT_GT(ss_mid, ce_mid);
+    // Both start and end at 0 and 1 exactly.
+    EXPECT_NEAR(smootherstep(0.0f), 0.0f, 1e-6f);
+    EXPECT_NEAR(smootherstep(1.0f), 1.0f, 1e-6f);
+    return true;
 }

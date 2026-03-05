@@ -218,6 +218,44 @@ void register_animation_systems(flecs::world &ecs,
                         }
                     }
                 }
+
+                // ---- Planted-foot reach clamp ----
+                // During abrupt direction changes (e.g. 180° turn), a planted
+                // foot can end up far behind the hip while the one-foot-planted
+                // invariant prevents both feet from stepping simultaneously.
+                // Clamp horizontal distance to prevent visible hyperextension.
+                float max_horiz = gait.stride_len * 0.9f;
+                for (int leg = 0; leg < 2; ++leg) {
+                    float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
+                    float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
+
+                    if (!legs.stepping[leg]) {
+                        float dx = legs.foot[leg].x - hip_x;
+                        float dy = legs.foot[leg].y - hip_y;
+                        float hd = sqrtf(dx * dx + dy * dy);
+                        if (hd > max_horiz) {
+                            float s = max_horiz / hd;
+                            legs.foot[leg].x = hip_x + dx * s;
+                            legs.foot[leg].y = hip_y + dy * s;
+                        }
+                    } else if (legs.progress[leg] < 0.4f) {
+                        // Retarget in-flight steps whose target has become
+                        // unreachable due to a direction reversal.
+                        float tdx = legs.target[leg].x - hip_x;
+                        float tdy = legs.target[leg].y - hip_y;
+                        float th  = sqrtf(tdx * tdx + tdy * tdy);
+                        if (th > max_horiz) {
+                            float step_travel = speed * adaptive_duration;
+                            float target_off  = gait.stride_len * 0.5f
+                                                + step_travel * 0.75f;
+                            legs.target[leg].x = hip_x + vel_dx * target_off;
+                            legs.target[leg].y = hip_y + vel_dy * target_off;
+                            legs.target[leg].z = sample_world_height(*map_data,
+                                                    legs.target[leg].x,
+                                                    legs.target[leg].y);
+                        }
+                    }
+                }
             });
         });
 
@@ -355,6 +393,14 @@ void register_animation_systems(flecs::world &ecs,
                     float D = glm::length(axis);
                     float min_D = fabsf(a - b) + 0.001f;
                     float max_D = a + b - 0.03f; // margin prevents knee hyperextension
+
+                    // Pull ankle inward when well beyond IK reach to prevent
+                    // visual hyperextension.  15% tolerance preserves the
+                    // natural slight over-extension at rest (foot below hip).
+                    float stretch_limit = max_D * 1.15f;
+                    if (D > stretch_limit && D > 1e-5f)
+                        out_ankle = H + (axis / D) * stretch_limit;
+
                     D = std::max(min_D, std::min(D, max_D));
 
                     if (glm::length(axis) > 1e-5f)

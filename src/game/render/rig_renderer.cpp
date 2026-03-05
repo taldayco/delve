@@ -7,6 +7,31 @@
 
 static constexpr float PI = 3.14159265358979323846f;
 
+// ---- Isometric bone compensation ----
+// The isometric view matrix scales Z by HS=12.5 vs XY by TW=2/TH=1.
+// Vertical bones appear as 38:1 sticks without compensation.
+struct IsoCompensation {
+    float width_scale;    // multiply bone width (octahedrons only)
+    float equator_t;      // equatorial ring position along bone
+    float radial_z_comp;  // radial Z compression factor
+};
+
+static IsoCompensation iso_compensate_bone(const glm::vec3 &a, const glm::vec3 &b) {
+    glm::vec3 dir = b - a;
+    float len = glm::length(dir);
+    if (len < 1e-5f) return {1.0f, 0.2f, 0.18f};
+    dir /= len;
+
+    float dot_z = glm::dot(dir, glm::vec3(0.0f, 0.0f, 1.0f));
+    float z_align = fabsf(dot_z);
+
+    IsoCompensation comp;
+    comp.width_scale   = 1.0f + sqrtf(z_align) * 2.0f;          // 1.0 → 3.0
+    comp.equator_t     = 0.2f + z_align * 0.15f;                 // 0.20 → 0.35
+    comp.radial_z_comp = 0.18f + z_align * (1.0f - 0.18f);       // 0.18 → 1.0
+    return comp;
+}
+
 void RigRenderer::init(SDL_GPUDevice *device,
                        SDL_GPUGraphicsPipeline *terrain_pipeline,
                        SDL_GPUBuffer *dummy_ssbo,
@@ -59,6 +84,8 @@ void RigRenderer::cleanup(SDL_GPUDevice *device) {
 void RigRenderer::emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
                                  float radius, glm::vec3 color, int sides,
                                  std::vector<BasaltVertex> &out_verts) {
+    IsoCompensation cyl_comp = iso_compensate_bone(a, b);
+
     glm::vec3 up = b - a;
     float len = glm::length(up);
     if (len < 1e-5f) return;
@@ -88,14 +115,10 @@ void RigRenderer::emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
         glm::vec3 r0 = (right * cosf(angle0) + fwd * sinf(angle0)) * radius;
         glm::vec3 r1 = (right * cosf(angle1) + fwd * sinf(angle1)) * radius;
 
-        // Isometric projection scales world-Z by HS=12.5 in screen-Y, far
-        // more than XY (TH=1, TW=2).  Without compensation, cylinder cross-
-        // sections visually bulge when the limb axis is horizontal (radial
-        // fwd vector → Z → HS amplification).  Scale radial Z by
-        // sqrt(TW²+TH²)/HS ≈ 0.18 to equalise apparent radius.
-        constexpr float ISO_RADIAL_Z_COMP = 0.18f;
-        r0.z *= ISO_RADIAL_Z_COMP;
-        r1.z *= ISO_RADIAL_Z_COMP;
+        // Direction-dependent radial Z compensation: vertical cylinders
+        // need less squashing than horizontal ones under isometric projection.
+        r0.z *= cyl_comp.radial_z_comp;
+        r1.z *= cyl_comp.radial_z_comp;
 
         glm::vec3 p00 = a + r0;
         glm::vec3 p10 = a + r1;
@@ -124,6 +147,8 @@ void RigRenderer::emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
 void RigRenderer::emit_bone_oct(const glm::vec3 &a, const glm::vec3 &b,
                                  float width, glm::vec3 color,
                                  std::vector<BasaltVertex> &out_verts) {
+    IsoCompensation comp = iso_compensate_bone(a, b);
+
     glm::vec3 dir = b - a;
     float len = glm::length(dir);
     if (len < 1e-5f) return;
@@ -137,16 +162,15 @@ void RigRenderer::emit_bone_oct(const glm::vec3 &a, const glm::vec3 &b,
         right = glm::normalize(glm::cross(dir, glm::vec3(1.0f, 0.0f, 0.0f)));
     glm::vec3 fwd = glm::cross(dir, right);
 
-    constexpr int   SIDES      = 4;
-    constexpr float EQUATOR_T  = 0.2f;
-    constexpr float ISO_RADIAL_Z_COMP = 0.18f;
+    constexpr int SIDES = 4;
+    float effective_width = width * comp.width_scale;
 
     glm::vec3 ring[SIDES];
-    glm::vec3 eq_center = a + dir * (len * EQUATOR_T);
+    glm::vec3 eq_center = a + dir * (len * comp.equator_t);
     for (int i = 0; i < SIDES; ++i) {
         float angle = i * (2.0f * PI / SIDES);
-        glm::vec3 off = (right * cosf(angle) + fwd * sinf(angle)) * width;
-        off.z *= ISO_RADIAL_Z_COMP;
+        glm::vec3 off = (right * cosf(angle) + fwd * sinf(angle)) * effective_width;
+        off.z *= comp.radial_z_comp;
         ring[i] = eq_center + off;
     }
 
@@ -315,6 +339,30 @@ void RigRenderer::emit_flat_circle(const glm::vec3 &center, float radius, glm::v
     }
 }
 
+void RigRenderer::emit_wireframe_box(const glm::vec3 &center, float half_size,
+                                      float edge_radius, glm::vec3 color,
+                                      std::vector<BasaltVertex> &out_verts) {
+    float h = half_size;
+    glm::vec3 c[8] = {
+        {center.x - h, center.y - h, center.z - h},
+        {center.x + h, center.y - h, center.z - h},
+        {center.x + h, center.y + h, center.z - h},
+        {center.x - h, center.y + h, center.z - h},
+        {center.x - h, center.y - h, center.z + h},
+        {center.x + h, center.y - h, center.z + h},
+        {center.x + h, center.y + h, center.z + h},
+        {center.x - h, center.y + h, center.z + h},
+    };
+    // 12 edges of a cube as thin cylinders
+    int edges[12][2] = {
+        {0,1},{1,2},{2,3},{3,0},  // bottom face
+        {4,5},{5,6},{6,7},{7,4},  // top face
+        {0,4},{1,5},{2,6},{3,7},  // verticals
+    };
+    for (auto &e : edges)
+        emit_cylinder(c[e[0]], c[e[1]], edge_radius, color, 4, out_verts);
+}
+
 uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     if (!initialized || !rig_vbo || !transfer_buf) return 0;
 
@@ -365,13 +413,25 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         using J = Joint;
         auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 
-        // ---- World Root: flat ground disc + puppet-string line to HIPS ----
+        // ---- Ground traces: hip + foot projections to ground plane ----
         {
-            glm::vec3 root_color(0.3f, 0.85f, 0.85f);  // teal
-            // Flat filled circle on the ground plane at ROOT.z
-            emit_flat_circle(j(J::ROOT), cfg.torso_radius * 1.5f, root_color, 16, verts);
-            // Thin "puppet string" line from ROOT up to HIPS
-            emit_cylinder(j(J::ROOT), j(J::HIPS), 0.012f, root_color, 4, verts);
+            glm::vec3 trace_color(0.3f, 0.85f, 0.85f);  // teal
+            float ground_z = j(J::ROOT).z;
+
+            // Hip trace
+            glm::vec3 hip_ground(j(J::HIPS).x, j(J::HIPS).y, ground_z);
+            emit_cylinder(j(J::HIPS), hip_ground, 0.012f, trace_color, 4, verts);
+            emit_flat_circle(hip_ground, cfg.torso_radius * 1.5f, trace_color, 16, verts);
+
+            // Left foot trace
+            glm::vec3 lfoot_ground(j(J::L_FOOT).x, j(J::L_FOOT).y, ground_z);
+            emit_cylinder(j(J::L_FOOT), lfoot_ground, 0.008f, trace_color, 4, verts);
+            emit_flat_circle(lfoot_ground, cfg.leg_radius * 1.2f, trace_color, 12, verts);
+
+            // Right foot trace
+            glm::vec3 rfoot_ground(j(J::R_FOOT).x, j(J::R_FOOT).y, ground_z);
+            emit_cylinder(j(J::R_FOOT), rfoot_ground, 0.008f, trace_color, 4, verts);
+            emit_flat_circle(rfoot_ground, cfg.leg_radius * 1.2f, trace_color, 12, verts);
         }
 
         // ---- Spine / torso chain — bone-shaped octahedrons ----
@@ -381,32 +441,37 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         emit_bone_oct(j(J::CHEST),    j(J::NECK),     cfg.head_radius * 0.55f, body_color, verts);
         emit_bone_oct(j(J::NECK),     j(J::HEAD),     cfg.head_radius * 0.55f, body_color, verts);
 
-        // Head skull: full octahedron at HEAD position
+        // Head skull: full octahedron at HEAD position + skull-top nub
         emit_diamond(j(J::HEAD), cfg.head_radius, body_color, verts);
+        emit_bone_oct(j(J::HEAD), j(J::HEAD_END), cfg.head_radius * 0.4f, body_color, verts);
 
         // ---- Left arm chain (with clavicle) ----
-        emit_bone_oct(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius,         body_color, verts);
-        emit_bone_oct(j(J::L_CLAVICLE),  j(J::L_UPPER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius * 1.4f,  body_color, verts);
+        emit_bone_oct(j(J::L_CLAVICLE),  j(J::L_UPPER_ARM), cfg.arm_radius * 1.4f,  body_color, verts);
         emit_bone_oct(j(J::L_UPPER_ARM), j(J::L_LOWER_ARM), cfg.arm_radius,         body_color, verts);
         emit_bone_oct(j(J::L_LOWER_ARM), j(J::L_HAND),      cfg.arm_radius * 0.75f, body_color, verts);
 
         // ---- Right arm chain (with clavicle) ----
-        emit_bone_oct(j(J::CHEST),       j(J::R_CLAVICLE),  cfg.arm_radius,         body_color, verts);
-        emit_bone_oct(j(J::R_CLAVICLE),  j(J::R_UPPER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::CHEST),       j(J::R_CLAVICLE),  cfg.arm_radius * 1.4f,  body_color, verts);
+        emit_bone_oct(j(J::R_CLAVICLE),  j(J::R_UPPER_ARM), cfg.arm_radius * 1.4f,  body_color, verts);
         emit_bone_oct(j(J::R_UPPER_ARM), j(J::R_LOWER_ARM), cfg.arm_radius,         body_color, verts);
         emit_bone_oct(j(J::R_LOWER_ARM), j(J::R_HAND),      cfg.arm_radius * 0.75f, body_color, verts);
 
         // ---- Left leg chain (with toe) ----
-        emit_bone_oct(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
         emit_bone_oct(j(J::L_UPPER_LEG), j(J::L_LOWER_LEG), cfg.leg_radius,         body_color, verts);
         emit_bone_oct(j(J::L_LOWER_LEG), j(J::L_FOOT),      cfg.leg_radius,         body_color, verts);
         emit_bone_oct(j(J::L_FOOT),      j(J::L_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
 
         // ---- Right leg chain (with toe) ----
-        emit_bone_oct(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius * 1.1f,  body_color, verts);
         emit_bone_oct(j(J::R_UPPER_LEG), j(J::R_LOWER_LEG), cfg.leg_radius,         body_color, verts);
         emit_bone_oct(j(J::R_LOWER_LEG), j(J::R_FOOT),      cfg.leg_radius,         body_color, verts);
         emit_bone_oct(j(J::R_FOOT),      j(J::R_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
+
+        // ---- Hierarchy V/A frames: shoulder girdle + pelvis bar ----
+        emit_bone_oct(j(J::L_UPPER_ARM), j(J::R_UPPER_ARM), cfg.arm_radius * 1.0f, body_color, verts);
+        emit_bone_oct(j(J::L_UPPER_LEG), j(J::R_UPPER_LEG), cfg.leg_radius * 1.2f, body_color, verts);
 
         // ---- Joint pivot spheres + RGB axis tripods (structural joints 0–23) ----
         {
@@ -419,12 +484,13 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
             }
         }
 
-        // ---- IK goal boxes (green) ----
+        // ---- IK goal wireframe boxes (green) ----
         float box_h = 0.04f;
-        emit_box(j(J::IK_FOOT_L), box_h, ik_goal_color, verts);
-        emit_box(j(J::IK_FOOT_R), box_h, ik_goal_color, verts);
-        emit_box(j(J::IK_HAND_L), box_h, ik_goal_color, verts);
-        emit_box(j(J::IK_HAND_R), box_h, ik_goal_color, verts);
+        float edge_r = 0.008f;
+        emit_wireframe_box(j(J::IK_FOOT_L), box_h, edge_r, ik_goal_color, verts);
+        emit_wireframe_box(j(J::IK_FOOT_R), box_h, edge_r, ik_goal_color, verts);
+        emit_wireframe_box(j(J::IK_HAND_L), box_h, edge_r, ik_goal_color, verts);
+        emit_wireframe_box(j(J::IK_HAND_R), box_h, edge_r, ik_goal_color, verts);
 
         // ---- Pole target diamonds (orange) ----
         float diamond_r = 0.04f;

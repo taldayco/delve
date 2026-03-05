@@ -55,6 +55,11 @@ private:
     void emit_box(const glm::vec3 &center, float half_size, glm::vec3 color,
                   std::vector<BasaltVertex> &out_verts);
 
+    // Wireframe box: 12 edges as thin cylinders. Distinct from solid emit_box.
+    void emit_wireframe_box(const glm::vec3 &center, float half_size,
+                            float edge_radius, glm::vec3 color,
+                            std::vector<BasaltVertex> &out_verts);
+
     void emit_diamond(const glm::vec3 &center, float radius, glm::vec3 color,
                       std::vector<BasaltVertex> &out_verts);
 

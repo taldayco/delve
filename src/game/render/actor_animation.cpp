@@ -142,7 +142,10 @@ void register_animation_systems(flecs::world &ecs,
                 // natural walking cadence.  Direction-independent: the old
                 // iso-vertical multiplier made arms/hips speed up depending on
                 // screen direction, which looked unnatural.
-                constexpr float SWING_RATE = 2.0f; // rad/s per unit speed
+                // Rate chosen so at full speed (4 u/s) the arm swing period
+                // matches the leg gait cycle (~0.5s → 2 Hz).  π rad/s per
+                // unit speed → ω = 4π ≈ 12.57 rad/s → T ≈ 0.5s.
+                constexpr float SWING_RATE = glm::pi<float>(); // rad/s per unit speed
                 gait.phase += speed * dt * SWING_RATE;
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
@@ -334,20 +337,21 @@ void register_animation_systems(flecs::world &ecs,
                 anim.r_arm_target = r_arm_target;
 
                 // Successive breaking (joint delay chain):
-                // Shoulder fast (0.02s), elbow medium (0.05s), wrist slowest (0.08s).
+                // Shoulder fast (0.02s), elbow medium (0.04s), wrist slowest (0.06s).
+                // Tighter than original to track the faster π-rate swing without excess lag.
                 anim.l_shoulder_smooth = smooth_damp(anim.l_shoulder_smooth, l_arm_target,
                                                       &anim.l_shoulder_rate, 0.02f, dt);
                 anim.l_elbow_smooth    = smooth_damp(anim.l_elbow_smooth, anim.l_shoulder_smooth,
-                                                      &anim.l_elbow_rate,    0.05f, dt);
+                                                      &anim.l_elbow_rate,    0.04f, dt);
                 anim.l_wrist_smooth    = smooth_damp(anim.l_wrist_smooth, anim.l_elbow_smooth,
-                                                      &anim.l_wrist_rate,    0.08f, dt);
+                                                      &anim.l_wrist_rate,    0.06f, dt);
 
                 anim.r_shoulder_smooth = smooth_damp(anim.r_shoulder_smooth, r_arm_target,
                                                       &anim.r_shoulder_rate, 0.02f, dt);
                 anim.r_elbow_smooth    = smooth_damp(anim.r_elbow_smooth, anim.r_shoulder_smooth,
-                                                      &anim.r_elbow_rate,    0.05f, dt);
+                                                      &anim.r_elbow_rate,    0.04f, dt);
                 anim.r_wrist_smooth    = smooth_damp(anim.r_wrist_smooth, anim.r_elbow_smooth,
-                                                      &anim.r_wrist_rate,    0.08f, dt);
+                                                      &anim.r_wrist_rate,    0.06f, dt);
 
                 // Apply arm swing: rotate "hang down" vector by swing angle around forward axis.
                 // right_axis is the local right direction of the character.

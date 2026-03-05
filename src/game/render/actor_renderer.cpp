@@ -89,6 +89,15 @@ void ActorRenderer::emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
         glm::vec3 r0 = (right * cosf(angle0) + fwd * sinf(angle0)) * radius;
         glm::vec3 r1 = (right * cosf(angle1) + fwd * sinf(angle1)) * radius;
 
+        // Isometric projection scales world-Z by HS=12.5 in screen-Y, far
+        // more than XY (TH=1, TW=2).  Without compensation, cylinder cross-
+        // sections visually bulge when the limb axis is horizontal (radial
+        // fwd vector → Z → HS amplification).  Scale radial Z by
+        // sqrt(TW²+TH²)/HS ≈ 0.18 to equalise apparent radius.
+        constexpr float ISO_RADIAL_Z_COMP = 0.18f;
+        r0.z *= ISO_RADIAL_Z_COMP;
+        r1.z *= ISO_RADIAL_Z_COMP;
+
         glm::vec3 p00 = a + r0;
         glm::vec3 p10 = a + r1;
         glm::vec3 p01 = b + r0;

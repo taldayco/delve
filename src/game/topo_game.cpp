@@ -140,7 +140,10 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
 
         if (!cam_moved && player_entity.is_alive()) {
           const auto *t = player_entity.get<Transform>();
-          if (t) camera_system.follow(camera, t->x, t->y);
+          if (t) {
+            camera_system.follow(camera, t->x, t->y);
+            camera.follow_z = t->z;
+          }
         }
 
         camera_system.update(camera, dt);

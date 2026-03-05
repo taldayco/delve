@@ -79,7 +79,7 @@ CameraMatrices CameraSystem::build_matrices(const CameraState &cam, float aspect
   // Ortho frustum in iso/view space centred on camera.
   // Camera world pos maps to iso space via the same transform.
   float cam_iso_x = (cam.world_x - cam.world_y) * TW;
-  float cam_iso_y = (cam.world_x + cam.world_y) * TH;
+  float cam_iso_y = (cam.world_x + cam.world_y) * TH - cam.follow_z * HS;
 
   float shake_x = 0.0f, shake_y = 0.0f;
   if (cam.shake_timer > 0.0f) {

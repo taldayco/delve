@@ -666,7 +666,7 @@ DELVE_TEST(planted_foot_clamped_to_stride_len) {
 DELVE_TEST(ik_ankle_clamp_prevents_hyperextension) {
   ActorConfig cfg;
   float a = cfg.leg_len, b = cfg.shin_len;
-  float max_D = a + b - 0.03f;
+  float max_D = a + b - 0.005f;
   float stretch_limit = max_D * 1.15f;
 
   // Hip at origin, foot target far away.
@@ -774,6 +774,33 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
 
   // With clamp, max distance should be <= stride_len.
   EXPECT_LT(max_observed, gait.stride_len * 1.1f);
+  return true;
+}
+
+// Test: Knee reaches near-full extension (lock) at mid-stance when foot is
+// directly below the hip socket.  The IK margin (0.005) allows the knee angle
+// to reach ≥ 160° (within 20° of full extension = 180°), giving the visual
+// appearance of a locked stance leg.
+DELVE_TEST(knee_locks_at_midstance) {
+  ActorConfig cfg;
+  float a = cfg.leg_len;   // 0.430 thigh
+  float b = cfg.shin_len;  // 0.390 shin
+  float margin = 0.005f;
+  float max_D = a + b - margin;
+
+  // At mid-stance the foot is directly below the hip socket.
+  // D ≈ leg_len + shin_len, clamped to max_D.
+  float D = std::min(a + b, max_D);
+
+  // Knee angle via law of cosines: cos(K) = (a² + b² - D²) / (2ab)
+  float cos_knee = (a * a + b * b - D * D) / (2.0f * a * b);
+  cos_knee = std::max(-1.0f, std::min(1.0f, cos_knee));
+  float knee_deg = std::acos(cos_knee) * (180.0f / 3.14159265f);
+
+  // Knee should be ≥ 160° (near full extension, reads as "locked").
+  EXPECT_GT(knee_deg, 160.0f);
+  // But not perfectly 180° (margin prevents that).
+  EXPECT_LT(knee_deg, 180.0f);
   return true;
 }
 

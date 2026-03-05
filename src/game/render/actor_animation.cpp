@@ -392,7 +392,7 @@ void register_animation_systems(flecs::world &ecs,
                     glm::vec3 axis = foot_target - H;
                     float D = glm::length(axis);
                     float min_D = fabsf(a - b) + 0.001f;
-                    float max_D = a + b - 0.03f; // margin prevents knee hyperextension
+                    float max_D = a + b - 0.005f; // small margin: allows near-full extension (knee lock) while preventing numerical instability
 
                     // Pull ankle inward when well beyond IK reach to prevent
                     // visual hyperextension.  15% tolerance preserves the

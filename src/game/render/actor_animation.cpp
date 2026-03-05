@@ -425,20 +425,25 @@ void register_animation_systems(flecs::world &ecs,
                 };
 
                 // Left leg.
-                glm::vec3 l_pole = l_hip + glm::vec3(-rght_x * 0.5f, -rght_y * 0.5f, 0.2f);
+                // Pole targets point forward so knees bend in the walking
+                // direction.  Small lateral offset mimics the anatomical
+                // Q-angle (~5-10° outward splay).
+                glm::vec3 l_pole = l_hip + glm::vec3(fwd_x * 0.5f - rght_x * 0.08f,
+                                                      fwd_y * 0.5f - rght_y * 0.08f, 0.2f);
                 glm::vec3 l_knee, l_ankle;
                 solve_leg(l_hip, legs.foot[0], cfg.leg_len, cfg.shin_len, l_pole, l_knee, l_ankle);
                 pose.joints[(int)J::L_KNEE]  = l_knee;
                 pose.joints[(int)J::L_ANKLE] = l_ankle;
 
                 // Right leg.
-                glm::vec3 r_pole = r_hip + glm::vec3(rght_x * 0.5f, rght_y * 0.5f, 0.2f);
+                glm::vec3 r_pole = r_hip + glm::vec3(fwd_x * 0.5f + rght_x * 0.08f,
+                                                      fwd_y * 0.5f + rght_y * 0.08f, 0.2f);
                 glm::vec3 r_knee, r_ankle;
                 solve_leg(r_hip, legs.foot[1], cfg.leg_len, cfg.shin_len, r_pole, r_knee, r_ankle);
                 pose.joints[(int)J::R_KNEE]  = r_knee;
                 pose.joints[(int)J::R_ANKLE] = r_ankle;
 
-                (void)fwd_x; (void)fwd_y;
+                // fwd_x, fwd_y used in pole targets above.
             });
         });
 

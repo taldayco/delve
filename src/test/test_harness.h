@@ -88,6 +88,13 @@ public:
     return false;                                                              \
   }} while(0)
 
+#define EXPECT_GE(a, b)                                                        \
+  do { if (!((a) >= (b))) {                                                     \
+    fprintf(stderr, "  FAIL: %s:%d: %f < %f\n", __FILE__, __LINE__,           \
+            (double)(a), (double)(b));                                          \
+    return false;                                                              \
+  }} while(0)
+
 #define EXPECT_EQ(a, b)                                                        \
   do { if ((a) != (b)) {                                                       \
     fprintf(stderr, "  FAIL: %s:%d: %s != %s\n", __FILE__, __LINE__, #a, #b); \

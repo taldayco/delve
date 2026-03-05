@@ -264,7 +264,7 @@ void register_rig_systems(flecs::world &ecs,
                             float target_off  = (half_stride + step_travel * 0.75f) * speed_factor;
                             float tgt_x = hip_x + vel_dx * target_off;
                             float tgt_y = hip_y + vel_dy * target_off;
-                            float tgt_z = sample_world_height(*map_data, tgt_x, tgt_y);
+                            float tgt_z = sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius);
                             legs.target[leg]    = {tgt_x, tgt_y, tgt_z};
                         }
                     }
@@ -299,8 +299,8 @@ void register_rig_systems(flecs::world &ecs,
                 // ---- Planted-foot continuous Z tracking (Phase 1A) ----
                 for (int leg = 0; leg < 2; ++leg) {
                     if (!legs.stepping[leg]) {
-                        float ground_z = sample_world_height(*map_data,
-                                            legs.foot[leg].x, legs.foot[leg].y);
+                        float ground_z = sphere_trace_height(*map_data,
+                                            legs.foot[leg].x, legs.foot[leg].y, cfg.leg_radius);
                         legs.foot[leg].z = ground_z;
                     }
                 }
@@ -330,9 +330,9 @@ void register_rig_systems(flecs::world &ecs,
                                                 + step_travel * 0.75f) * speed_factor;
                             legs.target[leg].x = hip_x + vel_dx * target_off;
                             legs.target[leg].y = hip_y + vel_dy * target_off;
-                            legs.target[leg].z = sample_world_height(*map_data,
+                            legs.target[leg].z = sphere_trace_height(*map_data,
                                                     legs.target[leg].x,
-                                                    legs.target[leg].y);
+                                                    legs.target[leg].y, cfg.leg_radius);
                         }
                     }
                 }
@@ -695,6 +695,7 @@ void register_rig_systems(flecs::world &ecs,
     ecs.system("SkeletonFinaliseSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
+            const auto *map_data = ecs.get<MapData>();
             float dt = ecs.delta_time();
             ecs.each([&](ActorTag,
                          const Transform      &t,
@@ -844,10 +845,14 @@ void register_rig_systems(flecs::world &ecs,
                 }
 
                 // ---- Compute derived joints ----
-                // ROOT: ground anchor below HIPS
+                // ROOT: ground anchor below HIPS, clamped to terrain
                 glm::vec3 hips = pose.joints[(int)J::HIPS];
+                float algebraic_root_z = hips.z - (cfg.leg_len + cfg.shin_len);
+                float terrain_z = (map_data && !map_data->basalt_height.empty())
+                    ? sample_world_height(*map_data, hips.x, hips.y)
+                    : algebraic_root_z;
                 pose.joints[(int)J::ROOT] = glm::vec3(hips.x, hips.y,
-                    hips.z - (cfg.leg_len + cfg.shin_len));
+                    std::max(algebraic_root_z, terrain_z));
 
                 // SPINE_02: mid-point between SPINE_01 and CHEST
                 pose.joints[(int)J::SPINE_02] = glm::mix(

@@ -35,6 +35,21 @@ float sample_world_height(const MapData &map, float wx, float wy) {
     return top + (bottom - top) * ty;
 }
 
+float sphere_trace_height(const MapData &map, float wx, float wy, float radius) {
+    float max_h = sample_world_height(map, wx, wy);
+    if (radius <= 0.0f) return max_h;
+
+    // 8 perimeter samples at 45° intervals
+    for (int i = 0; i < 8; ++i) {
+        float angle = i * (2.0f * 3.14159265358979323846f / 8.0f);
+        float sx = wx + radius * cosf(angle);
+        float sy = wy + radius * sinf(angle);
+        float h = sample_world_height(map, sx, sy);
+        if (h > max_h) max_h = h;
+    }
+    return max_h;
+}
+
 glm::vec3 sample_terrain_normal(const MapData &map, float wx, float wy) {
     constexpr float eps = 0.05f; // world-space sample offset
     float hL = sample_world_height(map, wx - eps, wy);

@@ -9,6 +9,10 @@
 // Returns 0.0f if basalt_height is empty.
 float sample_world_height(const MapData &map, float wx, float wy);
 
+// Sample terrain height over a small disc of `radius` (center + 8 perimeter points).
+// Returns the maximum height found — approximates a sphere resting on terrain.
+float sphere_trace_height(const MapData &map, float wx, float wy, float radius);
+
 // Central-difference terrain normal at world-space (wx, wy).
 // Returns normalized surface normal (pointing upward).
 glm::vec3 sample_terrain_normal(const MapData &map, float wx, float wy);

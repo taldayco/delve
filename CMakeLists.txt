@@ -203,6 +203,7 @@ set(TERRAIN_PIPELINE_SOURCES
     src/game/terrain/basalt.cpp
     src/game/terrain/lava.cpp
     src/game/terrain/terrain_mesh.cpp
+    src/game/terrain/map_util.cpp
 )
 
 # ---- delve_tests (headless test runner) ----

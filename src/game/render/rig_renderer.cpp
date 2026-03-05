@@ -405,9 +405,23 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         // Apply isometric height foreshortening.
         {
             float foot_z = t.z - cfg.leg_len - cfg.shin_len;
-            for (int ji = 0; ji < (int)Joint::COUNT; ++ji) {
-                pose.joints[ji].z = foot_z + (pose.joints[ji].z - foot_z) * AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
+
+            // Save ground-contact joints — must stay at terrain level
+            using J = Joint;
+            constexpr int ground_joints[] = {
+                (int)J::L_FOOT, (int)J::R_FOOT,
+                (int)J::L_TOE,  (int)J::R_TOE,
+                (int)J::ROOT
+            };
+            float saved[5];
+            for (int k = 0; k < 5; ++k) saved[k] = pose.joints[ground_joints[k]].z;
+
+            for (int ji = 0; ji < (int)J::COUNT; ++ji) {
+                pose.joints[ji].z = foot_z + (pose.joints[ji].z - foot_z)
+                                    * AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
             }
+
+            for (int k = 0; k < 5; ++k) pose.joints[ground_joints[k]].z = saved[k];
         }
 
         using J = Joint;
@@ -416,18 +430,17 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         // ---- Foundation: World Root ground marker + parenting tether to Hips ----
         {
             glm::vec3 trace_color(0.3f, 0.85f, 0.85f);  // teal
-            float ground_z = j(J::ROOT).z;
 
             emit_flat_circle(j(J::ROOT), cfg.torso_radius * 1.5f, trace_color, 16, verts);
             emit_cylinder(j(J::ROOT), j(J::HIPS), 0.012f, trace_color, 4, verts);
 
-            // Left foot trace
-            glm::vec3 lfoot_ground(j(J::L_FOOT).x, j(J::L_FOOT).y, ground_z);
+            // Left foot trace — at foot's own ground level
+            glm::vec3 lfoot_ground(j(J::L_FOOT).x, j(J::L_FOOT).y, j(J::L_FOOT).z);
             emit_cylinder(j(J::L_FOOT), lfoot_ground, 0.008f, trace_color, 4, verts);
             emit_flat_circle(lfoot_ground, cfg.leg_radius * 1.2f, trace_color, 12, verts);
 
-            // Right foot trace
-            glm::vec3 rfoot_ground(j(J::R_FOOT).x, j(J::R_FOOT).y, ground_z);
+            // Right foot trace — at foot's own ground level
+            glm::vec3 rfoot_ground(j(J::R_FOOT).x, j(J::R_FOOT).y, j(J::R_FOOT).z);
             emit_cylinder(j(J::R_FOOT), rfoot_ground, 0.008f, trace_color, 4, verts);
             emit_flat_circle(rfoot_ground, cfg.leg_radius * 1.2f, trace_color, 12, verts);
         }

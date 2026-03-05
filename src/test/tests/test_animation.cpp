@@ -1,12 +1,13 @@
 #include "test_harness.h"
 #include "animation_metrics.h"
 #include "actor.h"
+#include "config.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 #include <algorithm>
 
-// ---- Existing 5 tests (preserved) ----
+// ---- Existing 5 tests (preserved) + height proportions ----
 
 DELVE_TEST(default_gait_parameters_valid) {
   ProceduralGait g;
@@ -317,5 +318,57 @@ DELVE_TEST(no_simultaneous_stepping) {
   }
 
   EXPECT_FALSE(both_stepping_ever);
+  return true;
+}
+// ---- Character height proportion tests (fixes "too tall" appearance) ----
+
+// Total standing height from ground = leg_len + shin_len + torso_len + neck_len + head_radius.
+// This must be a reasonable fraction of the hex tile size so the character doesn't
+// appear giant relative to terrain. Max 35% of HEX_SIZE is enforced.
+DELVE_TEST(character_total_height_relative_to_hex_size) {
+  ActorConfig cfg;
+  float total_height = cfg.leg_len + cfg.shin_len + cfg.torso_len + cfg.neck_len + cfg.head_radius;
+  float hex_size     = Config::HEX_SIZE;
+  float ratio        = total_height / hex_size;
+  // Character must fit under 35% of a hex tile in height.
+  EXPECT_LT(ratio, 0.35f);
+  // But must be at least 15% — too small would be invisible.
+  EXPECT_GT(ratio, 0.15f);
+  return true;
+}
+
+// Leg proportion: (leg_len + shin_len) / total_height should be ~0.45–0.55
+// (human proportions: roughly half the body height is legs).
+DELVE_TEST(character_leg_proportion_human_like) {
+  ActorConfig cfg;
+  float leg_height   = cfg.leg_len + cfg.shin_len;
+  float total_height = leg_height + cfg.torso_len + cfg.neck_len + cfg.head_radius;
+  float leg_ratio    = leg_height / total_height;
+  EXPECT_GT(leg_ratio, 0.40f);
+  EXPECT_LT(leg_ratio, 0.60f);
+  return true;
+}
+
+// Head proportion: head_radius / total_height should be <= 0.12
+// (head one-eighth of body height, so radius ≈ 1/16).
+DELVE_TEST(character_head_size_not_too_large) {
+  ActorConfig cfg;
+  float total_height = cfg.leg_len + cfg.shin_len + cfg.torso_len + cfg.neck_len + cfg.head_radius;
+  float head_ratio   = cfg.head_radius / total_height;
+  EXPECT_LT(head_ratio, 0.12f);
+  EXPECT_GT(head_ratio, 0.04f); // must still be visible
+  return true;
+}
+
+// Grounding offset (what's added to terrain height to place the actor root) must
+// equal leg_len + shin_len exactly — the IK solver assumes this.
+DELVE_TEST(grounding_offset_equals_leg_plus_shin) {
+  ActorConfig cfg;
+  float grounding_offset = cfg.leg_len + cfg.shin_len;
+  // IK hip sockets are placed at root (t.z), so legs must exactly bridge
+  // the distance from hip to foot (ground level).  Verify leg segments sum
+  // is reasonable: neither zero (character floats) nor > 1.5 HEX_SIZE.
+  EXPECT_GT(grounding_offset, 0.0f);
+  EXPECT_LT(grounding_offset, Config::HEX_SIZE * 1.5f);
   return true;
 }

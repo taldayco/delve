@@ -128,11 +128,22 @@ void register_animation_systems(flecs::world &ecs,
                          const ActorConfig &cfg) {
 
                 float speed = sqrtf(vel.x * vel.x + vel.y * vel.y);
-                gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len));
 
                 float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
                 float vel_dx = speed > 0.001f ? vel.x / speed : fwd_x;
                 float vel_dy = speed > 0.001f ? vel.y / speed : fwd_y;
+
+                // Fix 2: Directional velocity scaling.
+                // In isometric view the "up-screen" axis is world(-1,-1)/sqrt(2).
+                // Movement along that axis appears to cover more visual ground per
+                // world unit (2:1 tile ratio), so we advance the gait phase faster
+                // to prevent moonwalking.
+                static constexpr float ISO_AXIS_X = -0.70710678118f;
+                static constexpr float ISO_AXIS_Y = -0.70710678118f;
+                float iso_vert = fabsf(vel_dx * ISO_AXIS_X + vel_dy * ISO_AXIS_Y);
+                float dir_multiplier = 1.0f + iso_vert * 0.5f;
+
+                gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len)) * dir_multiplier;
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
@@ -173,12 +184,17 @@ void register_animation_systems(flecs::world &ecs,
                     if (legs.stepping[leg]) {
                         legs.progress[leg] += dt / adaptive_duration;
                         float progress = std::min(legs.progress[leg], 1.0f);
-                        // Cubic smoothstep.
-                        float ts = progress * progress * (3.0f - 2.0f * progress);
 
-                        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts;
-                        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts;
-                        legs.foot[leg].z = legs.prev_foot[leg].z + (legs.target[leg].z - legs.prev_foot[leg].z) * ts
+                        // Fix 1: Elliptical path — cosine-ease for XY (peak velocity
+                        // at mid-stride, slow at liftoff/plant) so feet don't appear
+                        // to drag at the poles of the stride in isometric projection.
+                        float ts_xy = (1.0f - cosf(progress * glm::pi<float>())) * 0.5f;
+                        // Keep cubic smoothstep for Z (height arc) — smooth lift/land.
+                        float ts_z  = progress * progress * (3.0f - 2.0f * progress);
+
+                        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts_xy;
+                        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts_xy;
+                        legs.foot[leg].z = legs.prev_foot[leg].z + (legs.target[leg].z - legs.prev_foot[leg].z) * ts_z
                                            + sinf(progress * glm::pi<float>()) * gait.step_height;
 
                         if (legs.progress[leg] >= 1.0f) {
@@ -378,11 +394,12 @@ void register_animation_systems(flecs::world &ecs,
         .run([&ecs](flecs::iter &) {
             float dt = ecs.delta_time();
             ecs.each([&](ActorTag,
-                         const Transform  &t,
-                         const Velocity   &vel,
-                         const ActorConfig &cfg,
-                         AnimationState   &anim,
-                         SkeletonPose     &pose) {
+                         const Transform      &t,
+                         const Velocity       &vel,
+                         const ActorConfig    &cfg,
+                         const ProceduralGait &gait,
+                         AnimationState       &anim,
+                         SkeletonPose         &pose) {
 
                 using J = Joint;
 
@@ -396,6 +413,31 @@ void register_animation_systems(flecs::world &ecs,
                 pose.joints[(int)J::ROOT]  += sway_vec;
                 pose.joints[(int)J::SPINE] += sway_vec;
                 pose.joints[(int)J::CHEST] += sway_vec;
+
+                // Fix 3: Hip counter-animation (CoM shift + double-bounce).
+                // When left foot is back (sin(gait.phase) > 0) hips roll right (+roll).
+                // Vertical bob: drops twice per stride (double-bounce = |sin(phase)|).
+                float walk_blend = std::min(1.0f, speed / (gait.move_speed * 0.3f));
+                float target_hip_roll = sinf(gait.phase) * 0.06f * walk_blend;
+                anim.hip_roll = smooth_damp(anim.hip_roll, target_hip_roll,
+                                            &anim.hip_roll_rate, 0.04f, dt);
+
+                // Double-bounce: root drops at each foot-plant (twice per full cycle).
+                float target_hip_bob = fabsf(sinf(gait.phase)) * -0.025f * walk_blend;
+                anim.hip_bob = smooth_damp(anim.hip_bob, target_hip_bob,
+                                           &anim.hip_bob_rate, 0.03f, dt);
+
+                // Apply hip roll as a lateral CoM shift (simplified rotation in world XY).
+                float roll_shift = sinf(anim.hip_roll) * cfg.hip_width * 0.4f;
+                glm::vec3 roll_vec(rght_x * roll_shift, rght_y * roll_shift, 0.0f);
+                pose.joints[(int)J::ROOT]  += roll_vec;
+                pose.joints[(int)J::SPINE] += roll_vec * 0.6f;
+                pose.joints[(int)J::L_HIP] += roll_vec;
+                pose.joints[(int)J::R_HIP] += roll_vec;
+
+                // Apply vertical bob to root and spine.
+                pose.joints[(int)J::ROOT].z  += anim.hip_bob;
+                pose.joints[(int)J::SPINE].z += anim.hip_bob * 0.5f;
 
                 // ---- Acceleration-driven torso lean ----
                 glm::vec3 cur_vel(vel.x, vel.y, 0.0f);

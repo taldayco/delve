@@ -154,6 +154,10 @@ void register_animation_systems(flecs::world &ecs,
                 float speed_ratio      = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
                 float adaptive_duration = gait.step_duration / speed_ratio;
 
+                // Blend forward prediction toward zero when idle so feet
+                // return to a neutral stance directly under the hips.
+                float speed_factor = std::min(1.0f, speed / (gait.move_speed * 0.15f));
+
                 for (int leg = 0; leg < 2; ++leg) {
                     int other_leg = 1 - leg;
 
@@ -161,9 +165,12 @@ void register_animation_systems(flecs::world &ecs,
                     float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
 
                     // Trigger check: how far the planted foot is from nominal center.
+                    // When idle, center collapses to hip position (no forward offset)
+                    // so feet that landed ahead during walking trigger return steps.
                     float half_stride = gait.stride_len * 0.5f;
-                    float center_x = hip_x + vel_dx * half_stride;
-                    float center_y = hip_y + vel_dy * half_stride;
+                    float center_off = half_stride * speed_factor;
+                    float center_x = hip_x + vel_dx * center_off;
+                    float center_y = hip_y + vel_dy * center_off;
 
                     if (!legs.stepping[leg]) {
                         float dx   = legs.foot[leg].x - center_x;
@@ -171,8 +178,10 @@ void register_animation_systems(flecs::world &ecs,
                         float dist = sqrtf(dx * dx + dy * dy);
 
                         // One-foot-planted invariant: only step if other foot is planted.
+                        // Lower trigger threshold when idle so return steps fire sooner.
                         bool other_planted = !legs.stepping[other_leg];
-                        if (dist > half_stride && other_planted) {
+                        float trigger_dist = half_stride * (0.25f + 0.75f * speed_factor);
+                        if (dist > trigger_dist && other_planted) {
                             legs.stepping[leg]  = true;
                             legs.progress[leg]  = 0.0f;
                             legs.prev_foot[leg] = legs.foot[leg];
@@ -180,8 +189,9 @@ void register_animation_systems(flecs::world &ecs,
                             // Velocity-predicted target: foot lands ahead of where
                             // the hip will be when the step completes, implementing
                             // heel-strike placement (inverted pendulum model).
+                            // When idle, target collapses to hip position (neutral stance).
                             float step_travel = speed * adaptive_duration;
-                            float target_off  = half_stride + step_travel * 0.75f;
+                            float target_off  = (half_stride + step_travel * 0.75f) * speed_factor;
                             float tgt_x = hip_x + vel_dx * target_off;
                             float tgt_y = hip_y + vel_dy * target_off;
                             float tgt_z = sample_world_height(*map_data, tgt_x, tgt_y);
@@ -246,8 +256,8 @@ void register_animation_systems(flecs::world &ecs,
                         float th  = sqrtf(tdx * tdx + tdy * tdy);
                         if (th > max_horiz) {
                             float step_travel = speed * adaptive_duration;
-                            float target_off  = gait.stride_len * 0.5f
-                                                + step_travel * 0.75f;
+                            float target_off  = (gait.stride_len * 0.5f
+                                                + step_travel * 0.75f) * speed_factor;
                             legs.target[leg].x = hip_x + vel_dx * target_off;
                             legs.target[leg].y = hip_y + vel_dy * target_off;
                             legs.target[leg].z = sample_world_height(*map_data,
@@ -564,6 +574,34 @@ void register_animation_systems(flecs::world &ecs,
                 glm::vec3 idle_sway_vec(rght_x * idle_sway, rght_y * idle_sway, 0.0f);
                 pose.joints[(int)J::ROOT]  += idle_sway_vec;
                 pose.joints[(int)J::SPINE] += idle_sway_vec;
+
+                // ---- Idle weight shift ----
+                // Slow, natural weight transfer between feet (~0.3 Hz).
+                // More pronounced than the subtle idle sway — gives the
+                // appearance of the character shifting their standing leg.
+                if (idle_blend > 0.1f) {
+                    anim.idle_weight_phase += dt * glm::two_pi<float>() * 0.3f;
+                    float weight_shift = sinf(anim.idle_weight_phase);
+
+                    // Lateral hip shift toward the weighted foot.
+                    float hip_shift = weight_shift * 0.04f * idle_blend;
+                    glm::vec3 shift_vec(rght_x * hip_shift, rght_y * hip_shift, 0.0f);
+                    pose.joints[(int)J::ROOT]  += shift_vec;
+                    pose.joints[(int)J::SPINE] += shift_vec * 0.7f;
+                    pose.joints[(int)J::L_HIP] += shift_vec;
+                    pose.joints[(int)J::R_HIP] += shift_vec;
+
+                    // Subtle vertical dip at the transitions (weight
+                    // passing through center = slight crouch).
+                    float weight_dip = (1.0f - fabsf(weight_shift)) * 0.012f * idle_blend;
+                    pose.joints[(int)J::ROOT].z  -= weight_dip;
+                    pose.joints[(int)J::SPINE].z -= weight_dip * 0.5f;
+
+                    // Counter-tilt: shoulders lean slightly opposite to hips.
+                    glm::vec3 counter_vec = shift_vec * -0.3f;
+                    pose.joints[(int)J::CHEST] += counter_vec;
+                    pose.joints[(int)J::NECK]  += counter_vec * 0.5f;
+                }
 
                 (void)cfg;
             });

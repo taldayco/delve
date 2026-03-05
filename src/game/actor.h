@@ -114,7 +114,8 @@ struct AnimationState {
 
     // --- Idle micro-motion ---
     float breath_phase    = 0.0f;   // free-running breathing phase (rad)
-    float idle_sway_phase = 0.0f;   // free-running idle weight-shift phase (rad)
+    float idle_sway_phase = 0.0f;   // free-running idle lateral sway phase (rad)
+    float idle_weight_phase = 0.0f; // free-running weight-shift phase (rad, ~0.3 Hz)
 
     // --- Grounding: foot contact quality ---
     float foot_contact_velocity[2] = {0.0f, 0.0f};

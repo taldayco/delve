@@ -70,6 +70,40 @@ static void add_side_face(const Vec2 &corner0, const Vec2 &corner1,
   layer.indices.push_back(base + 3);
 }
 
+void add_world_polygon(std::span<const glm::vec3> vertices,
+                       glm::vec3 color,
+                       glm::vec3 normal,
+                       float sheen,
+                       TerrainMesh::RenderingLayer &layer) {
+  if (vertices.size() < 3)
+    return;
+
+  uint32_t base = (uint32_t)layer.vertices.size();
+
+  for (const auto &v : vertices) {
+    BasaltVertex bv;
+    bv.pos_x   = v.x;
+    bv.pos_y   = v.y;
+    bv.pos_z   = v.z;
+    bv.color_r = color.r;
+    bv.color_g = color.g;
+    bv.color_b = color.b;
+    bv.sheen   = sheen;
+    bv.nx      = normal.x;
+    bv.ny      = normal.y;
+    bv.nz      = normal.z;
+    layer.vertices.push_back(bv);
+  }
+
+  // Fan triangulation: works for convex polygons and triangle soup (n==3).
+  uint32_t n = (uint32_t)vertices.size();
+  for (uint32_t i = 1; i + 1 < n; ++i) {
+    layer.indices.push_back(base);
+    layer.indices.push_back(base + i);
+    layer.indices.push_back(base + i + 1);
+  }
+}
+
 TerrainMesh build_terrain_mesh(const TerrainState &terrain, const MapData &map_data,
                                const ContourData &contours) {
   TerrainMesh mesh;

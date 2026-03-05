@@ -5,10 +5,42 @@
 #include <SDL3/SDL_gpu.h>
 #include <flecs.h>
 #include <glm/glm.hpp>
+#include <string>
 #include <vector>
+
+// Classical 8-head proportion system. All fields in world-space feet.
+struct ActorProportions {
+    float total_height;
+    float head_height;
+    float neck_height;
+    float torso_height;
+    float upper_leg;
+    float lower_leg;
+    float shoulder_width;
+    float hip_width;
+    float waist_width;
+    float head_width;
+    float upper_arm;
+    float forearm;
+    float hand_length;
+    float foot_length;
+};
+
+// A single skeletal joint with world-space position and ellipsoid radii.
+struct SkeletonJoint {
+    glm::vec3   position; // local actor space, origin at feet
+    glm::vec3   size;     // ellipsoid radii (x=width, y=depth, z=height)
+    std::string name;
+};
 
 class ActorRenderer {
 public:
+    // Factory: derive all proportions from total height using 8-head system.
+    static ActorProportions make_proportions(float total_height_feet);
+
+    // Build skeleton joints in local actor space (origin at feet).
+    static std::vector<SkeletonJoint> build_skeleton(const ActorProportions &p);
+
     // terrain_pipeline and dummy_ssbo are borrowed (not owned) from TerrainRenderer.
     // dummy_ssbo fills binding slots 1 and 2 (pipeline declares num_storage_buffers=3).
     void init(SDL_GPUDevice *device,

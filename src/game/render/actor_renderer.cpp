@@ -1,11 +1,90 @@
 #include "render/actor_renderer.h"
 #include "actor.h"
+#include "config.h"
 #include <SDL3/SDL.h>
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 
 static constexpr float PI = 3.14159265358979323846f;
+
+ActorProportions ActorRenderer::make_proportions(float total_height_feet) {
+    // Classical 8-head canon:
+    //   head=1/8, neck=1/8, torso=2/8 (chest+abdomen), pelvis=1/8
+    //   upper_leg=2/8, lower_leg=1.5/8, foot=0.5/8
+    //   shoulder_width=2/8, hip_width=1.5/8, waist=1.25/8
+    //   upper_arm=1.5/8, forearm=1.25/8, hand=0.75/8
+    float h = total_height_feet;
+    float u = h / 8.0f; // one head-unit
+
+    ActorProportions p;
+    p.total_height   = h;
+    p.head_height    = 1.0f  * u;
+    p.neck_height    = 0.5f  * u;
+    p.torso_height   = 2.0f  * u;
+    p.upper_leg      = 2.0f  * u;
+    p.lower_leg      = 2.0f  * u;  // feet at y=0, ankle, knee, crotch at y=4u = total_height/2
+    p.shoulder_width = 3.0f  * u;
+    p.hip_width      = 1.5f  * u;
+    p.waist_width    = 1.25f * u;
+    p.head_width     = 0.9f  * u;
+    p.upper_arm      = 1.5f  * u;
+    p.forearm        = 1.25f * u;
+    p.hand_length    = 0.75f * u;
+    p.foot_length    = 1.0f  * u;
+    return p;
+}
+
+std::vector<SkeletonJoint> ActorRenderer::build_skeleton(const ActorProportions &p) {
+    std::vector<SkeletonJoint> joints;
+    joints.reserve(16);
+
+    float u = p.total_height / 8.0f;
+
+    // Heights (y-up in local space, origin at feet)
+    float knee_y    = p.lower_leg;
+    float crotch_y  = p.lower_leg + p.upper_leg;          // == total_height/2
+    float chest_y   = crotch_y + p.torso_height;
+    float shoulder_y = chest_y;
+    float neck_y    = chest_y + 0.5f * u;
+    float head_base_y = neck_y + p.neck_height;
+    float head_center_y = head_base_y + p.head_height * 0.5f;
+
+    float hw = p.hip_width * 0.5f;
+    float sw = p.shoulder_width * 0.5f;
+
+    float limb_r  = u * 0.18f;
+    float torso_r = u * 0.30f;
+
+    // Head
+    joints.push_back({ {0, head_center_y, 0}, {p.head_width*0.5f, p.head_width*0.45f, p.head_height*0.5f}, "head" });
+    // Neck
+    joints.push_back({ {0, neck_y, 0}, {limb_r, limb_r, p.neck_height*0.5f}, "neck" });
+    // Torso (center at midpoint between crotch and shoulders)
+    joints.push_back({ {0, crotch_y + p.torso_height * 0.5f, 0}, {p.shoulder_width*0.5f, torso_r, p.torso_height*0.5f}, "torso" });
+    // Pelvis / crotch
+    joints.push_back({ {0, crotch_y, 0}, {p.hip_width*0.5f, torso_r, u*0.5f}, "pelvis" });
+
+    // Left upper leg
+    joints.push_back({ {-hw, knee_y + p.upper_leg*0.5f, 0}, {limb_r, limb_r, p.upper_leg*0.5f}, "l_upper_leg" });
+    // Left lower leg
+    joints.push_back({ {-hw, p.lower_leg*0.5f, 0}, {limb_r*0.85f, limb_r*0.85f, p.lower_leg*0.5f}, "l_lower_leg" });
+    // Right upper leg
+    joints.push_back({ { hw, knee_y + p.upper_leg*0.5f, 0}, {limb_r, limb_r, p.upper_leg*0.5f}, "r_upper_leg" });
+    // Right lower leg
+    joints.push_back({ { hw, p.lower_leg*0.5f, 0}, {limb_r*0.85f, limb_r*0.85f, p.lower_leg*0.5f}, "r_lower_leg" });
+
+    // Left upper arm
+    joints.push_back({ {-(sw + p.upper_arm*0.5f), shoulder_y, 0}, {p.upper_arm*0.5f, limb_r, limb_r}, "l_upper_arm" });
+    // Left forearm
+    joints.push_back({ {-(sw + p.upper_arm + p.forearm*0.5f), shoulder_y, 0}, {p.forearm*0.5f, limb_r*0.8f, limb_r*0.8f}, "l_forearm" });
+    // Right upper arm
+    joints.push_back({ { (sw + p.upper_arm*0.5f), shoulder_y, 0}, {p.upper_arm*0.5f, limb_r, limb_r}, "r_upper_arm" });
+    // Right forearm
+    joints.push_back({ { (sw + p.upper_arm + p.forearm*0.5f), shoulder_y, 0}, {p.forearm*0.5f, limb_r*0.8f, limb_r*0.8f}, "r_forearm" });
+
+    return joints;
+}
 
 void ActorRenderer::init(SDL_GPUDevice *device,
                          SDL_GPUGraphicsPipeline *terrain_pipeline,
@@ -115,35 +194,57 @@ uint32_t ActorRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     std::vector<BasaltVertex> verts;
     verts.reserve(512);
 
-    glm::vec3 body_color(0.55f, 0.52f, 0.48f);
+    ActorProportions props = make_proportions(Config::HUMAN_HEIGHT_FEET);
+    float u       = props.total_height / 8.0f;
+    float inv_wu  = 1.0f / Config::WORLD_UNIT;
+    float limb_r  = u * 0.18f * inv_wu;
+    float torso_r = u * 0.30f * inv_wu;
+    float head_r  = props.head_width * 0.5f * inv_wu;
+    float head_hh = props.head_height * 0.5f * inv_wu;
 
-    ecs.each([&](ActorTag, const SkeletonPose &pose, const ActorConfig &cfg) {
-        using J = Joint;
-        auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
+    glm::vec3 skin_color(0.72f, 0.60f, 0.50f);
+    glm::vec3 cloth_color(0.35f, 0.45f, 0.55f);
 
-        int limb  = 6;
-        int torso = 4;
+    // Convert a local-space joint position (feet, Y-up, origin at feet) to world space.
+    auto to_world = [inv_wu](const glm::vec3 &local, const Transform &t) -> glm::vec3 {
+        float cos_f = cosf(t.facing), sin_f = sinf(t.facing);
+        float lx = local.x * inv_wu;
+        float lz = local.z * inv_wu;
+        float ly = local.y * inv_wu; // height → wz
+        return { t.x + cos_f * lx - sin_f * lz,
+                 t.y + sin_f * lx + cos_f * lz,
+                 t.z + ly };
+    };
 
-        emit_cylinder(j(J::ROOT),  j(J::SPINE), cfg.torso_radius, body_color, torso, verts);
-        emit_cylinder(j(J::SPINE), j(J::CHEST), cfg.torso_radius, body_color, torso, verts);
-        emit_cylinder(j(J::CHEST), j(J::NECK),  cfg.torso_radius, body_color, torso, verts);
-        emit_cylinder(j(J::NECK),  j(J::HEAD),  cfg.head_radius,  body_color, torso, verts);
+    ecs.each([&](ActorTag, const Transform &t, const SkeletonPose &pose, const ActorConfig &) {
+        auto jp = [&](Joint j) { return to_world(pose.joints[(int)j], t); };
 
-        emit_cylinder(j(J::CHEST),      j(J::L_SHOULDER), cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_SHOULDER), j(J::L_ELBOW),    cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_ELBOW),    j(J::L_WRIST),    cfg.limb_radius, body_color, limb, verts);
+        // Head (vertical capsule around HEAD joint)
+        glm::vec3 head_pos = jp(Joint::HEAD);
+        emit_cylinder(head_pos - glm::vec3(0.f, 0.f, head_hh),
+                      head_pos + glm::vec3(0.f, 0.f, head_hh),
+                      head_r, skin_color, 8, verts);
 
-        emit_cylinder(j(J::CHEST),      j(J::R_SHOULDER), cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_SHOULDER), j(J::R_ELBOW),    cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_ELBOW),    j(J::R_WRIST),    cfg.limb_radius, body_color, limb, verts);
+        // Neck
+        emit_cylinder(jp(Joint::NECK), jp(Joint::HEAD), limb_r, skin_color, 6, verts);
 
-        emit_cylinder(j(J::ROOT),   j(J::L_HIP),   cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_HIP),  j(J::L_KNEE),  cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_KNEE), j(J::L_ANKLE), cfg.limb_radius, body_color, limb, verts);
+        // Torso: SPINE to CHEST
+        emit_cylinder(jp(Joint::SPINE), jp(Joint::CHEST), torso_r, cloth_color, 8, verts);
 
-        emit_cylinder(j(J::ROOT),   j(J::R_HIP),   cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_HIP),  j(J::R_KNEE),  cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_KNEE), j(J::R_ANKLE), cfg.limb_radius, body_color, limb, verts);
+        // Pelvis: L_HIP to R_HIP (horizontal crossbar)
+        emit_cylinder(jp(Joint::L_HIP), jp(Joint::R_HIP), limb_r * 1.2f, cloth_color, 6, verts);
+
+        // Arms
+        emit_cylinder(jp(Joint::L_SHOULDER), jp(Joint::L_ELBOW), limb_r,        skin_color, 6, verts);
+        emit_cylinder(jp(Joint::L_ELBOW),    jp(Joint::L_WRIST),  limb_r * 0.8f, skin_color, 6, verts);
+        emit_cylinder(jp(Joint::R_SHOULDER), jp(Joint::R_ELBOW), limb_r,        skin_color, 6, verts);
+        emit_cylinder(jp(Joint::R_ELBOW),    jp(Joint::R_WRIST),  limb_r * 0.8f, skin_color, 6, verts);
+
+        // Legs
+        emit_cylinder(jp(Joint::L_HIP),  jp(Joint::L_KNEE),  limb_r,        cloth_color, 6, verts);
+        emit_cylinder(jp(Joint::L_KNEE), jp(Joint::L_ANKLE), limb_r * 0.85f, cloth_color, 6, verts);
+        emit_cylinder(jp(Joint::R_HIP),  jp(Joint::R_KNEE),  limb_r,        cloth_color, 6, verts);
+        emit_cylinder(jp(Joint::R_KNEE), jp(Joint::R_ANKLE), limb_r * 0.85f, cloth_color, 6, verts);
     });
 
     if (verts.empty()) return 0;

@@ -1,4 +1,5 @@
 #include "terrain/hex.h"
+#include "config.h"
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
@@ -82,4 +83,38 @@ void compute_visible_edges(std::vector<HexColumn> &columns) {
       }
     }
   }
+}
+
+// World-space coordinate system: 1 world unit = 1 foot.
+// BASALT_COLUMN_FEET defines the spacing between adjacent hex column centers in feet.
+// For q=1, r=0: world_x = BASALT_COLUMN_FEET (2.0 ft) exactly.
+glm::vec2 hex_to_world(HexCoord h) {
+  const float s   = Config::BASALT_COLUMN_FEET;
+  const float sqrt3 = 1.7320508075688772f;
+  float wx = s * h.q;
+  float wy = s * sqrt3 * (h.r + h.q * 0.5f);
+  return {wx, wy};
+}
+
+HexCoord world_to_hex(float wx, float wy) {
+  const float s   = Config::BASALT_COLUMN_FEET;
+  const float sqrt3 = 1.7320508075688772f;
+  float q = wx / s;
+  float r = (wy / s) / sqrt3 - q * 0.5f;
+
+  int iq = (int)std::round(q);
+  int ir = (int)std::round(r);
+  int is = (int)std::round(-q - r);
+
+  float dq = std::abs(iq - q);
+  float dr = std::abs(ir - r);
+  float ds = std::abs(is - (-q - r));
+
+  if (dq > dr && dq > ds) {
+    iq = -ir - is;
+  } else if (dr > ds) {
+    ir = -iq - is;
+  }
+
+  return {iq, ir};
 }

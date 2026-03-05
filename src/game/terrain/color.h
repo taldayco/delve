@@ -1,4 +1,5 @@
 #pragma once
+#include "config.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -59,7 +60,7 @@ inline uint32_t modulate_color(uint32_t color, float factor) {
 inline void apply_hex_dither(std::vector<uint32_t> &pixels, int width,
                              int height, float strength,
                              uint32_t skip_color = 0) {
-  const float HEX_SIZE = 8.0f;
+  const float hex_size = Config::HEX_SIZE;
   const float sqrt3 = 1.732f;
 
   for (int y = 0; y < height; ++y) {
@@ -70,8 +71,8 @@ inline void apply_hex_dither(std::vector<uint32_t> &pixels, int width,
       if (skip_color != 0 && pixel == skip_color)
         continue;
 
-      float q = x / (HEX_SIZE * sqrt3);
-      float r = y / HEX_SIZE - q * 0.5f;
+      float q = x / (hex_size * sqrt3);
+      float r = y / hex_size - q * 0.5f;
 
       int iq = (int)std::round(q);
       int ir = (int)std::round(r);

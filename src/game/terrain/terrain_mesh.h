@@ -2,6 +2,7 @@
 #include "terrain/map_data.h"
 #include <cstdint>
 #include <vector>
+#include <span>
 #include <glm/glm.hpp>
 
 struct TerrainState;
@@ -68,3 +69,14 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                uint32_t cluster_tiles_x, uint32_t cluster_tiles_y,
                                float time, float contour_opacity,
                                uint32_t light_count);
+
+// Append an arbitrary world-space polygon (triangle soup) to a RenderingLayer.
+// vertices: 3 or more world-space positions forming a convex polygon (fan-triangulated).
+// color: RGB in [0,1].
+// normal: surface normal applied to all vertices.
+// For non-convex triangle soup, call with 3 vertices per triangle.
+void add_world_polygon(std::span<const glm::vec3> vertices,
+                       glm::vec3 color,
+                       glm::vec3 normal,
+                       float sheen,
+                       TerrainMesh::RenderingLayer &layer);

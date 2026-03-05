@@ -203,6 +203,7 @@ set(TERRAIN_PIPELINE_SOURCES
     src/game/terrain/basalt.cpp
     src/game/terrain/lava.cpp
     src/game/terrain/terrain_mesh.cpp
+    src/game/terrain/map_util.cpp
 )
 
 # ---- delve_tests (headless test runner) ----
@@ -213,6 +214,8 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_animation.cpp
     src/test/tests/test_palettes.cpp
     src/test/tests/test_terrain_pipeline.cpp
+    src/test/tests/actor_tests.cpp
+    src/test/tests/test_coordinate_system.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 

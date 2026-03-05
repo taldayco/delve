@@ -54,6 +54,22 @@ inline float skeleton_height(const SkeletonPose &pose) {
 inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; }
 inline float gait_step_height(const ProceduralGait &g)   { return g.step_height; }
 
+// --- Skeleton proportion metrics (8-head canon validation) ---
+
+// Measured proportional ratios derived from a built skeleton.
+// Populate via measure_skeleton_proportions() defined in actor_tests.cpp
+// (requires SkeletonJoint from render/actor_renderer.h).
+struct SkeletonProportionMetrics {
+    float head_to_total;        // head_height / total_height  (ideal: 0.125)
+    float leg_to_total;         // (upper_leg + lower_leg) / total_height (ideal: 0.5)
+    float shoulder_hip_ratio;   // shoulder_width / hip_width
+    float shoulder_head_ratio;  // shoulder_width / head_width (ideal: 2.0+)
+    float arm_span_to_total;    // wrist-to-wrist span / total_height
+    float foot_to_total;        // foot_length / total_height
+    float shoulder_width;       // absolute measured shoulder width
+    float head_width;           // absolute measured head width
+};
+
 // --- New metrics for biomechanical animation ---
 
 // Returns 1.0 if left arm and left leg are in anti-phase, 0.0 if in-phase.

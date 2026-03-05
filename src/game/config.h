@@ -21,13 +21,23 @@ struct Config {
   static constexpr float DEFAULT_MAP_SCALE = 1.0f;
 
 
-  static constexpr float HEX_SIZE = 8.0f;
-  static constexpr float WORLD_UNIT = HEX_SIZE;
+  // World-space coordinate system: 1 world unit = 2 feet.
+  // One basalt column is 2 feet wide/long, so it spans exactly 1 world unit.
+  // HEX_SIZE is the pixel/screen-space size of one hex (rendering only).
+  static constexpr float HEX_SIZE = 2.0f;
+  // WORLD_UNIT: feet per world unit (1 world unit = 2 feet = 1 basalt column).
+  static constexpr float WORLD_UNIT = 2.0f;
+  // BASALT_COLUMN_FEET: width and length of one basalt column in world-space feet.
+  static constexpr float BASALT_COLUMN_FEET = 2.0f;
+  // HUMAN_HEIGHT_FEET: average human height (~5.9 ft = 8 head-lengths).
+  static constexpr float HUMAN_HEIGHT_FEET = 5.9f;
+  // HEAD_HEIGHT_FEET: one head-length (HUMAN_HEIGHT_FEET / 8).
+  static constexpr float HEAD_HEIGHT_FEET = HUMAN_HEIGHT_FEET / 8.0f;
   static constexpr int   MAP_COLS   = 1024;
   static constexpr int   MAP_ROWS   = 1024;
   static constexpr float MAP_WIDTH_UNITS  = MAP_COLS / HEX_SIZE;
   static constexpr float MAP_HEIGHT_UNITS = MAP_ROWS / HEX_SIZE;
-  static constexpr float LAVA_GRID_SPACING = 10.0f;
+  static constexpr float LAVA_GRID_SPACING = 2.5f;
   static constexpr float HEIGHT_THRESHOLD = 0.02f;
   static constexpr int MIN_PLATEAU_SIZE = 50;
 

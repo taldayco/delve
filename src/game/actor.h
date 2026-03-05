@@ -34,8 +34,8 @@ struct ActorConfig {
 
 struct ProceduralGait {
     float phase         = 0.0f;
-    float stride_len    = 0.60f;
-    float step_height   = 0.130f;  // proportional to shorter legs
+    float stride_len    = 0.85f;
+    float step_height   = 0.16f;   // proportional to stride length
     float step_duration = 0.25f;
     float move_speed    = 4.0f;
 };

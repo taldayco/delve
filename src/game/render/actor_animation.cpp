@@ -151,7 +151,7 @@ void register_animation_systems(flecs::world &ecs,
                 float hip_sign[2] = { -1.0f, 1.0f }; // left, right
 
                 // Speed-adaptive step duration: faster movement = quicker steps.
-                float speed_ratio      = std::max(0.2f, std::min(1.0f, speed / gait.move_speed));
+                float speed_ratio      = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
                 float adaptive_duration = gait.step_duration / speed_ratio;
 
                 for (int leg = 0; leg < 2; ++leg) {
@@ -160,24 +160,32 @@ void register_animation_systems(flecs::world &ecs,
                     float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
                     float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
 
-                    float stride_off_x = vel_dx * gait.stride_len * 0.5f;
-                    float stride_off_y = vel_dy * gait.stride_len * 0.5f;
-                    float pred_x = hip_x + stride_off_x;
-                    float pred_y = hip_y + stride_off_y;
-                    float pred_z = sample_world_height(*map_data, pred_x, pred_y);
+                    // Trigger check: how far the planted foot is from nominal center.
+                    float half_stride = gait.stride_len * 0.5f;
+                    float center_x = hip_x + vel_dx * half_stride;
+                    float center_y = hip_y + vel_dy * half_stride;
 
                     if (!legs.stepping[leg]) {
-                        float dx   = legs.foot[leg].x - pred_x;
-                        float dy   = legs.foot[leg].y - pred_y;
+                        float dx   = legs.foot[leg].x - center_x;
+                        float dy   = legs.foot[leg].y - center_y;
                         float dist = sqrtf(dx * dx + dy * dy);
 
                         // One-foot-planted invariant: only step if other foot is planted.
                         bool other_planted = !legs.stepping[other_leg];
-                        if (dist > gait.stride_len * 0.5f && other_planted) {
+                        if (dist > half_stride && other_planted) {
                             legs.stepping[leg]  = true;
                             legs.progress[leg]  = 0.0f;
                             legs.prev_foot[leg] = legs.foot[leg];
-                            legs.target[leg]    = {pred_x, pred_y, pred_z};
+
+                            // Velocity-predicted target: foot lands ahead of where
+                            // the hip will be when the step completes, implementing
+                            // heel-strike placement (inverted pendulum model).
+                            float step_travel = speed * adaptive_duration;
+                            float target_off  = half_stride + step_travel * 0.75f;
+                            float tgt_x = hip_x + vel_dx * target_off;
+                            float tgt_y = hip_y + vel_dy * target_off;
+                            float tgt_z = sample_world_height(*map_data, tgt_x, tgt_y);
+                            legs.target[leg]    = {tgt_x, tgt_y, tgt_z};
                         }
                     }
 
@@ -346,7 +354,7 @@ void register_animation_systems(flecs::world &ecs,
                     glm::vec3 axis = foot_target - H;
                     float D = glm::length(axis);
                     float min_D = fabsf(a - b) + 0.001f;
-                    float max_D = a + b - 0.001f;
+                    float max_D = a + b - 0.03f; // margin prevents knee hyperextension
                     D = std::max(min_D, std::min(D, max_D));
 
                     if (glm::length(axis) > 1e-5f)
@@ -425,8 +433,9 @@ void register_animation_systems(flecs::world &ecs,
                 anim.hip_roll = smooth_damp(anim.hip_roll, target_hip_roll,
                                             &anim.hip_roll_rate, 0.04f, dt);
 
-                // Double-bounce: root drops at each foot-plant (twice per full cycle).
-                float target_hip_bob = fabsf(sinf(gait.phase)) * -0.025f * walk_blend;
+                // Inverted pendulum: body rises at midstance (vaulting over
+                // planted leg) and drops at double-support transitions.
+                float target_hip_bob = fabsf(sinf(gait.phase)) * 0.018f * walk_blend;
                 anim.hip_bob = smooth_damp(anim.hip_bob, target_hip_bob,
                                            &anim.hip_bob_rate, 0.03f, dt);
 
@@ -458,6 +467,15 @@ void register_animation_systems(flecs::world &ecs,
 
                 float target_lean_x = lean_dir.x * lean_factor;
                 float target_lean_y = lean_dir.y * lean_factor;
+
+                // Controlled falling: speed-proportional forward lean gives
+                // the appearance of leaning into movement, initiating each
+                // stride by disrupting balance forward.
+                float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+                float speed_blend = std::min(1.0f, speed / gait.move_speed);
+                float fwd_lean = speed_blend * glm::radians(2.5f);
+                target_lean_x += fwd_x * fwd_lean;
+                target_lean_y += fwd_y * fwd_lean;
 
                 anim.chest_lean_x = smooth_damp(anim.chest_lean_x, target_lean_x,
                                                  &anim.chest_lean_x_rate, 0.05f, dt);

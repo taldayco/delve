@@ -216,23 +216,23 @@ DELVE_TEST(gait_phase_constant_swing_rate) {
   return true;
 }
 
-// Test: Fix 3 — Hip double-bounce: |sin(phase)| has exactly 2 minima per 2*PI
-// cycle. Minima of |sin(x)| occur at x=0 and x=PI within [0, 2*PI).
+// Test: Inverted pendulum — |sin(phase)| has exactly 2 peaks (midstance rises)
+// per 2*PI cycle. Peaks of |sin(x)| occur at x=PI/2 and x=3*PI/2.
 DELVE_TEST(hip_double_bounce_twice_per_stride) {
-  float amplitude = 0.025f;
-  int bounce_count = 0;
+  float amplitude = 0.018f;
+  int peak_count = 0;
   int total_steps = 1000;
   for (int i = 1; i < total_steps; ++i) {
     float prev_phase = (float)(i - 1) / total_steps * glm::two_pi<float>();
     float curr_phase = (float)i / total_steps * glm::two_pi<float>();
     float next_phase = (float)(i + 1) / total_steps * glm::two_pi<float>();
-    float prev_bob = fabsf(sinf(prev_phase)) * -amplitude;
-    float curr_bob = fabsf(sinf(curr_phase)) * -amplitude;
-    float next_bob = fabsf(sinf(next_phase)) * -amplitude;
-    if (curr_bob < prev_bob && curr_bob < next_bob)
-      ++bounce_count;
+    float prev_bob = fabsf(sinf(prev_phase)) * amplitude;
+    float curr_bob = fabsf(sinf(curr_phase)) * amplitude;
+    float next_bob = fabsf(sinf(next_phase)) * amplitude;
+    if (curr_bob > prev_bob && curr_bob > next_bob)
+      ++peak_count;
   }
-  EXPECT_EQ(bounce_count, 2);
+  EXPECT_EQ(peak_count, 2);
   return true;
 }
 
@@ -290,7 +290,7 @@ DELVE_TEST(no_simultaneous_stepping) {
     float hip_sign[2] = {-1.0f, 1.0f};
     float vel_dx = vel_x / speed, vel_dy = vel_y / speed;
 
-    float speed_ratio = std::max(0.2f, std::min(1.0f, speed / gait.move_speed));
+    float speed_ratio = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
     float adaptive_duration = gait.step_duration / speed_ratio;
 
     for (int leg = 0; leg < 2; ++leg) {
@@ -429,10 +429,10 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
   int total = 100;
   for (int i = 0; i < total; ++i) {
     float phase = (float)i / total * glm::two_pi<float>();
-    float bob = fabsf(sinf(phase)) * 0.025f;
+    float bob = fabsf(sinf(phase)) * 0.018f;
     max_bob = std::max(max_bob, bob);
   }
-  EXPECT_LT(max_bob, 0.026f);
+  EXPECT_LT(max_bob, 0.019f);
   EXPECT_GT(max_bob, 0.0f);
   return true;
 }

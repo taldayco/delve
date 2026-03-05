@@ -35,6 +35,19 @@ float sample_world_height(const MapData &map, float wx, float wy) {
     return top + (bottom - top) * ty;
 }
 
+glm::vec3 sample_terrain_normal(const MapData &map, float wx, float wy) {
+    constexpr float eps = 0.05f; // world-space sample offset
+    float hL = sample_world_height(map, wx - eps, wy);
+    float hR = sample_world_height(map, wx + eps, wy);
+    float hD = sample_world_height(map, wx, wy - eps);
+    float hU = sample_world_height(map, wx, wy + eps);
+    // Central-difference gradient → surface normal
+    glm::vec3 n(-( hR - hL) / (2.0f * eps),
+                -(hU - hD) / (2.0f * eps),
+                1.0f);
+    return glm::normalize(n);
+}
+
 HexColumn find_spawn_column(const MapData &map, uint32_t seed) {
     if (map.columns.empty()) return HexColumn{};
 

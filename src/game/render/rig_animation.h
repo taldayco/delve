@@ -5,14 +5,17 @@ class InputSystem;
 class CameraState;
 class AnimationLogger;
 
-// Register all 6 procedural animation ECS systems into the world.
+// Register all 9 procedural animation ECS systems into the world.
 // Systems run in PostUpdate phase, in this order:
-//   1. PlayerMovementSystem  — input → SmoothDamp velocity → position
-//   2. ActorGroundingSystem  — snap actor Z to terrain height (adaptive spring)
-//   3. GaitSystem            — procedural foot placement (one-foot-planted)
-//   4. IKSystem              — two-bone leg IK + pendulum arm swing
-//   5. SkeletonFinaliseSystem — hip sway, spine lean, idle micro-motion, derived joints
-//   6. AnimationLogSystem    — JSONL telemetry via AnimationLogger
+//   1. PlayerMovementSystem   — input → SmoothDamp velocity → position + look-at target
+//   2. ActorGroundingSystem   — snap actor Z to terrain height (foot-average)
+//   3. GaitSystem             — procedural foot placement + continuous Z tracking
+//   3.5 GrabDriveSystem       — GrabState → ArmIKGoal + weight compensation
+//   4. IKSystem               — two-bone leg IK + pendulum arm swing + arm IK blend
+//   5. OverlaySystem          — additive animation overlays (limp, fatigue, heavy carry)
+//   6. LookAtSystem           — procedural head/neck/chest tracking
+//   7. SkeletonFinaliseSystem — hip sway/tilt, spine lean, idle micro-motion, derived joints
+//   8. AnimationLogSystem     — JSONL telemetry via AnimationLogger
 void register_rig_systems(flecs::world &ecs,
                            InputSystem    &input,
                            CameraState    &camera,

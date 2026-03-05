@@ -165,6 +165,16 @@ struct RigState {
     float hip_roll_rate = 0.0f;  // smooth_damp derivative
     float hip_bob       = 0.0f;  // vertical double-bounce offset (world units)
     float hip_bob_rate  = 0.0f;  // smooth_damp derivative
+
+    // --- Slope-driven hip tilt (Phase 1C) ---
+    float hip_tilt      = 0.0f;  // lateral tilt from foot height diff (radians)
+    float hip_tilt_rate = 0.0f;  // smooth_damp derivative
+
+    // --- Look-at smoothing (Phase 2) ---
+    float look_yaw        = 0.0f;  // current smoothed look yaw (radians)
+    float look_pitch      = 0.0f;  // current smoothed look pitch (radians)
+    float look_yaw_rate   = 0.0f;  // smooth_damp derivative
+    float look_pitch_rate = 0.0f;  // smooth_damp derivative
 };
 
 // Hip counter-animation state for rendering pass.
@@ -190,6 +200,34 @@ struct AnimationConfig {
     float hip_sway_deg      = 5.0f;   // max lateral hip rotation (degrees)
     float hip_drop_max      = 0.03f;  // max fractional CoM drop during stride
     float hip_bob_amplitude = 0.02f;  // vertical double-bounce amplitude (world units)
+};
+
+// --- Phase 2: Look-at target ---
+struct LookAtTarget {
+    glm::vec3 position{0.0f};
+    float weight = 0.0f;    // [0,1] blend toward target
+    bool active = false;
+};
+
+// --- Phase 3: Arm IK goal ---
+struct ArmIKGoal {
+    glm::vec3 target_l{0.0f}, target_r{0.0f};
+    float weight_l = 0.0f, weight_r = 0.0f;  // [0,1]: 0=pendulum FK, 1=IK
+};
+
+// --- Phase 4: Animation overlay ---
+struct AnimationOverlay {
+    enum class Type : uint8_t { None, Limp, Fatigue, HeavyCarry };
+    Type active = Type::None;
+    float intensity = 0.0f;  // [0,1]
+    float phase = 0.0f;
+};
+
+// --- Phase 5: Grab state ---
+struct GrabState {
+    glm::vec3 grab_point{0.0f};
+    float weight = 0.0f;
+    bool active_l = false, active_r = false;
 };
 
 // Compute hip counter-animation state from stride phase and configuration.

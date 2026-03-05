@@ -29,6 +29,49 @@ static float smooth_damp(float current, float target, float *velocity,
     return target + (delta + temp) * exp_f;
 }
 
+// Generic two-bone analytical IK solver (extracted from leg IK).
+// H: root joint (hip/shoulder), target: end-effector goal,
+// a: upper bone length, b: lower bone length,
+// pole: pole target for bend direction,
+// fallback_perp: fallback perpendicular when pole is degenerate.
+static void solve_two_bone(glm::vec3 H, glm::vec3 target,
+                           float a, float b,
+                           glm::vec3 pole, glm::vec3 fallback_perp,
+                           glm::vec3 &out_mid, glm::vec3 &out_end) {
+    out_end = target;
+
+    glm::vec3 axis = target - H;
+    float D = glm::length(axis);
+    float min_D = fabsf(a - b) + 0.001f;
+    float max_D = a + b - 0.005f;
+
+    float stretch_limit = max_D * 1.15f;
+    if (D > stretch_limit && D > 1e-5f)
+        out_end = H + (axis / D) * stretch_limit;
+
+    D = std::max(min_D, std::min(D, max_D));
+
+    if (glm::length(axis) > 1e-5f)
+        axis = glm::normalize(axis) * D;
+    else
+        axis = glm::vec3(0, 0, -D);
+
+    float cos_alpha = (a * a + D * D - b * b) / (2.0f * a * D);
+    cos_alpha = std::max(-1.0f, std::min(1.0f, cos_alpha));
+    float alpha = acosf(cos_alpha);
+
+    glm::vec3 axis_n = glm::normalize(axis);
+    glm::vec3 pole_off = pole - H;
+    glm::vec3 perp = pole_off - glm::dot(pole_off, axis_n) * axis_n;
+    if (glm::length(perp) > 1e-5f)
+        perp = glm::normalize(perp);
+    else
+        perp = fallback_perp;
+
+    glm::vec3 dir_to_mid = axis_n * cosf(alpha) + perp * sinf(alpha);
+    out_mid = H + dir_to_mid * a;
+}
+
 void register_rig_systems(flecs::world &ecs,
                            InputSystem    &input,
                            CameraState    &camera,
@@ -87,6 +130,23 @@ void register_rig_systems(flecs::world &ecs,
             float spd = sqrtf(vel->x * vel->x + vel->y * vel->y);
             if (spd > 0.001f)
                 t->facing = atan2f(vel->y, vel->x);
+
+            // Phase 2C: set look-at target in movement direction
+            auto *look = player_entity.get_mut<LookAtTarget>();
+            if (look) {
+                if (spd > 0.1f) {
+                    look->position = glm::vec3(t->x + vel->x / spd * 5.0f,
+                                               t->y + vel->y / spd * 5.0f,
+                                               t->z);
+                    look->active = true;
+                    // Ramp weight up when moving
+                    look->weight = std::min(1.0f, look->weight + ecs.delta_time() * 4.0f);
+                } else {
+                    // Ramp weight down when idle
+                    look->weight = std::max(0.0f, look->weight - ecs.delta_time() * 2.0f);
+                    if (look->weight < 0.01f) look->active = false;
+                }
+            }
         });
 
     // =========================================================================
@@ -100,9 +160,17 @@ void register_rig_systems(flecs::world &ecs,
             if (!map_data || map_data->basalt_height.empty()) return;
 
             float dt = ecs.delta_time();
-            ecs.each([&](ActorTag, Transform &t, const ActorConfig &cfg) {
-                float target_z = sample_world_height(*map_data, t.x, t.y)
-                                 + cfg.leg_len + cfg.shin_len;
+            ecs.each([&](ActorTag, Transform &t, const ActorConfig &cfg,
+                         const LegState *legs) {
+                float target_z;
+                if (legs) {
+                    // Phase 1B: use average foot height for smoother slope tracking
+                    float avg_foot_z = (legs->foot[0].z + legs->foot[1].z) * 0.5f;
+                    target_z = avg_foot_z + cfg.leg_len + cfg.shin_len;
+                } else {
+                    target_z = sample_world_height(*map_data, t.x, t.y)
+                               + cfg.leg_len + cfg.shin_len;
+                }
                 float dist = fabsf(target_z - t.z);
                 // Stiffer spring when far from ground, softer when close.
                 float k = 8.0f + dist * 4.0f;
@@ -228,6 +296,15 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 }
 
+                // ---- Planted-foot continuous Z tracking (Phase 1A) ----
+                for (int leg = 0; leg < 2; ++leg) {
+                    if (!legs.stepping[leg]) {
+                        float ground_z = sample_world_height(*map_data,
+                                            legs.foot[leg].x, legs.foot[leg].y);
+                        legs.foot[leg].z = ground_z;
+                    }
+                }
+
                 // ---- Planted-foot reach clamp ----
                 float max_horiz = gait.stride_len * 0.9f;
                 for (int leg = 0; leg < 2; ++leg) {
@@ -263,6 +340,46 @@ void register_rig_systems(flecs::world &ecs,
         });
 
     // =========================================================================
+    // 3.5. GrabDriveSystem (Phase 5)
+    //      GrabState → ArmIKGoal + weight compensation on gait.
+    // =========================================================================
+    ecs.system("GrabDriveSystem")
+        .kind(flecs::PostUpdate)
+        .run([&ecs](flecs::iter &) {
+            ecs.each([&](ActorTag,
+                         const GrabState       &grab,
+                         const ActorConfig     &cfg,
+                         ArmIKGoal             &arm_ik,
+                         ProceduralGait        &gait,
+                         AnimationOverlay      *overlay) {
+
+                if (grab.active_l) {
+                    arm_ik.target_l = grab.grab_point;
+                    arm_ik.weight_l = grab.weight;
+                } else {
+                    arm_ik.weight_l = 0.0f;
+                }
+                if (grab.active_r) {
+                    arm_ik.target_r = grab.grab_point;
+                    arm_ik.weight_r = grab.weight;
+                } else {
+                    arm_ik.weight_r = 0.0f;
+                }
+
+                // Weight compensation: reduce stride when carrying
+                float carry_w = std::max(grab.active_l ? grab.weight : 0.0f,
+                                         grab.active_r ? grab.weight : 0.0f);
+                if (carry_w > 0.01f) {
+                    // Activate heavy carry overlay if available
+                    if (overlay) {
+                        overlay->active = AnimationOverlay::Type::HeavyCarry;
+                        overlay->intensity = carry_w;
+                    }
+                }
+            });
+        });
+
+    // =========================================================================
     // 4. IKSystem
     //    Two-bone analytical leg IK + pendulum arm swing with joint delay chain.
     // =========================================================================
@@ -276,6 +393,7 @@ void register_rig_systems(flecs::world &ecs,
                          const LegState   &legs,
                          const ActorConfig &cfg,
                          const ProceduralGait &gait,
+                         const ArmIKGoal  *arm_ik,
                          RigState         &anim,
                          RigPose          &pose) {
 
@@ -314,7 +432,7 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_UPPER_ARM] = l_upper_arm;
                 pose.joints[(int)J::R_UPPER_ARM] = r_upper_arm;
 
-                // ---- Pendulum arm swing ----
+                // ---- Pendulum arm swing (FK) ----
                 float speed       = sqrtf(vel.x * vel.x + vel.y * vel.y);
                 float swing_amp   = std::min(1.0f, speed / gait.move_speed) * glm::radians(30.0f);
 
@@ -364,66 +482,63 @@ void register_rig_systems(flecs::world &ecs,
                     return elbow_pos + dir * forearm_len;
                 };
 
-                // Left arm.
-                glm::vec3 l_lower_arm = swing_elbow_pos(l_upper_arm, anim.l_shoulder_smooth,
-                                                         anim.l_elbow_smooth, cfg.arm_len);
-                glm::vec3 l_hand      = swing_wrist_pos(l_lower_arm, anim.l_shoulder_smooth,
-                                                         anim.l_wrist_smooth, cfg.forearm_len);
+                // Left arm FK.
+                glm::vec3 l_lower_arm_fk = swing_elbow_pos(l_upper_arm, anim.l_shoulder_smooth,
+                                                            anim.l_elbow_smooth, cfg.arm_len);
+                glm::vec3 l_hand_fk      = swing_wrist_pos(l_lower_arm_fk, anim.l_shoulder_smooth,
+                                                            anim.l_wrist_smooth, cfg.forearm_len);
+
+                // Right arm FK.
+                glm::vec3 r_lower_arm_fk = swing_elbow_pos(r_upper_arm, anim.r_shoulder_smooth,
+                                                            anim.r_elbow_smooth, cfg.arm_len);
+                glm::vec3 r_hand_fk      = swing_wrist_pos(r_lower_arm_fk, anim.r_shoulder_smooth,
+                                                            anim.r_wrist_smooth, cfg.forearm_len);
+
+                // Phase 3C: Blend arm IK with FK when ArmIKGoal is present
+                glm::vec3 l_lower_arm = l_lower_arm_fk, l_hand = l_hand_fk;
+                glm::vec3 r_lower_arm = r_lower_arm_fk, r_hand = r_hand_fk;
+
+                if (arm_ik) {
+                    glm::vec3 fwd3(fwd_x, fwd_y, 0.0f);
+
+                    if (arm_ik->weight_l > 0.001f) {
+                        glm::vec3 l_elbow_pole = l_upper_arm - fwd3 * 0.3f + glm::vec3(0,0,-0.1f);
+                        glm::vec3 l_elbow_ik, l_hand_ik;
+                        solve_two_bone(l_upper_arm, arm_ik->target_l,
+                                       cfg.arm_len, cfg.forearm_len,
+                                       l_elbow_pole, glm::vec3(-rght_x, -rght_y, 0.0f),
+                                       l_elbow_ik, l_hand_ik);
+                        float w = arm_ik->weight_l;
+                        l_lower_arm = glm::mix(l_lower_arm_fk, l_elbow_ik, w);
+                        l_hand      = glm::mix(l_hand_fk, l_hand_ik, w);
+                    }
+                    if (arm_ik->weight_r > 0.001f) {
+                        glm::vec3 r_elbow_pole = r_upper_arm - fwd3 * 0.3f + glm::vec3(0,0,-0.1f);
+                        glm::vec3 r_elbow_ik, r_hand_ik;
+                        solve_two_bone(r_upper_arm, arm_ik->target_r,
+                                       cfg.arm_len, cfg.forearm_len,
+                                       r_elbow_pole, glm::vec3(rght_x, rght_y, 0.0f),
+                                       r_elbow_ik, r_hand_ik);
+                        float w = arm_ik->weight_r;
+                        r_lower_arm = glm::mix(r_lower_arm_fk, r_elbow_ik, w);
+                        r_hand      = glm::mix(r_hand_fk, r_hand_ik, w);
+                    }
+                }
+
                 pose.joints[(int)J::L_LOWER_ARM] = l_lower_arm;
                 pose.joints[(int)J::L_HAND]      = l_hand;
-
-                // Right arm.
-                glm::vec3 r_lower_arm = swing_elbow_pos(r_upper_arm, anim.r_shoulder_smooth,
-                                                         anim.r_elbow_smooth, cfg.arm_len);
-                glm::vec3 r_hand      = swing_wrist_pos(r_lower_arm, anim.r_shoulder_smooth,
-                                                         anim.r_wrist_smooth, cfg.forearm_len);
                 pose.joints[(int)J::R_LOWER_ARM] = r_lower_arm;
                 pose.joints[(int)J::R_HAND]      = r_hand;
 
-                // ---- Leg IK — two-bone analytical solver ----
-                auto solve_leg = [&](glm::vec3 H, glm::vec3 foot_target,
-                                     float a, float b,
-                                     glm::vec3 pole,
-                                     glm::vec3 &out_knee, glm::vec3 &out_ankle) {
-                    out_ankle = foot_target;
-
-                    glm::vec3 axis = foot_target - H;
-                    float D = glm::length(axis);
-                    float min_D = fabsf(a - b) + 0.001f;
-                    float max_D = a + b - 0.005f;
-
-                    float stretch_limit = max_D * 1.15f;
-                    if (D > stretch_limit && D > 1e-5f)
-                        out_ankle = H + (axis / D) * stretch_limit;
-
-                    D = std::max(min_D, std::min(D, max_D));
-
-                    if (glm::length(axis) > 1e-5f)
-                        axis = glm::normalize(axis) * D;
-                    else
-                        axis = glm::vec3(0, 0, -D);
-
-                    float cos_alpha = (a * a + D * D - b * b) / (2.0f * a * D);
-                    cos_alpha = std::max(-1.0f, std::min(1.0f, cos_alpha));
-                    float alpha = acosf(cos_alpha);
-
-                    glm::vec3 axis_n = glm::normalize(axis);
-                    glm::vec3 pole_off = pole - H;
-                    glm::vec3 perp = pole_off - glm::dot(pole_off, axis_n) * axis_n;
-                    if (glm::length(perp) > 1e-5f)
-                        perp = glm::normalize(perp);
-                    else
-                        perp = glm::vec3(rght_x, rght_y, 0.0f);
-
-                    glm::vec3 dir_to_knee = axis_n * cosf(alpha) + perp * sinf(alpha);
-                    out_knee = H + dir_to_knee * a;
-                };
+                // ---- Leg IK — using shared two-bone solver ----
+                glm::vec3 fallback_perp(rght_x, rght_y, 0.0f);
 
                 // Left leg.
                 glm::vec3 l_pole = l_upper_leg + glm::vec3(fwd_x * 0.5f - rght_x * 0.08f,
                                                              fwd_y * 0.5f - rght_y * 0.08f, 0.2f);
                 glm::vec3 l_lower_leg, l_foot;
-                solve_leg(l_upper_leg, legs.foot[0], cfg.leg_len, cfg.shin_len, l_pole, l_lower_leg, l_foot);
+                solve_two_bone(l_upper_leg, legs.foot[0], cfg.leg_len, cfg.shin_len,
+                               l_pole, fallback_perp, l_lower_leg, l_foot);
                 pose.joints[(int)J::L_LOWER_LEG] = l_lower_leg;
                 pose.joints[(int)J::L_FOOT]      = l_foot;
 
@@ -431,14 +546,148 @@ void register_rig_systems(flecs::world &ecs,
                 glm::vec3 r_pole = r_upper_leg + glm::vec3(fwd_x * 0.5f + rght_x * 0.08f,
                                                              fwd_y * 0.5f + rght_y * 0.08f, 0.2f);
                 glm::vec3 r_lower_leg, r_foot;
-                solve_leg(r_upper_leg, legs.foot[1], cfg.leg_len, cfg.shin_len, r_pole, r_lower_leg, r_foot);
+                solve_two_bone(r_upper_leg, legs.foot[1], cfg.leg_len, cfg.shin_len,
+                               r_pole, fallback_perp, r_lower_leg, r_foot);
                 pose.joints[(int)J::R_LOWER_LEG] = r_lower_leg;
                 pose.joints[(int)J::R_FOOT]      = r_foot;
             });
         });
 
     // =========================================================================
-    // 5. SkeletonFinaliseSystem
+    // 5. OverlaySystem (Phase 4)
+    //    Additive animation overlays: limp, fatigue, heavy carry.
+    // =========================================================================
+    ecs.system("OverlaySystem")
+        .kind(flecs::PostUpdate)
+        .run([&ecs](flecs::iter &) {
+            float dt = ecs.delta_time();
+            ecs.each([&](ActorTag,
+                         const Transform      &t,
+                         const Velocity       &vel,
+                         const ActorConfig    &cfg,
+                         const ProceduralGait &gait,
+                         AnimationOverlay     &overlay,
+                         RigPose              &pose) {
+
+                using J = Joint;
+                using OT = AnimationOverlay::Type;
+
+                if (overlay.active == OT::None || overlay.intensity < 0.001f) return;
+
+                overlay.phase += dt * 2.0f; // overlay tick
+
+                float I = overlay.intensity;
+                float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+                float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+
+                switch (overlay.active) {
+                case OT::Limp: {
+                    // Asymmetric hip drop on left side
+                    float limp_drop = sinf(gait.phase) * 0.04f * I;
+                    pose.joints[(int)J::L_UPPER_LEG].z -= limp_drop;
+                    pose.joints[(int)J::HIPS].z -= fabsf(limp_drop) * 0.3f;
+                    break;
+                }
+                case OT::Fatigue: {
+                    // Increased sway + forward lean + slow breathing
+                    float fatigue_sway = sinf(overlay.phase * 0.8f) * 0.025f * I;
+                    glm::vec3 sway_vec(rght_x * fatigue_sway, rght_y * fatigue_sway, 0.0f);
+                    pose.joints[(int)J::CHEST]    += sway_vec;
+                    pose.joints[(int)J::NECK]     += sway_vec * 1.2f;
+                    pose.joints[(int)J::HEAD]     += sway_vec * 1.4f;
+                    // Forward lean
+                    float lean = 0.03f * I;
+                    pose.joints[(int)J::CHEST] += glm::vec3(fwd_x * lean, fwd_y * lean, 0.0f);
+                    pose.joints[(int)J::NECK]  += glm::vec3(fwd_x * lean * 1.3f, fwd_y * lean * 1.3f, 0.0f);
+                    break;
+                }
+                case OT::HeavyCarry: {
+                    // Forward lean + hands pulled down
+                    float lean = 0.05f * I;
+                    pose.joints[(int)J::CHEST] += glm::vec3(fwd_x * lean, fwd_y * lean, 0.0f);
+                    pose.joints[(int)J::NECK]  += glm::vec3(fwd_x * lean * 0.8f, fwd_y * lean * 0.8f, 0.0f);
+                    // Pull hands down
+                    pose.joints[(int)J::L_HAND].z -= 0.06f * I;
+                    pose.joints[(int)J::R_HAND].z -= 0.06f * I;
+                    break;
+                }
+                case OT::None: break;
+                }
+            });
+        });
+
+    // =========================================================================
+    // 6. LookAtSystem (Phase 2)
+    //    Procedural head/neck/chest tracking toward LookAtTarget.
+    // =========================================================================
+    ecs.system("LookAtSystem")
+        .kind(flecs::PostUpdate)
+        .run([&ecs](flecs::iter &) {
+            float dt = ecs.delta_time();
+            ecs.each([&](ActorTag,
+                         const Transform    &t,
+                         const LookAtTarget &look,
+                         RigState           &anim,
+                         RigPose            &pose) {
+
+                using J = Joint;
+
+                if (!look.active && anim.look_yaw == 0.0f && anim.look_pitch == 0.0f)
+                    return;
+
+                glm::vec3 head_pos = pose.joints[(int)J::HEAD];
+                glm::vec3 to_target = look.position - head_pos;
+                float horiz_dist = sqrtf(to_target.x * to_target.x + to_target.y * to_target.y);
+
+                // Decompose into yaw/pitch relative to facing
+                float target_yaw = 0.0f, target_pitch = 0.0f;
+                if (horiz_dist > 0.01f) {
+                    float abs_yaw = atan2f(to_target.y, to_target.x);
+                    target_yaw = abs_yaw - t.facing;
+                    // Wrap to [-PI, PI]
+                    while (target_yaw >  glm::pi<float>()) target_yaw -= glm::two_pi<float>();
+                    while (target_yaw < -glm::pi<float>()) target_yaw += glm::two_pi<float>();
+                    target_pitch = atan2f(to_target.z, horiz_dist);
+                }
+
+                // Clamp
+                float max_yaw   = glm::radians(70.0f);
+                float max_pitch = glm::radians(30.0f);
+                target_yaw   = std::clamp(target_yaw,   -max_yaw,   max_yaw);
+                target_pitch = std::clamp(target_pitch, -max_pitch, max_pitch);
+
+                // Apply weight
+                target_yaw   *= look.weight;
+                target_pitch *= look.weight;
+
+                // SmoothDamp toward target
+                anim.look_yaw = smooth_damp(anim.look_yaw, target_yaw,
+                                             &anim.look_yaw_rate, 0.08f, dt);
+                anim.look_pitch = smooth_damp(anim.look_pitch, target_pitch,
+                                               &anim.look_pitch_rate, 0.08f, dt);
+
+                // Distribute rotation: HEAD 60%, NECK 30%, CHEST 10%
+                float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+                float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+
+                // Yaw offset as lateral displacement (simplified)
+                auto apply_yaw = [&](Joint j, float frac) {
+                    float offset = sinf(anim.look_yaw * frac) * 0.1f;
+                    pose.joints[(int)j] += glm::vec3(rght_x * offset, rght_y * offset, 0.0f);
+                };
+                // Pitch offset as vertical displacement
+                auto apply_pitch = [&](Joint j, float frac) {
+                    pose.joints[(int)j].z += sinf(anim.look_pitch * frac) * 0.05f;
+                };
+
+                apply_yaw(J::HEAD, 0.6f);   apply_pitch(J::HEAD, 0.6f);
+                apply_yaw(J::NECK, 0.3f);   apply_pitch(J::NECK, 0.3f);
+                apply_yaw(J::CHEST, 0.1f);  apply_pitch(J::CHEST, 0.1f);
+            });
+        });
+
+    // =========================================================================
+    // 7. SkeletonFinaliseSystem
     //    Hip sway, acceleration-driven torso lean, idle micro-motion.
     //    Also computes derived joints: ROOT, SPINE_02, HEAD_END, clavicles,
     //    toes, pole targets, and IK goals.
@@ -452,6 +701,7 @@ void register_rig_systems(flecs::world &ecs,
                          const Velocity       &vel,
                          const ActorConfig    &cfg,
                          const ProceduralGait &gait,
+                         const LegState       *legs,
                          RigState             &anim,
                          RigPose              &pose) {
 
@@ -459,6 +709,24 @@ void register_rig_systems(flecs::world &ecs,
 
                 float speed   = sqrtf(vel.x * vel.x + vel.y * vel.y);
                 float rght_x  = -sinf(t.facing), rght_y = cosf(t.facing);
+
+                // ---- Phase 1C: Slope-driven hip tilt ----
+                if (legs) {
+                    float foot_diff = legs->foot[0].z - legs->foot[1].z;
+                    float max_tilt = glm::radians(8.0f);
+                    float hip_tilt_target = std::clamp(
+                        atan2f(foot_diff, cfg.hip_width * 2.0f),
+                        -max_tilt, max_tilt);
+                    anim.hip_tilt = smooth_damp(anim.hip_tilt, hip_tilt_target,
+                                                &anim.hip_tilt_rate, 0.06f, dt);
+
+                    // Apply as lateral Z offset to hip sockets
+                    float tilt_offset = sinf(anim.hip_tilt) * cfg.hip_width;
+                    pose.joints[(int)J::L_UPPER_LEG].z -= tilt_offset;
+                    pose.joints[(int)J::R_UPPER_LEG].z += tilt_offset;
+                    pose.joints[(int)J::HIPS].z += sinf(anim.hip_tilt) * 0.5f * cfg.hip_width
+                                                   * (foot_diff > 0 ? 1.0f : -1.0f) * 0.1f;
+                }
 
                 // ---- CoM hip sway ----
                 anim.sway_phase += speed * dt * 6.0f;

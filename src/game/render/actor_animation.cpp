@@ -136,18 +136,14 @@ void register_animation_systems(flecs::world &ecs,
                 float vel_dx = speed > 0.001f ? vel.x / speed : fwd_x;
                 float vel_dy = speed > 0.001f ? vel.y / speed : fwd_y;
 
-                // Fix 2: Directional velocity scaling.
-                // In isometric view the "up-screen" axis is world(-1,-1)/sqrt(2).
-                // Movement along that axis appears to cover more visual ground per
-                // world unit (2:1 tile ratio), so we advance the gait phase faster
-                // to prevent moonwalking. Coefficient 0.41 ≈ sqrt(2)-1 gives
-                // a sqrt(2) multiplier for screen-up movement (iso_vert=1.0).
-                static constexpr float ISO_AXIS_X = -0.70710678118f;
-                static constexpr float ISO_AXIS_Y = -0.70710678118f;
-                float iso_vert = fabsf(vel_dx * ISO_AXIS_X + vel_dy * ISO_AXIS_Y);
-                float dir_multiplier = 1.0f + iso_vert * s_anim_cfg.directional_speed_scale;
-
-                gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len)) * dir_multiplier;
+                // Gait phase drives arm swing and hip oscillation only (foot
+                // placement is distance-based and unaffected by this phase).
+                // Rate chosen so full-speed (4 u/s) gives ~1.27 Hz swing — a
+                // natural walking cadence.  Direction-independent: the old
+                // iso-vertical multiplier made arms/hips speed up depending on
+                // screen direction, which looked unnatural.
+                constexpr float SWING_RATE = 2.0f; // rad/s per unit speed
+                gait.phase += speed * dt * SWING_RATE;
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 

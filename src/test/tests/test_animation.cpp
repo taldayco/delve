@@ -195,28 +195,24 @@ DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
   return true;
 }
 
-// Test: Fix 2 — Directional multiplier is higher for isometric-vertical
-// movement. Screen-up direction = world(-1,-1)/sqrt(2) gives iso_vert=1.0
-// and multiplier ~1.41. Screen-right direction = world(1,-1)/sqrt(2) gives
-// iso_vert=0 and multiplier=1.0. Coefficient 0.41 ≈ sqrt(2)-1.
-DELVE_TEST(directional_multiplier_isometric_vertical) {
-  static constexpr float ISO_AXIS_X = -0.70710678118f;
-  static constexpr float ISO_AXIS_Y = -0.70710678118f;
-  static constexpr float DIR_SCALE  =  0.41f;  // AnimationConfig::directional_speed_scale
+// Test: Fix 2 — Gait phase uses constant swing rate (direction-independent).
+// At full speed (4.0 u/s) with SWING_RATE=2.0, arm swing frequency should be
+// ~1.27 Hz — a natural walking cadence regardless of movement direction.
+DELVE_TEST(gait_phase_constant_swing_rate) {
+  constexpr float SWING_RATE = 2.0f; // must match actor_animation.cpp
+  constexpr float FULL_SPEED = 4.0f;
+  constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
 
-  // Screen-up = world(-1,-1)/sqrt(2): dot with ISO_AXIS = 1.0
-  float vel_dx_up = -0.70710678118f, vel_dy_up = -0.70710678118f;
-  float iso_vert_up = fabsf(vel_dx_up * ISO_AXIS_X + vel_dy_up * ISO_AXIS_Y);
-  float mult_up = 1.0f + iso_vert_up * DIR_SCALE;
+  float phase_rate = FULL_SPEED * SWING_RATE; // rad/s at full speed
+  float freq_hz = phase_rate / TWO_PI;
 
-  // Screen-right = world(1,-1)/sqrt(2): dot with ISO_AXIS = 0.0
-  float vel_dx_right = 0.70710678118f, vel_dy_right = -0.70710678118f;
-  float iso_vert_right = fabsf(vel_dx_right * ISO_AXIS_X + vel_dy_right * ISO_AXIS_Y);
-  float mult_right = 1.0f + iso_vert_right * DIR_SCALE;
+  // Natural walking arm swing: 1.0–1.5 Hz
+  EXPECT_GT(freq_hz, 1.0f);
+  EXPECT_LT(freq_hz, 1.5f);
 
-  EXPECT_GT(mult_up, mult_right); // vertical axis → higher multiplier
-  EXPECT_GT(mult_up, 1.35f);      // ≥sqrt(2)-ish boost
-  EXPECT_NEAR(mult_right, 1.0f, 0.01f); // no boost for screen-horizontal
+  // Direction-independent: same rate for screen-up and screen-right movement
+  float half_speed_rate = (FULL_SPEED * 0.5f) * SWING_RATE;
+  EXPECT_NEAR(half_speed_rate, phase_rate * 0.5f, 1e-4f); // linear with speed
   return true;
 }
 
@@ -637,16 +633,14 @@ DELVE_TEST(iso_foreshortening_reduces_height) {
     return true;
 }
 
-// Test: AnimationConfig default directional_speed_scale is 0.41 ≈ sqrt(2)-1.
-// For screen-up movement (iso_vert=1.0): multiplier = 1 + 1.0*0.41 = 1.41 ≈ sqrt(2).
-// This is the 2:1 iso correction factor for vertical-axis visual distance.
-DELVE_TEST(animation_config_directional_speed_scale_default) {
+// Test: AnimationConfig retains directional_speed_scale field for reference,
+// but gait phase no longer uses it (constant swing rate instead).
+DELVE_TEST(animation_config_hip_counter_fields_valid) {
     AnimationConfig cfg;
-    EXPECT_NEAR(cfg.directional_speed_scale, 0.41f, 1e-4f);
-    float screen_up_scale = 1.0f + 1.0f * cfg.directional_speed_scale; // iso_vert=1.0 for screen-up
-    // Should be close to sqrt(2) (1.414) — the 2:1 iso correction factor.
-    EXPECT_GT(screen_up_scale, 1.38f);
-    EXPECT_LT(screen_up_scale, 1.45f);
+    // Hip counter-animation parameters should have sensible defaults.
+    EXPECT_GT(cfg.hip_sway_deg, 0.0f);
+    EXPECT_GT(cfg.hip_drop_max, 0.0f);
+    EXPECT_GT(cfg.hip_bob_amplitude, 0.0f);
     return true;
 }
 

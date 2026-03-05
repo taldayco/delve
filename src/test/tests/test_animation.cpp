@@ -82,7 +82,7 @@ DELVE_TEST(leg_state_parallel_arrays_consistent) {
 
 // ---- Biomechanical animation tests ----
 
-// smooth_damp helper (mirrors actor_animation.cpp implementation).
+// smooth_damp helper (mirrors rig_animation.cpp implementation).
 static float smooth_damp_test(float current, float target, float *velocity,
                               float smooth_time, float dt) {
   float omega = 2.0f / smooth_time;
@@ -199,7 +199,7 @@ DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
 // At full speed (4.0 u/s) with SWING_RATE=2.7, arm swing frequency is ~1.72 Hz
 // — a casual walking cadence regardless of movement direction.
 DELVE_TEST(gait_phase_constant_swing_rate) {
-  constexpr float SWING_RATE = 2.7f; // must match actor_animation.cpp
+  constexpr float SWING_RATE = 2.7f; // must match rig_animation.cpp
   constexpr float FULL_SPEED = 4.0f;
   constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
 
@@ -440,12 +440,12 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
 // ---- Tests for walk animation math (update_walk_animation, compute_hip_counter_animation,
 //      compute_foot_position formulas verified inline) ----
 
-// Inline helpers mirroring actor_animation.cpp pure-math functions so tests
+// Inline helpers mirroring rig_animation.cpp pure-math functions so tests
 // have no SDL/Flecs/ECS dependency.
 
 // Mirrors the live GaitSystem phase advance formula (direction-independent).
 static float test_advance_phase(float phase, float dt, float speed) {
-    constexpr float SWING_RATE = 2.7f; // must match actor_animation.cpp
+    constexpr float SWING_RATE = 2.7f; // must match rig_animation.cpp
     return phase + speed * dt * SWING_RATE;
 }
 
@@ -469,7 +469,7 @@ static TestHipState test_compute_hip_counter(float stride_phase,
 
 static glm::vec3 test_compute_foot_position(float t,
                                              glm::vec3 prev, glm::vec3 target, float step_height) {
-    // Smootherstep — matches live actor_animation.cpp GaitSystem formula.
+    // Smootherstep — matches live rig_animation.cpp GaitSystem formula.
     float warped_t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
     float ts_z     = t * t * (3.0f - 2.0f * t);
     glm::vec3 out;

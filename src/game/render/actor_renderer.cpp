@@ -180,21 +180,21 @@ uint32_t ActorRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         emit_cylinder(j(J::CHEST), j(J::NECK),  cfg.torso_radius, body_color, torso, verts);
         emit_cylinder(j(J::NECK),  j(J::HEAD),  cfg.head_radius,  body_color, torso, verts);
 
-        emit_cylinder(j(J::CHEST),      j(J::L_SHOULDER), cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_SHOULDER), j(J::L_ELBOW),    cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_ELBOW),    j(J::L_WRIST),    cfg.limb_radius, body_color, limb, verts);
+        emit_cylinder(j(J::CHEST),      j(J::L_SHOULDER), cfg.arm_radius, body_color, limb, verts);
+        emit_cylinder(j(J::L_SHOULDER), j(J::L_ELBOW),    cfg.arm_radius, body_color, limb, verts);
+        emit_cylinder(j(J::L_ELBOW),    j(J::L_WRIST),    cfg.arm_radius, body_color, limb, verts);
 
-        emit_cylinder(j(J::CHEST),      j(J::R_SHOULDER), cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_SHOULDER), j(J::R_ELBOW),    cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_ELBOW),    j(J::R_WRIST),    cfg.limb_radius, body_color, limb, verts);
+        emit_cylinder(j(J::CHEST),      j(J::R_SHOULDER), cfg.arm_radius, body_color, limb, verts);
+        emit_cylinder(j(J::R_SHOULDER), j(J::R_ELBOW),    cfg.arm_radius, body_color, limb, verts);
+        emit_cylinder(j(J::R_ELBOW),    j(J::R_WRIST),    cfg.arm_radius, body_color, limb, verts);
 
-        emit_cylinder(j(J::ROOT),   j(J::L_HIP),   cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_HIP),  j(J::L_KNEE),  cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_KNEE), j(J::L_ANKLE), cfg.limb_radius, body_color, limb, verts);
+        emit_cylinder(j(J::ROOT),   j(J::L_HIP),   cfg.leg_radius, body_color, limb, verts);
+        emit_cylinder(j(J::L_HIP),  j(J::L_KNEE),  cfg.leg_radius, body_color, limb, verts);
+        emit_cylinder(j(J::L_KNEE), j(J::L_ANKLE), cfg.leg_radius, body_color, limb, verts);
 
-        emit_cylinder(j(J::ROOT),   j(J::R_HIP),   cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_HIP),  j(J::R_KNEE),  cfg.limb_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_KNEE), j(J::R_ANKLE), cfg.limb_radius, body_color, limb, verts);
+        emit_cylinder(j(J::ROOT),   j(J::R_HIP),   cfg.leg_radius, body_color, limb, verts);
+        emit_cylinder(j(J::R_HIP),  j(J::R_KNEE),  cfg.leg_radius, body_color, limb, verts);
+        emit_cylinder(j(J::R_KNEE), j(J::R_ANKLE), cfg.leg_radius, body_color, limb, verts);
     });
 
     if (verts.empty()) return 0;

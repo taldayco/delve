@@ -28,8 +28,9 @@ struct ActorConfig {
     float head_radius    = 0.163f;  // 0.20 * ISO_VERT_SCALE
     float arm_len        = 0.318f;  // upper arm — lengthened
     float forearm_len    = 0.270f;  // forearm   — lengthened
-    float limb_radius    = 0.07f;
-    float torso_radius   = 0.14f;
+    float leg_radius     = 0.07f;
+    float arm_radius     = 0.055f;
+    float torso_radius   = 0.09f;
 };
 
 struct ProceduralGait {

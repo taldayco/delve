@@ -37,6 +37,21 @@ private:
                        float radius, glm::vec3 color, int sides,
                        std::vector<BasaltVertex> &out_verts);
 
+    // Bone-shaped octahedron: point at tail (a), widest at 20% from a,
+    // tapering to a point at tip (b). Classic rig bone visualisation.
+    void emit_bone_oct(const glm::vec3 &a, const glm::vec3 &b,
+                       float width, glm::vec3 color,
+                       std::vector<BasaltVertex> &out_verts);
+
+    // UV sphere for joint pivot markers (sectors longitude, rings latitude).
+    void emit_sphere(const glm::vec3 &center, float radius, glm::vec3 color,
+                     int sectors, int rings,
+                     std::vector<BasaltVertex> &out_verts);
+
+    // RGB world-axis tripod at center: X=red, Y=green, Z=blue.
+    void emit_tripod(const glm::vec3 &center, float size,
+                     std::vector<BasaltVertex> &out_verts);
+
     void emit_box(const glm::vec3 &center, float half_size, glm::vec3 color,
                   std::vector<BasaltVertex> &out_verts);
 

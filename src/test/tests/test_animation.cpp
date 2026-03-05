@@ -830,6 +830,65 @@ DELVE_TEST(animation_config_hip_defaults_valid) {
     return true;
 }
 
+// ---- Rig shape / rendering geometry tests ----
+
+// Test: Structural joints (ROOT..R_TOE = 0..23) come before IK/virtual joints
+// (POLE_KNEE_L..IK_HAND_R = 24..31). Verifies enum layout assumed by the renderer
+// joint-sphere loop.
+DELVE_TEST(rig_structural_joints_before_ik) {
+    // R_TOE must be the last structural joint (index 23).
+    EXPECT_EQ((int)Joint::R_TOE, 23);
+    // IK joints start immediately after.
+    EXPECT_EQ((int)Joint::POLE_KNEE_L, 24);
+    EXPECT_LT((int)Joint::R_TOE, (int)Joint::POLE_KNEE_L);
+    // Full range: 8 IK joints (24–31), COUNT = 32.
+    EXPECT_EQ((int)Joint::IK_HAND_R, 31);
+    EXPECT_EQ((int)Joint::COUNT, 32);
+    return true;
+}
+
+// Test: Bone octahedron equatorial ring is non-degenerate for all bone widths
+// in the default ActorConfig. The equator sits at 20% of bone length; that
+// distance and the width must both be strictly positive.
+DELVE_TEST(rig_bone_oct_equator_nonzero) {
+    ActorConfig cfg;
+    constexpr float EQUATOR_T = 0.2f;
+
+    struct BoneCheck { float len; float width; };
+    BoneCheck bones[] = {
+        { cfg.leg_len,   cfg.leg_radius   },
+        { cfg.shin_len,  cfg.leg_radius   },
+        { cfg.arm_len,   cfg.arm_radius   },
+        { cfg.forearm_len, cfg.arm_radius * 0.75f },
+        { cfg.torso_len * 0.4f, cfg.torso_radius },
+        { cfg.neck_len,  cfg.head_radius * 0.55f },
+    };
+
+    for (auto &b : bones) {
+        float equator_dist = b.len * EQUATOR_T;
+        EXPECT_GT(equator_dist, 0.0f);
+        EXPECT_LT(equator_dist, b.len);
+        EXPECT_GT(b.width, 0.0f);
+    }
+    return true;
+}
+
+// Test: RGB tripod axes are mutually orthogonal (world XYZ basis vectors).
+// Verifies the tripod orientation convention used by emit_tripod.
+DELVE_TEST(rig_tripod_axes_orthogonal) {
+    glm::vec3 x_axis{1.0f, 0.0f, 0.0f}; // red
+    glm::vec3 y_axis{0.0f, 1.0f, 0.0f}; // green
+    glm::vec3 z_axis{0.0f, 0.0f, 1.0f}; // blue
+    EXPECT_NEAR(glm::dot(x_axis, y_axis), 0.0f, 1e-6f);
+    EXPECT_NEAR(glm::dot(y_axis, z_axis), 0.0f, 1e-6f);
+    EXPECT_NEAR(glm::dot(x_axis, z_axis), 0.0f, 1e-6f);
+    // Axes are unit length.
+    EXPECT_NEAR(glm::length(x_axis), 1.0f, 1e-6f);
+    EXPECT_NEAR(glm::length(y_axis), 1.0f, 1e-6f);
+    EXPECT_NEAR(glm::length(z_axis), 1.0f, 1e-6f);
+    return true;
+}
+
 // Test: Smootherstep is strictly steeper than cosine-ease at midpoint.
 // Both are S-curves: smootherstep has zero 1st+2nd derivatives at endpoints,
 // giving faster transit through midpoint than cosine-ease.

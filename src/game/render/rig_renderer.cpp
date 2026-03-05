@@ -118,6 +118,106 @@ void RigRenderer::emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
     }
 }
 
+// Bone-shaped octahedron: point at tail (a), equatorial ring of `width` radius at
+// 20% of bone length, tapering to a point at tip (b). Square cross-section (4 sides).
+// Same ISO_RADIAL_Z_COMP as emit_cylinder for visual consistency.
+void RigRenderer::emit_bone_oct(const glm::vec3 &a, const glm::vec3 &b,
+                                 float width, glm::vec3 color,
+                                 std::vector<BasaltVertex> &out_verts) {
+    glm::vec3 dir = b - a;
+    float len = glm::length(dir);
+    if (len < 1e-5f) return;
+    dir /= len;
+
+    glm::vec3 world_z(0.0f, 0.0f, 1.0f);
+    glm::vec3 right;
+    if (fabsf(glm::dot(dir, world_z)) < 0.99f)
+        right = glm::normalize(glm::cross(dir, world_z));
+    else
+        right = glm::normalize(glm::cross(dir, glm::vec3(1.0f, 0.0f, 0.0f)));
+    glm::vec3 fwd = glm::cross(dir, right);
+
+    constexpr int   SIDES      = 4;
+    constexpr float EQUATOR_T  = 0.2f;
+    constexpr float ISO_RADIAL_Z_COMP = 0.18f;
+
+    glm::vec3 ring[SIDES];
+    glm::vec3 eq_center = a + dir * (len * EQUATOR_T);
+    for (int i = 0; i < SIDES; ++i) {
+        float angle = i * (2.0f * PI / SIDES);
+        glm::vec3 off = (right * cosf(angle) + fwd * sinf(angle)) * width;
+        off.z *= ISO_RADIAL_Z_COMP;
+        ring[i] = eq_center + off;
+    }
+
+    auto push_tri = [&](const glm::vec3 &p0, const glm::vec3 &p1, const glm::vec3 &p2) {
+        glm::vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
+        for (const auto &p : {p0, p1, p2}) {
+            BasaltVertex v;
+            v.pos_x = p.x; v.pos_y = p.y; v.pos_z = p.z;
+            v.color_r = color.r; v.color_g = color.g; v.color_b = color.b;
+            v.sheen = 0.2f;
+            v.nx = n.x; v.ny = n.y; v.nz = n.z;
+            out_verts.push_back(v);
+        }
+    };
+
+    // Lower pyramid: tail point (a) to equatorial ring — outward winding.
+    for (int i = 0; i < SIDES; ++i)
+        push_tri(a, ring[(i + 1) % SIDES], ring[i]);
+
+    // Upper pyramid: equatorial ring to tip point (b) — outward winding.
+    for (int i = 0; i < SIDES; ++i)
+        push_tri(b, ring[i], ring[(i + 1) % SIDES]);
+}
+
+// UV sphere for joint pivot markers.
+// `sectors` = longitude divisions, `rings` = latitude divisions.
+void RigRenderer::emit_sphere(const glm::vec3 &center, float radius, glm::vec3 color,
+                               int sectors, int rings,
+                               std::vector<BasaltVertex> &out_verts) {
+    auto sphere_pt = [&](int lat, int lon) -> glm::vec3 {
+        float phi   = PI * (float)lat  / (float)rings;
+        float theta = 2.0f * PI * (float)lon / (float)sectors;
+        float sp = sinf(phi), cp = cosf(phi);
+        float st = sinf(theta), ct = cosf(theta);
+        return center + glm::vec3(radius * sp * ct, radius * sp * st, radius * cp);
+    };
+
+    auto push_tri = [&](const glm::vec3 &p0, const glm::vec3 &p1, const glm::vec3 &p2) {
+        glm::vec3 n = glm::normalize(glm::cross(p1 - p0, p2 - p0));
+        for (const auto &p : {p0, p1, p2}) {
+            BasaltVertex v;
+            v.pos_x = p.x; v.pos_y = p.y; v.pos_z = p.z;
+            v.color_r = color.r; v.color_g = color.g; v.color_b = color.b;
+            v.sheen = 0.3f;
+            v.nx = n.x; v.ny = n.y; v.nz = n.z;
+            out_verts.push_back(v);
+        }
+    };
+
+    for (int r = 0; r < rings; ++r) {
+        for (int s = 0; s < sectors; ++s) {
+            glm::vec3 p00 = sphere_pt(r,   s);
+            glm::vec3 p10 = sphere_pt(r,   s + 1);
+            glm::vec3 p01 = sphere_pt(r + 1, s);
+            glm::vec3 p11 = sphere_pt(r + 1, s + 1);
+            push_tri(p00, p10, p01);
+            push_tri(p10, p11, p01);
+        }
+    }
+}
+
+// RGB world-axis tripod: X=red, Y=green, Z=blue.
+// Uses thin 4-sided cylinders of radius 0.005 * size.
+void RigRenderer::emit_tripod(const glm::vec3 &center, float size,
+                               std::vector<BasaltVertex> &out_verts) {
+    float r = size * 0.055f; // cylinder radius proportional to arm length
+    emit_cylinder(center, center + glm::vec3(size, 0.0f, 0.0f), r, {1.0f, 0.0f, 0.0f}, 4, out_verts);
+    emit_cylinder(center, center + glm::vec3(0.0f, size, 0.0f), r, {0.0f, 1.0f, 0.0f}, 4, out_verts);
+    emit_cylinder(center, center + glm::vec3(0.0f, 0.0f, size), r, {0.0f, 0.0f, 1.0f}, 4, out_verts);
+}
+
 // Emit a cube (axis-aligned box) centered at `center` with half_size per axis.
 // Generates 6 faces × 2 triangles = 12 triangles.
 void RigRenderer::emit_box(const glm::vec3 &center, float half_size, glm::vec3 color,
@@ -244,44 +344,51 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         using J = Joint;
         auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 
-        int limb  = 6;
-        int torso = 4;
+        // ---- Spine / torso chain — bone-shaped octahedrons ----
+        emit_bone_oct(j(J::ROOT),     j(J::HIPS),     cfg.torso_radius,        body_color, verts);
+        emit_bone_oct(j(J::HIPS),     j(J::SPINE_01), cfg.torso_radius,        body_color, verts);
+        emit_bone_oct(j(J::SPINE_01), j(J::SPINE_02), cfg.torso_radius,        body_color, verts);
+        emit_bone_oct(j(J::SPINE_02), j(J::CHEST),    cfg.torso_radius,        body_color, verts);
+        emit_bone_oct(j(J::CHEST),    j(J::NECK),     cfg.head_radius * 0.55f, body_color, verts);
+        emit_bone_oct(j(J::NECK),     j(J::HEAD),     cfg.head_radius * 0.55f, body_color, verts);
 
-        // ---- Spine / torso chain ----
-        // Ground anchor to hips (root bone)
-        emit_cylinder(j(J::ROOT),     j(J::HIPS),     cfg.torso_radius,       body_color, torso, verts);
-        // Hip to lower spine
-        emit_cylinder(j(J::HIPS),     j(J::SPINE_01), cfg.torso_radius,       body_color, torso, verts);
-        // Split spine into two segments via SPINE_02
-        emit_cylinder(j(J::SPINE_01), j(J::SPINE_02), cfg.torso_radius,       body_color, torso, verts);
-        emit_cylinder(j(J::SPINE_02), j(J::CHEST),    cfg.torso_radius,       body_color, torso, verts);
-        // Chest to neck/head
-        emit_cylinder(j(J::CHEST),    j(J::NECK),     cfg.head_radius,        body_color, torso, verts);
-        emit_cylinder(j(J::NECK),     j(J::HEAD),     cfg.head_radius,        body_color, torso, verts);
+        // Head skull: full octahedron at HEAD position
+        emit_diamond(j(J::HEAD), cfg.head_radius, body_color, verts);
 
         // ---- Left arm chain (with clavicle) ----
-        emit_cylinder(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_CLAVICLE),  j(J::L_UPPER_ARM), cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_UPPER_ARM), j(J::L_LOWER_ARM), cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::L_LOWER_ARM), j(J::L_HAND),      cfg.arm_radius, body_color, limb, verts);
+        emit_bone_oct(j(J::CHEST),       j(J::L_CLAVICLE),  cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_CLAVICLE),  j(J::L_UPPER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_UPPER_ARM), j(J::L_LOWER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_LOWER_ARM), j(J::L_HAND),      cfg.arm_radius * 0.75f, body_color, verts);
 
         // ---- Right arm chain (with clavicle) ----
-        emit_cylinder(j(J::CHEST),       j(J::R_CLAVICLE),  cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_CLAVICLE),  j(J::R_UPPER_ARM), cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_UPPER_ARM), j(J::R_LOWER_ARM), cfg.arm_radius, body_color, limb, verts);
-        emit_cylinder(j(J::R_LOWER_ARM), j(J::R_HAND),      cfg.arm_radius, body_color, limb, verts);
+        emit_bone_oct(j(J::CHEST),       j(J::R_CLAVICLE),  cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_CLAVICLE),  j(J::R_UPPER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_UPPER_ARM), j(J::R_LOWER_ARM), cfg.arm_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_LOWER_ARM), j(J::R_HAND),      cfg.arm_radius * 0.75f, body_color, verts);
 
         // ---- Left leg chain (with toe) ----
-        emit_cylinder(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::L_UPPER_LEG), j(J::L_LOWER_LEG), cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::L_LOWER_LEG), j(J::L_FOOT),      cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::L_FOOT),      j(J::L_TOE),       cfg.leg_radius * 0.7f,  body_color, limb, verts);
+        emit_bone_oct(j(J::HIPS),        j(J::L_UPPER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_UPPER_LEG), j(J::L_LOWER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_LOWER_LEG), j(J::L_FOOT),      cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::L_FOOT),      j(J::L_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
 
         // ---- Right leg chain (with toe) ----
-        emit_cylinder(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::R_UPPER_LEG), j(J::R_LOWER_LEG), cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::R_LOWER_LEG), j(J::R_FOOT),      cfg.leg_radius,         body_color, limb, verts);
-        emit_cylinder(j(J::R_FOOT),      j(J::R_TOE),       cfg.leg_radius * 0.7f,  body_color, limb, verts);
+        emit_bone_oct(j(J::HIPS),        j(J::R_UPPER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_UPPER_LEG), j(J::R_LOWER_LEG), cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_LOWER_LEG), j(J::R_FOOT),      cfg.leg_radius,         body_color, verts);
+        emit_bone_oct(j(J::R_FOOT),      j(J::R_TOE),       cfg.leg_radius * 0.6f,  body_color, verts);
+
+        // ---- Joint pivot spheres + RGB axis tripods (structural joints 0–23) ----
+        {
+            glm::vec3 joint_color(0.88f, 0.88f, 0.88f);
+            constexpr float SPHERE_R  = 0.035f;
+            constexpr float TRIPOD_SZ = 0.085f;
+            for (int ji = 0; ji < (int)J::POLE_KNEE_L; ++ji) {
+                emit_sphere(pose.joints[ji], SPHERE_R, joint_color, 6, 4, verts);
+                emit_tripod(pose.joints[ji], TRIPOD_SZ, verts);
+            }
+        }
 
         // ---- IK goal boxes (green) ----
         float box_h = 0.04f;

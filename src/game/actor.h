@@ -117,4 +117,10 @@ struct AnimationState {
 
     // --- Previous velocity for acceleration computation ---
     glm::vec3 prev_velocity{0.0f};
+
+    // --- Hip counter-animation (procedural sway fix 3) ---
+    float hip_roll      = 0.0f;  // lateral hip roll (radians)
+    float hip_roll_rate = 0.0f;  // smooth_damp derivative
+    float hip_bob       = 0.0f;  // vertical double-bounce offset (world units)
+    float hip_bob_rate  = 0.0f;  // smooth_damp derivative
 };

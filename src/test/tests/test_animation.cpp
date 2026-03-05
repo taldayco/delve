@@ -125,8 +125,8 @@ DELVE_TEST(arm_phase_opposes_leg) {
 }
 
 // Test: Joint delay ordering — shoulder converges faster than wrist (successive
-// breaking). Validates Fix 1's joint-delay chain: shoulder(0.02s) <
-// elbow(0.05s) < wrist(0.08s).
+// breaking). Validates joint-delay chain: shoulder(0.02s) <
+// elbow(0.04s) < wrist(0.06s).
 DELVE_TEST(joint_delay_ordering) {
   float dt = 1.0f / 60.0f;
   float target = 1.0f;
@@ -135,8 +135,8 @@ DELVE_TEST(joint_delay_ordering) {
   float wrist = 0.0f, wrist_rate = 0.0f;
   for (int i = 0; i < 3; ++i) {
     shoulder = smooth_damp_test(shoulder, target, &shoulder_rate, 0.02f, dt);
-    elbow = smooth_damp_test(elbow, shoulder, &elbow_rate, 0.05f, dt);
-    wrist = smooth_damp_test(wrist, elbow, &wrist_rate, 0.08f, dt);
+    elbow = smooth_damp_test(elbow, shoulder, &elbow_rate, 0.04f, dt);
+    wrist = smooth_damp_test(wrist, elbow, &wrist_rate, 0.06f, dt);
   }
   float shoulder_err = fabsf(shoulder - target);
   float elbow_err = fabsf(elbow - target);
@@ -196,21 +196,21 @@ DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
 }
 
 // Test: Fix 2 — Gait phase uses constant swing rate (direction-independent).
-// At full speed (4.0 u/s) with SWING_RATE=2.0, arm swing frequency should be
-// ~1.27 Hz — a natural walking cadence regardless of movement direction.
+// At full speed (4.0 u/s) with SWING_RATE=2.7, arm swing frequency is ~1.72 Hz
+// — a casual walking cadence regardless of movement direction.
 DELVE_TEST(gait_phase_constant_swing_rate) {
-  constexpr float SWING_RATE = 2.0f; // must match actor_animation.cpp
+  constexpr float SWING_RATE = 2.7f; // must match actor_animation.cpp
   constexpr float FULL_SPEED = 4.0f;
   constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
 
   float phase_rate = FULL_SPEED * SWING_RATE; // rad/s at full speed
   float freq_hz = phase_rate / TWO_PI;
 
-  // Natural walking arm swing: 1.0–1.5 Hz
-  EXPECT_GT(freq_hz, 1.0f);
-  EXPECT_LT(freq_hz, 1.5f);
+  // Casual walk cadence: ~1.5–2.0 Hz at full speed.
+  EXPECT_GT(freq_hz, 1.5f);
+  EXPECT_LT(freq_hz, 2.0f);
 
-  // Direction-independent: same rate for screen-up and screen-right movement
+  // Direction-independent: phase rate is strictly linear with speed.
   float half_speed_rate = (FULL_SPEED * 0.5f) * SWING_RATE;
   EXPECT_NEAR(half_speed_rate, phase_rate * 0.5f, 1e-4f); // linear with speed
   return true;
@@ -443,15 +443,10 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
 // Inline helpers mirroring actor_animation.cpp pure-math functions so tests
 // have no SDL/Flecs/ECS dependency.
 
-// Mirrors the live GaitSystem direction-multiplier formula:
-// iso_vert = |dot(vel_dir, (-1,-1)/sqrt(2))|, multiplier = 1 + iso_vert * coeff.
-static float test_advance_phase(float phase, float dt, float speed,
-                                 glm::vec2 dir, float dir_scale_coeff = 0.41f) {
-    static constexpr float ISO_AXIS_X = -0.70710678118f;
-    static constexpr float ISO_AXIS_Y = -0.70710678118f;
-    float iso_vert = std::abs(dir.x * ISO_AXIS_X + dir.y * ISO_AXIS_Y);
-    float dir_scale = 1.0f + iso_vert * dir_scale_coeff;
-    return phase + speed * dt * dir_scale;
+// Mirrors the live GaitSystem phase advance formula (direction-independent).
+static float test_advance_phase(float phase, float dt, float speed) {
+    constexpr float SWING_RATE = 2.7f; // must match actor_animation.cpp
+    return phase + speed * dt * SWING_RATE;
 }
 
 struct TestHipState {
@@ -485,37 +480,45 @@ static glm::vec3 test_compute_foot_position(float t,
 }
 
 // Test: phase advances proportional to speed; double speed → double advance.
+// GaitSystem uses a constant swing rate (no directional weighting).
 DELVE_TEST(walk_animation_phase_proportional_to_speed) {
     float dt = 1.0f / 60.0f;
-    // Pure-X world direction: iso_vert = 0.707 (neither max nor min)
-    glm::vec2 dir(1.0f, 0.0f);
 
-    float p1 = test_advance_phase(0.0f, dt, 1.0f, dir);
-    float p2 = test_advance_phase(0.0f, dt, 2.0f, dir);
+    float p1 = test_advance_phase(0.0f, dt, 1.0f);
+    float p2 = test_advance_phase(0.0f, dt, 2.0f);
 
-    EXPECT_GT(p2, p1 * 1.8f);
-    EXPECT_LT(p2, p1 * 2.2f);
+    // Double speed → exactly double phase advance (linear, direction-independent).
+    EXPECT_GT(p2, p1 * 1.98f);
+    EXPECT_LT(p2, p1 * 2.02f);
     return true;
 }
 
-// Test: screen-up movement advances phase faster than screen-right movement.
-// Screen-up = world(-1,-1)/sqrt(2): iso_vert=1.0 → max multiplier.
-// Screen-right = world(1,-1)/sqrt(2): iso_vert=0 → no boost.
-DELVE_TEST(walk_animation_directional_scale_y_greater_than_x) {
-    float dt = 1.0f / 60.0f;
-    // screen-right direction in world space
-    glm::vec2 dir_right(0.70710678118f, -0.70710678118f);
-    // screen-up direction in world space
-    glm::vec2 dir_up(-0.70710678118f, -0.70710678118f);
+// Test: Elbow bends forward (natural direction) — forearm rotates toward
+// front of character, not backward (hyperextension).
+// The swing_wrist_pos formula adds -25° to the forearm rotation relative to
+// the upper arm. In the rotation convention used (positive angle = backward),
+// subtracting 25° keeps the forearm angled forward at all swing phases.
+DELVE_TEST(elbow_bends_forward_not_backward) {
+    constexpr float PI = 3.14159265358979323846f;
+    // Simulate the wrist position formula at a backward arm swing (+0.3 rad).
+    // right_axis = (0,1,0), hang_down = (0,0,-1), shoulder_angle = +0.3 rad.
+    // With -25° constant: total_angle = 0.3 - radians(25) = 0.3 - 0.436 = -0.136
+    // Forearm dir (world facing=0): -sin(total_angle) x, 0 y, -cos(total_angle) z
+    // Elbow angle contribution is small; test the pure constant-bend direction.
+    float shoulder_angle = 0.3f; // backward swing
+    float elbow_bias     = -25.0f * (PI / 180.0f); // -25 degrees = forward bend
+    float total_angle    = shoulder_angle + elbow_bias; // net: slightly forward of vertical
 
-    float px = test_advance_phase(0.0f, dt, 1.0f, dir_right);
-    float py = test_advance_phase(0.0f, dt, 1.0f, dir_up);
+    // Rodrigues rotation of hang_down=(0,0,-1) around right_axis=(0,1,0):
+    // dir = (0,0,-1)*cos(a) + (-1,0,0)*sin(a)  [cross((0,1,0),(0,0,-1)) = (-1,0,0)]
+    float forearm_fwd_component = -sinf(total_angle); // x-component with facing=0
 
-    EXPECT_GT(py, px);
-    float ratio = py / px;
-    // Expected: (1 + 1.0*0.41) / (1 + 0.0*0.41) = 1.41
-    EXPECT_GT(ratio, 1.35f);
-    EXPECT_LT(ratio, 1.50f);
+    // At shoulder_angle=+0.3 (backward) with -25° bias, total ≈ -0.136 rad.
+    // sin(-0.136) ≈ -0.136, so forearm_fwd_component = +0.136 (forward lean).
+    // Shoulder direction at +0.3: forearm_fwd_component would be -sin(0.3) ≈ -0.296.
+    // The forearm is more forward than the upper arm → natural forward elbow bend.
+    float upper_arm_fwd = -sinf(shoulder_angle); // upper arm forward component
+    EXPECT_GT(forearm_fwd_component, upper_arm_fwd); // forearm is more forward
     return true;
 }
 

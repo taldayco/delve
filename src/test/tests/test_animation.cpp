@@ -42,28 +42,28 @@ DELVE_TEST(skeleton_symmetry_at_rest) {
   SkeletonPose pose;
   ActorConfig cfg;
   pose.joints[(int)Joint::ROOT] = {0, 0, 0};
-  pose.joints[(int)Joint::SPINE] = {0, cfg.torso_len * 0.3f, 0};
-  pose.joints[(int)Joint::CHEST] = {0, cfg.torso_len * 0.7f, 0};
-  pose.joints[(int)Joint::NECK] = {0, cfg.torso_len, 0};
-  pose.joints[(int)Joint::HEAD] = {0, cfg.torso_len + cfg.neck_len, 0};
-  pose.joints[(int)Joint::L_SHOULDER] = {-cfg.shoulder_width, cfg.torso_len, 0};
-  pose.joints[(int)Joint::R_SHOULDER] = {cfg.shoulder_width, cfg.torso_len, 0};
+  pose.joints[(int)Joint::SPINE] = {0, 0, cfg.torso_len * 0.3f};
+  pose.joints[(int)Joint::CHEST] = {0, 0, cfg.torso_len * 0.7f};
+  pose.joints[(int)Joint::NECK] = {0, 0, cfg.torso_len};
+  pose.joints[(int)Joint::HEAD] = {0, 0, cfg.torso_len + cfg.neck_len};
+  pose.joints[(int)Joint::L_SHOULDER] = {-cfg.shoulder_width, 0, cfg.torso_len};
+  pose.joints[(int)Joint::R_SHOULDER] = {cfg.shoulder_width, 0, cfg.torso_len};
   pose.joints[(int)Joint::L_ELBOW] = {-cfg.shoulder_width - cfg.arm_len,
-                                      cfg.torso_len, 0};
+                                      0, cfg.torso_len};
   pose.joints[(int)Joint::R_ELBOW] = {cfg.shoulder_width + cfg.arm_len,
-                                      cfg.torso_len, 0};
+                                      0, cfg.torso_len};
   pose.joints[(int)Joint::L_WRIST] = {
-      -cfg.shoulder_width - cfg.arm_len - cfg.forearm_len, cfg.torso_len, 0};
+      -cfg.shoulder_width - cfg.arm_len - cfg.forearm_len, 0, cfg.torso_len};
   pose.joints[(int)Joint::R_WRIST] = {
-      cfg.shoulder_width + cfg.arm_len + cfg.forearm_len, cfg.torso_len, 0};
+      cfg.shoulder_width + cfg.arm_len + cfg.forearm_len, 0, cfg.torso_len};
   pose.joints[(int)Joint::L_HIP] = {-cfg.hip_width, 0, 0};
   pose.joints[(int)Joint::R_HIP] = {cfg.hip_width, 0, 0};
-  pose.joints[(int)Joint::L_KNEE] = {-cfg.hip_width, -cfg.leg_len, 0};
-  pose.joints[(int)Joint::R_KNEE] = {cfg.hip_width, -cfg.leg_len, 0};
+  pose.joints[(int)Joint::L_KNEE] = {-cfg.hip_width, 0, -cfg.leg_len};
+  pose.joints[(int)Joint::R_KNEE] = {cfg.hip_width, 0, -cfg.leg_len};
   pose.joints[(int)Joint::L_ANKLE] = {-cfg.hip_width,
-                                      -cfg.leg_len - cfg.shin_len, 0};
+                                      0, -cfg.leg_len - cfg.shin_len};
   pose.joints[(int)Joint::R_ANKLE] = {cfg.hip_width,
-                                      -cfg.leg_len - cfg.shin_len, 0};
+                                      0, -cfg.leg_len - cfg.shin_len};
 
   float sym = pose_symmetry_score(pose);
   EXPECT_GT(sym, 0.95f);
@@ -207,15 +207,15 @@ DELVE_TEST(directional_multiplier_isometric_vertical) {
   float iso_vert_up = fabsf(vel_dx_up * ISO_AXIS_X + vel_dy_up * ISO_AXIS_Y);
   float mult_up = 1.0f + iso_vert_up * 0.5f;
 
-  // Direction along isometric horizontal (world +X).
-  float vel_dx_right = 1.0f, vel_dy_right = 0.0f;
+  // True isometric screen-horizontal direction = world (1, -1)/sqrt(2).
+  float vel_dx_right = 0.70710678118f, vel_dy_right = -0.70710678118f;
   float iso_vert_right =
       fabsf(vel_dx_right * ISO_AXIS_X + vel_dy_right * ISO_AXIS_Y);
   float mult_right = 1.0f + iso_vert_right * 0.5f;
 
   EXPECT_GT(mult_up, mult_right); // vertical axis → higher multiplier
   EXPECT_GT(mult_up, 1.3f);       // meaningful boost (≥+30%)
-  EXPECT_LT(mult_right, mult_up);
+  EXPECT_LT(mult_right, 1.05f);   // near 1.0 (no boost for screen-horizontal)
   return true;
 }
 
@@ -239,9 +239,9 @@ DELVE_TEST(hip_double_bounce_twice_per_stride) {
   return true;
 }
 
-// Test: Fix 3 — Hip roll counter-animates: sign of roll opposes gait phase
-// sign. When sin(phase) > 0, target_hip_roll > 0 (hips roll right when left
-// foot is back).
+// Test: Fix 3 — Hip roll counter-animates: sign of roll matches gait phase sign
+// (hips shift to planted-foot side). When sin(phase) > 0, target_hip_roll > 0
+// (hips roll right when left foot is back).
 DELVE_TEST(hip_roll_counter_animation) {
   int matching_count = 0;
   int total_samples = 100;
@@ -344,7 +344,7 @@ DELVE_TEST(no_simultaneous_stepping) {
   EXPECT_FALSE(both_stepping_ever);
   return true;
 }
-<<<<<<< HEAD
+
 // ---- Character height proportion tests (fixes "too tall" appearance) ----
 
 // Total standing height from ground = leg_len + shin_len + torso_len + neck_len
@@ -385,13 +385,13 @@ DELVE_TEST(character_head_size_not_too_large) {
   return true;
 }
 
-// Test: Actor total standing height is within a visually plausible range
-// relative to HEX_SIZE (8 world units). Character should be < 1 tile tall.
+// Test: Actor total height must be < 0.5 * HEX_SIZE as a hard sanity ceiling
+// (distinct from the proportional 15–35% bound in character_total_height_relative_to_hex_size).
 DELVE_TEST(actor_total_height_within_one_tile) {
   ActorConfig c;
   float total_height =
       c.leg_len + c.shin_len + c.torso_len + c.neck_len + c.head_radius;
-  EXPECT_LT(total_height, 8.0f);
+  EXPECT_LT(total_height, Config::HEX_SIZE * 0.5f); // hard ceiling: < 4 world units
   EXPECT_GT(total_height, 0.5f);
   return true;
 }
@@ -400,11 +400,9 @@ DELVE_TEST(actor_total_height_within_one_tile) {
 // terrain height to place the actor root — the IK solver assumes this exactly.
 DELVE_TEST(grounding_offset_equals_leg_plus_shin) {
   ActorConfig c;
-  float terrain_z = 5.0f;
   float grounding_offset = c.leg_len + c.shin_len;
-  float actual_z = terrain_z + grounding_offset;
-  float expected_z = terrain_z + c.leg_len + c.shin_len;
-  EXPECT_NEAR(actual_z, expected_z, 1e-5f);
+  // This verifies config values are in the expected physical range.
+  // The actual grounding system's use of this offset is exercised by the ECS system.
   EXPECT_GT(grounding_offset, 0.0f);
   EXPECT_LT(grounding_offset, 4.0f);
   return true;
@@ -440,7 +438,4 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
   EXPECT_LT(max_bob, 0.026f);
   EXPECT_GT(max_bob, 0.0f);
   return true;
-}
->>>>>>> dd23bf6 (upgrade)
-return true;
 }

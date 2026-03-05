@@ -15,6 +15,15 @@ const PHASE_VALIDATORS: Record<string, (output: string, ctx: BlueprintContext) =
     if (!/##?\s*(subtask|step|task)/i.test(output) && !/\d+\.\s/m.test(output)) {
       warnings.push("Plan lacks structured subtasks (no ## Subtask or numbered steps found)");
     }
+    // Check for implementation-ready detail (function signatures or file paths)
+    const subtaskBodies = output.split(/##?\s*Subtask/i).slice(1);
+    for (const body of subtaskBodies) {
+      if (!/\b(void|bool|int|float|double|std::|glm::|auto)\b/.test(body) &&
+          !/\w+\s*\([^)]*\)/.test(body)) {
+        warnings.push("Plan subtask lacks function signatures — may cause implementation failure");
+        break;
+      }
+    }
     return { valid: warnings.length === 0, warnings };
   },
 

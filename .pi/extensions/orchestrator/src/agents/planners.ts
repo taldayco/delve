@@ -38,7 +38,8 @@ Return markdown. Each subtask MUST have the [${opts.subsystem}] tag:
 ## Constraints
 - Only plan changes for the **${opts.subsystem}** subsystem.
 - 1-4 subtasks maximum.
-- Be specific. State exactly what changes, not vague descriptions.
+- Each subtask MUST specify exact function signatures (name, parameters, return type) for every function to add or modify. Vague descriptions like "add support for X" are NOT acceptable.
+- Include any new #include directives needed.
 - Every subtask MUST have the [${opts.subsystem}] tag.
 - Only plan changes to files in the codebase context.`;
 
@@ -155,7 +156,8 @@ End with a test subtask tagged [engine].
 ## Constraints
 - Only plan changes to files in the codebase context.
 - 2-8 subtasks maximum.
-- Be specific. State exactly what changes, not vague descriptions.
+- Each subtask MUST specify exact function signatures (name, parameters, return type) for every function to add or modify. Vague descriptions like "add support for X" are NOT acceptable.
+- Include any new #include directives needed.
 - Every subtask MUST have exactly one subsystem tag.`;
 
   const prompt = `## Task

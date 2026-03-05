@@ -43,12 +43,12 @@ inline float pose_symmetry_score(const SkeletonPose &pose) {
 }
 
 inline float skeleton_height(const SkeletonPose &pose) {
-  float max_y = pose.joints[0].y, min_y = pose.joints[0].y;
+  float max_z = pose.joints[0].z, min_z = pose.joints[0].z;
   for (int i = 0; i < (int)Joint::COUNT; ++i) {
-    max_y = std::max(max_y, pose.joints[i].y);
-    min_y = std::min(min_y, pose.joints[i].y);
+    max_z = std::max(max_z, pose.joints[i].z);
+    min_z = std::min(min_z, pose.joints[i].z);
   }
-  return max_y - min_y;
+  return max_z - min_z;
 }
 
 inline float gait_stride_length(const ProceduralGait &g) { return g.stride_len; }

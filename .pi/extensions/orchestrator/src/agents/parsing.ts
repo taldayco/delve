@@ -202,6 +202,7 @@ worker subtasks that Haiku-tier workers can execute independently.
 - worker_prompt must be self-contained — the worker has NO other context.
 - Include all necessary details: function signatures, types, includes, conventions.
 - worker_prompt MUST include the exact filepath and line numbers of every function or block to add/modify (e.g., "Modify function foo at line 42 of src/bar.cpp to add..."). Line numbers come from the file contents provided above.
+- worker_prompt MUST include EXACT code to write — not descriptions of code. Include literal function bodies, struct definitions, and #include directives. The Haiku worker is a code typist, not an architect.
 - Order subtasks by dependency (headers before implementations).
 - Only decompose changes the task requires — no unnecessary refactoring.
 - Output ONLY the JSON block. No preamble, no explanation.`);

@@ -20,7 +20,8 @@
     {
       "name": "Implement",
       "type": "agentic",
-      "handler": "implement"
+      "handler": "implement",
+      "max_retries": 1
     },
     {
       "name": "Build",

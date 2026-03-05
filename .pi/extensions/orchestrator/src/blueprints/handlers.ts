@@ -123,7 +123,8 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         for (const sub of subtasks) {
           const agent = getSubsystemAgent(sub.subsystem);
           const subFiles = extractFilePaths(sub.task).concat(contextFiles);
-          implementations.push(await agent({ task: sub.task, files: subFiles, cwd: wt, signal: ctx.signal }));
+          const enrichedTask = `## Original Request\n${ctx.prompt}\n\n## Plan Subtask\n${sub.task}`;
+          implementations.push(await agent({ task: enrichedTask, files: subFiles, cwd: wt, signal: ctx.signal }));
         }
         implementation = implementations.join("\n\n");
       } else {

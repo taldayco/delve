@@ -142,10 +142,9 @@ void register_animation_systems(flecs::world &ecs,
                 // natural walking cadence.  Direction-independent: the old
                 // iso-vertical multiplier made arms/hips speed up depending on
                 // screen direction, which looked unnatural.
-                // Rate chosen so at full speed (4 u/s) the arm swing period
-                // matches the leg gait cycle (~0.5s → 2 Hz).  π rad/s per
-                // unit speed → ω = 4π ≈ 12.57 rad/s → T ≈ 0.5s.
-                constexpr float SWING_RATE = glm::pi<float>(); // rad/s per unit speed
+                // Casual walk cadence: ~1.7 Hz at full speed (4 u/s).
+                // 2.7 rad/s per unit speed → ω = 10.8 rad/s → T ≈ 0.58s.
+                constexpr float SWING_RATE = 2.7f; // rad/s per unit speed
                 gait.phase += speed * dt * SWING_RATE;
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
@@ -371,7 +370,7 @@ void register_animation_systems(flecs::world &ecs,
 
                 auto swing_wrist_pos = [&](glm::vec3 elbow_pos, float shoulder_angle,
                                             float elbow_angle_add, float forearm_len) -> glm::vec3 {
-                    float total_angle = shoulder_angle + glm::radians(25.0f) + elbow_angle_add * 0.3f;
+                    float total_angle = shoulder_angle - glm::radians(25.0f) + elbow_angle_add * 0.3f;
                     float ca = cosf(total_angle);
                     float sa = sinf(total_angle);
                     glm::vec3 k = right_axis;

@@ -22,10 +22,10 @@ Phase 3 (Synthesis): You synthesize worker findings into a structured SPLIT_PROP
 {
   "subtasks": [
     {
-      "file": "src/game/terrain/noise.cpp",
+      "file": "src/game/terrain.cpp",
       "action": "MODIFY",
       "instructions": "Analyze file group: noise generation",
-      "context_files": ["src/game/terrain/noise.h", "src/game/terrain/noise_layers.cpp"],
+      "context_files": ["src/game/terrain.h", "src/game/terrain_layers.cpp"],
       "worker_prompt": "Analyze these files for coupling. Output per-file: RESPONSIBILITY | PUBLIC_API | DEPENDS_ON"
     }
   ]

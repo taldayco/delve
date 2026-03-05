@@ -24,10 +24,10 @@ For each shader file that needs to change, produce a self-contained worker promp
 {
   "subtasks": [
     {
-      "file": "src/shaders/basalt.frag.glsl",
+      "file": "src/shaders.frag.glsl",
       "action": "MODIFY",
       "instructions": "Brief description of what changes",
-      "context_files": ["src/shaders/lighting_common.glsl"],
+      "context_files": ["src/shaders.glsl"],
       "worker_prompt": "Self-contained instructions for a Haiku worker..."
     }
   ]
@@ -37,7 +37,7 @@ For each shader file that needs to change, produce a self-contained worker promp
 ## Directories
 
 - Primary: `src/shaders/` (*.vert.glsl, *.frag.glsl, *.comp.glsl, *.inc.glsl)
-- Shared includes: `src/shaders/coord.glsl`, `src/shaders/lighting_common.glsl`
+- Shared includes: `src/shaders.glsl`, `src/shaders.glsl`
 - Build output: `build/shaders/` (SPIR-V .spv files, compiled by glslc)
 
 ## State

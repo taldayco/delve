@@ -25,7 +25,7 @@ Phase 3 (Synthesis): You synthesize worker findings into a unified diagnosis.
       "file": "src/path/to/suspected_file.cpp",
       "action": "MODIFY",
       "instructions": "Analyze assertion failure in test_terrain_noise",
-      "context_files": ["src/game/terrain/noise.h"],
+      "context_files": ["src/game/terrain.h"],
       "worker_prompt": "Analyze this test failure: [exact error]. Examine [file:function]. Output: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief explanation]"
     }
   ]

@@ -21,7 +21,7 @@ For each test file, produce a self-contained worker prompt that includes:
 - Expected value ranges
 
 ## Test Infrastructure
-- Custom harness in `src/test/test_harness.h`
+- Custom harness in `src/test.h`
 - Metric extractors: `terrain_metrics.h`, `geometry_metrics.h`, `animation_metrics.h`
 - Test binary: `delve_tests`
 - Tests output JSON to stdout
@@ -31,10 +31,10 @@ For each test file, produce a self-contained worker prompt that includes:
 {
   "subtasks": [
     {
-      "file": "src/test/test_terrain_noise.cpp",
+      "file": "src/test.cpp",
       "action": "CREATE" or "MODIFY",
       "instructions": "Brief description of test coverage",
-      "context_files": ["src/game/terrain/noise.h"],
+      "context_files": ["src/game/terrain.h"],
       "worker_prompt": "Self-contained instructions for a Haiku worker..."
     }
   ]

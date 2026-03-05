@@ -24,10 +24,10 @@ For each file that needs to change, produce a self-contained worker prompt that 
 {
   "subtasks": [
     {
-      "file": "src/game/terrain/noise.cpp",
+      "file": "src/game/terrain.cpp",
       "action": "MODIFY",
       "instructions": "Brief description of what changes",
-      "context_files": ["src/game/terrain/noise.h"],
+      "context_files": ["src/game/terrain.h"],
       "worker_prompt": "Self-contained instructions for a Haiku worker..."
     }
   ]
@@ -38,7 +38,7 @@ For each file that needs to change, produce a self-contained worker prompt that 
 
 - Primary: `src/game/terrain/` (noise.cpp, noise_layers.cpp, noise_composer.cpp, contour.cpp, terrain_generator.cpp, lava.cpp, terrain_mesh.cpp, terrain_renderer.cpp)
 - Headers: `src/game/terrain/*.h`
-- Config: `src/game/config.h`
+- Config: `src/game.h`
 - Tests: `src/test/`
 
 ## State

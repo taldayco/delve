@@ -24,10 +24,10 @@ For each file that needs to change, produce a self-contained worker prompt that 
 {
   "subtasks": [
     {
-      "file": "src/engine/app.cpp",
+      "file": "src/engine.cpp",
       "action": "MODIFY",
       "instructions": "Brief description of what changes",
-      "context_files": ["src/engine/app.h"],
+      "context_files": ["src/engine.h"],
       "worker_prompt": "Self-contained instructions for a Haiku worker..."
     }
   ]
@@ -38,7 +38,7 @@ For each file that needs to change, produce a self-contained worker prompt that 
 
 - Primary: `src/engine/` (app.h/cpp, gpu/, camera/, input/, ui/, render/, core/, ipc/)
 - Tests: `src/test/`
-- Config: `src/game/config.h`
+- Config: `src/game.h`
 
 ## State
 

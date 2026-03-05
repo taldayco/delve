@@ -1,5 +1,6 @@
 #include "render/actor_renderer.h"
 #include "actor.h"
+#include "actor_animation.h"
 #include <SDL3/SDL.h>
 #include <cmath>
 #include <cstring>
@@ -117,7 +118,48 @@ uint32_t ActorRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
 
     glm::vec3 body_color(0.55f, 0.52f, 0.48f);
 
-    ecs.each([&](ActorTag, const SkeletonPose &pose, const ActorConfig &cfg) {
+    ecs.each([&](ActorTag, const SkeletonPose &pose_in, const ActorConfig &cfg,
+                 const Transform &t, const ProceduralGait &gait, const AnimationState &anim) {
+        // Apply hip counter-animation on top of the already-posed skeleton.
+        // Compute new-style values from gait phase for hip_bob_y and hip_rotation_deg.
+        constexpr AnimationConfig anim_cfg{};
+        ActorAnimationState hip_anim;
+        // gait.phase is continuous radians; normalize to [0,1) for compute_hip_counter_animation.
+        constexpr float TWO_PI = 2.0f * PI;
+        float norm_phase = std::fmod(gait.phase, TWO_PI) / TWO_PI;
+        if (norm_phase < 0.0f) norm_phase += 1.0f;
+        hip_anim.stride_phase = norm_phase;
+        compute_hip_counter_animation(hip_anim, anim_cfg);
+
+        // Build a local mutable copy of the pose to apply hip transform.
+        SkeletonPose pose = pose_in;
+
+        // Vertical double-bounce: lift root and hips.
+        pose.joints[(int)Joint::ROOT].z  += hip_anim.hip_bob_y;
+        pose.joints[(int)Joint::SPINE].z += hip_anim.hip_bob_y * 0.5f;
+        pose.joints[(int)Joint::L_HIP].z += hip_anim.hip_bob_y;
+        pose.joints[(int)Joint::R_HIP].z += hip_anim.hip_bob_y;
+
+        // Lateral drop: shift CoM toward stance side.
+        float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+        float drop_shift = hip_anim.hip_drop_fraction;
+        glm::vec3 drop_vec(rght_x * drop_shift, rght_y * drop_shift, 0.0f);
+        // hip_rotation_deg sign: positive = left foot back = shift right.
+        float side = (hip_anim.hip_rotation_deg >= 0.0f) ? 1.0f : -1.0f;
+        pose.joints[(int)Joint::ROOT]  += drop_vec * side;
+        pose.joints[(int)Joint::L_HIP] += drop_vec * side;
+        pose.joints[(int)Joint::R_HIP] += drop_vec * side;
+
+        // Apply isometric height foreshortening: compress character vertical extent
+        // relative to foot/terrain level so actor reads proportional in 2:1 iso view.
+        // Feet stay planted on terrain; everything above scales by ISO_CHAR_HEIGHT_SCALE.
+        {
+            float foot_z = t.z - cfg.leg_len - cfg.shin_len;
+            for (int ji = 0; ji < (int)Joint::COUNT; ++ji) {
+                pose.joints[ji].z = foot_z + (pose.joints[ji].z - foot_z) * AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
+            }
+        }
+
         using J = Joint;
         auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 

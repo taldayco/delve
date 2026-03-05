@@ -128,3 +128,40 @@ struct AnimationState {
     float hip_bob       = 0.0f;  // vertical double-bounce offset (world units)
     float hip_bob_rate  = 0.0f;  // smooth_damp derivative
 };
+
+// Hip counter-animation state for rendering pass.
+// Computed from gait phase; used to apply procedural hip motion to skeleton.
+struct ActorAnimationState {
+    float stride_phase      = 0.0f;  // [0, 1) normalized gait phase
+    float hip_rotation_deg  = 0.0f;  // lateral hip sway (degrees)
+    float hip_drop_fraction = 0.0f;  // fraction of max drop [0, hip_drop_max]
+    float hip_bob_y         = 0.0f;  // vertical double-bounce offset (world units)
+};
+
+// Configuration for hip counter-animation in rendering.
+struct AnimationConfig {
+    // Isometric height scale: squashes character for 2:1 iso proportions.
+    static constexpr float ISO_CHAR_HEIGHT_SCALE = 0.816f * 0.92f;
+
+    // Directional speed-scale coefficient: gait phase advances faster along the
+    // isometric vertical axis (screen "up") to compensate for the 2:1 tile ratio.
+    // Value ≈ sqrt(2)-1 ≈ 0.414 corrects the iso compression exactly.
+    static constexpr float DIRECTIONAL_SPEED_SCALE = 0.41f;
+
+    float directional_speed_scale = DIRECTIONAL_SPEED_SCALE; // dir multiplier coefficient for Y-axis iso correction
+    float hip_sway_deg      = 5.0f;   // max lateral hip rotation (degrees)
+    float hip_drop_max      = 0.03f;  // max fractional CoM drop during stride
+    float hip_bob_amplitude = 0.02f;  // vertical double-bounce amplitude (world units)
+};
+
+// Compute hip counter-animation state from stride phase and configuration.
+// stride_phase: [0, 1) normalized gait phase
+inline void compute_hip_counter_animation(ActorAnimationState &state,
+                                          const AnimationConfig &cfg) {
+    constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
+    float two_pi_phase = state.stride_phase * TWO_PI;
+    
+    state.hip_rotation_deg  = cfg.hip_sway_deg      * std::sin(two_pi_phase);
+    state.hip_drop_fraction = cfg.hip_drop_max      * (1.0f - std::abs(std::cos(two_pi_phase)));
+    state.hip_bob_y         = cfg.hip_bob_amplitude * std::abs(std::sin(two_pi_phase));
+}

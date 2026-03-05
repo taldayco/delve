@@ -11,6 +11,9 @@
 #include <cmath>
 #include <algorithm>
 
+// File-scope animation config — single instance shared by GaitSystem and ActorRenderer.
+static const AnimationConfig s_anim_cfg{};
+
 // Unity-style critically-damped spring smoother.
 // Smoothly moves 'current' toward 'target' over time.
 // 'velocity' is internal state that must persist across calls.
@@ -137,11 +140,12 @@ void register_animation_systems(flecs::world &ecs,
                 // In isometric view the "up-screen" axis is world(-1,-1)/sqrt(2).
                 // Movement along that axis appears to cover more visual ground per
                 // world unit (2:1 tile ratio), so we advance the gait phase faster
-                // to prevent moonwalking.
+                // to prevent moonwalking. Coefficient 0.41 ≈ sqrt(2)-1 gives
+                // a sqrt(2) multiplier for screen-up movement (iso_vert=1.0).
                 static constexpr float ISO_AXIS_X = -0.70710678118f;
                 static constexpr float ISO_AXIS_Y = -0.70710678118f;
                 float iso_vert = fabsf(vel_dx * ISO_AXIS_X + vel_dy * ISO_AXIS_Y);
-                float dir_multiplier = 1.0f + iso_vert * 0.5f;
+                float dir_multiplier = 1.0f + iso_vert * s_anim_cfg.directional_speed_scale;
 
                 gait.phase += speed * dt * (glm::two_pi<float>() / (2.0f * gait.stride_len)) * dir_multiplier;
 
@@ -185,15 +189,18 @@ void register_animation_systems(flecs::world &ecs,
                         legs.progress[leg] += dt / adaptive_duration;
                         float progress = std::min(legs.progress[leg], 1.0f);
 
-                        // Fix 1: Elliptical path — cosine-ease for XY (peak velocity
-                        // at mid-stride, slow at liftoff/plant) so feet don't appear
-                        // to drag at the poles of the stride in isometric projection.
-                        float ts_xy = (1.0f - cosf(progress * glm::pi<float>())) * 0.5f;
-                        // Keep cubic smoothstep for Z (height arc) — smooth lift/land.
+                        // Smootherstep interpolation for XY: steeper S-curve than cosine-ease.
+                        // Has zero first AND second derivatives at endpoints, giving a more
+                        // pronounced pause at stride extremes and faster transit under the hip.
+                        // warped_t(0)=0, warped_t(0.5)=0.5, warped_t(1)=1, symmetric.
+                        float warped_t = progress * progress * progress
+                                         * (progress * (progress * 6.0f - 15.0f) + 10.0f);
+
+                        // Z height arc: half-sine lift peaking at mid-stride.
                         float ts_z  = progress * progress * (3.0f - 2.0f * progress);
 
-                        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * ts_xy;
-                        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * ts_xy;
+                        legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * warped_t;
+                        legs.foot[leg].y = legs.prev_foot[leg].y + (legs.target[leg].y - legs.prev_foot[leg].y) * warped_t;
                         legs.foot[leg].z = legs.prev_foot[leg].z + (legs.target[leg].z - legs.prev_foot[leg].z) * ts_z
                                            + sinf(progress * glm::pi<float>()) * gait.step_height;
 

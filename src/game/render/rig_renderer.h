@@ -58,6 +58,11 @@ private:
     void emit_diamond(const glm::vec3 &center, float radius, glm::vec3 color,
                       std::vector<BasaltVertex> &out_verts);
 
+    // Flat filled disc on the XY plane at center.z (normal = +Z).
+    // Used as the World Root ground marker.
+    void emit_flat_circle(const glm::vec3 &center, float radius, glm::vec3 color,
+                          int segments, std::vector<BasaltVertex> &out_verts);
+
     static constexpr uint32_t MAX_RIG_VERTICES = 65536; // ~2.5 MB
 
     bool                     initialized   = false;

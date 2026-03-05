@@ -294,6 +294,27 @@ void RigRenderer::emit_diamond(const glm::vec3 &center, float radius, glm::vec3 
     push_tri(nz, px, ny);
 }
 
+void RigRenderer::emit_flat_circle(const glm::vec3 &center, float radius, glm::vec3 color,
+                                    int segments, std::vector<BasaltVertex> &out_verts) {
+    glm::vec3 n(0.0f, 0.0f, 1.0f);  // up-facing normal
+    auto vert = [&](const glm::vec3 &pos) {
+        BasaltVertex v;
+        v.pos_x = pos.x; v.pos_y = pos.y; v.pos_z = pos.z;
+        v.color_r = color.r; v.color_g = color.g; v.color_b = color.b;
+        v.sheen = 0.05f;
+        v.nx = n.x; v.ny = n.y; v.nz = n.z;
+        out_verts.push_back(v);
+    };
+    for (int i = 0; i < segments; ++i) {
+        float a0 = i       * (2.0f * PI / segments);
+        float a1 = (i + 1) * (2.0f * PI / segments);
+        glm::vec3 p0(center.x + radius * cosf(a0), center.y + radius * sinf(a0), center.z);
+        glm::vec3 p1(center.x + radius * cosf(a1), center.y + radius * sinf(a1), center.z);
+        // CCW fan triangle viewed from +Z → outward normal in +Z
+        vert(center); vert(p0); vert(p1);
+    }
+}
+
 uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     if (!initialized || !rig_vbo || !transfer_buf) return 0;
 
@@ -344,8 +365,16 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         using J = Joint;
         auto j = [&](J jt) -> const glm::vec3 & { return pose.joints[(int)jt]; };
 
+        // ---- World Root: flat ground disc + puppet-string line to HIPS ----
+        {
+            glm::vec3 root_color(0.3f, 0.85f, 0.85f);  // teal
+            // Flat filled circle on the ground plane at ROOT.z
+            emit_flat_circle(j(J::ROOT), cfg.torso_radius * 1.5f, root_color, 16, verts);
+            // Thin "puppet string" line from ROOT up to HIPS
+            emit_cylinder(j(J::ROOT), j(J::HIPS), 0.012f, root_color, 4, verts);
+        }
+
         // ---- Spine / torso chain — bone-shaped octahedrons ----
-        emit_bone_oct(j(J::ROOT),     j(J::HIPS),     cfg.torso_radius,        body_color, verts);
         emit_bone_oct(j(J::HIPS),     j(J::SPINE_01), cfg.torso_radius,        body_color, verts);
         emit_bone_oct(j(J::SPINE_01), j(J::SPINE_02), cfg.torso_radius,        body_color, verts);
         emit_bone_oct(j(J::SPINE_02), j(J::CHEST),    cfg.torso_radius,        body_color, verts);

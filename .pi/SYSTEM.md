@@ -21,8 +21,60 @@ You are a fully unattended development agent. The user is the **product owner** 
 ## Architecture
 
 Two layers:
-- `src/engine/` — Reusable framework: app lifecycle, GPU context, input, camera, ECS, UI, rendering
-- `src/game/` — Game-specific: terrain pipeline, actor system, game state
+- `src/engine/` — Reusable framework: app lifecycle (`app.h/cpp`), GPU context (`gpu/`), input (`input/`), camera (`camera/`), ECS, UI (`ui/`), rendering (`render/`), core services (`core/`), IPC (`ipc/`)
+- `src/game/` — Game-specific: terrain pipeline (`terrain/`), actor system (`render/`), game state
+
+### Orchestrator Extension Layout
+
+The `.pi/extensions/orchestrator/src/` directory is organized as modular subdirectories:
+
+```
+src/
+├── agents/          # Agent spawning, state, metrics, planners, implementers, etc.
+│   ├── types.ts     # Shared agent interfaces
+│   ├── events.ts    # agentEvents EventEmitter
+│   ├── spawn.ts     # spawnSubagent() with exponential backoff
+│   ├── state.ts     # writeState(), readState(), pruneStateHistory()
+│   ├── planners.ts  # askMetaPlanner(), askParallelPlanner()
+│   ├── implementers.ts  # askMetaImplementer(), subsystem agents
+│   ├── fixers.ts    # askBuildFixer(), askTestFixer(), askDecoupleAnalyst()
+│   └── index.ts     # barrel re-exports
+├── tools/           # Deterministic tools
+│   ├── shell.ts     # shell(), silentShell()
+│   ├── git.ts       # gitBranch(), cleanupWorktree(), cleanupStaleWorktrees()
+│   ├── build.ts     # runBuild(), runTests() (with cmake configure check)
+│   ├── context.ts   # getCodebaseContext(), SUBSYSTEM_DIRS (all engine subdirs mapped)
+│   ├── validation.ts # runSystemAudit(), detectFileSizeViolations()
+│   └── index.ts     # barrel re-exports
+├── blueprints/      # Pipeline engine
+│   ├── types.ts     # Blueprint, BlueprintPhase (with on_success/on_failure/max_retries)
+│   ├── executor.ts  # executeBlueprint() — graph traversal with branching
+│   ├── handlers.ts  # All PHASE_HANDLERS including fix_build, system_audit, etc.
+│   └── index.ts     # barrel re-exports
+├── commands/        # Extension commands
+│   ├── minion.ts    # /minion command
+│   ├── system.ts    # /minion-self-update, /minion-audit, /minion-cleanup
+│   └── ...
+└── index.ts         # Entry point (pi.extensions: ["./src"])
+```
+
+### Branching Pipeline Schema
+
+Blueprints support conditional edges:
+```json
+{
+  "name": "build",
+  "handler": "build",
+  "on_failure": "fix_build",
+  "max_retries": 3
+}
+```
+
+Fields: `on_success`, `on_failure`, `max_retries`, `skip_if`
+
+### Self-Updating
+
+The system monitors its own files. Any `.ts` file exceeding 500 lines triggers a warning during `rebuild_ext`. Run `/minion-self-update` to detect violations, modularize, and rebuild. Run `/minion-audit` for a full health report.
 
 ### Terrain Pipeline (6 stages)
 1. Noise generation (`noise.cpp`, `noise_layers.cpp`) — Perlin/Worley via FastNoiseLite
@@ -72,15 +124,58 @@ Use tool shed tools for information gathering during planning and implementation
 
 ## Meta-Agentic Architecture
 
-The orchestrator uses a three-tier model routing pattern (inspired by Stripe's meta-agentic approach):
+The orchestrator uses a three-tier model routing pattern where **every Sonnet agent is a meta agent** that decomposes tasks and delegates to Haiku workers:
 
 ### Model Tiers
-- **Opus** — Orchestrator (main pi session). Makes decisions, calls tools.
-- **Sonnet** — Meta-agents. Stateless API calls for planning, implementation, testing, review.
-- **Haiku** — Workers. Cheap, fast leaf agents for focused subtasks (fix build, edit file).
+- **Opus** — Orchestrator (main pi session). Makes decisions, calls tools, sequences phases.
+- **Sonnet** — Meta-agents. Decompose tasks into focused per-file subtasks and delegate to Haiku workers. Never do leaf work directly.
+- **Haiku** — Workers. Cheap, fast leaf agents that execute focused, self-contained subtasks (one file, one change).
+
+### Universal Meta-Agent Pattern (Decompose → Delegate → Aggregate)
+
+Every Sonnet-tier agent follows the same three-phase pattern:
+
+1. **Decompose (Sonnet)** — Analyze the task and produce a JSON decomposition of per-file worker subtasks. Each subtask includes a self-contained `worker_prompt` with all context the Haiku worker needs.
+2. **Delegate (Haiku workers in parallel)** — Fan out subtasks to Haiku workers. Each worker receives exactly one file and focused instructions. Workers run in parallel.
+3. **Aggregate/Synthesize** — For code-producing agents (implementer, tester, subsystem specialists), results are concatenated. For judgment agents (reviewer, diagnoser, verifier), a second Sonnet call synthesizes worker findings into a final verdict.
+
+### Decomposition Output Format
+All meta-agents produce JSON decompositions:
+```json
+{
+  "subtasks": [
+    {
+      "file": "src/path/to/file.cpp",
+      "action": "CREATE | MODIFY",
+      "instructions": "Brief description",
+      "context_files": ["src/path/to/dependency.h"],
+      "worker_prompt": "Self-contained instructions for Haiku worker..."
+    }
+  ]
+}
+```
 
 ### Agent-as-Tool Pattern
-Sub-agents are registered as tools (`ask_meta_planner`, `ask_meta_implementer`, `ask_meta_tester`, `ask_reviewer`, `ask_worker`, `generate_worker_prompt`). Each spawns a pi subagent process with isolated context (`pi --mode json -p --no-session`). The sub-agent starts fresh with no prior context. Only the returned summary enters the main orchestrator context, keeping token usage O(1) per phase instead of O(N) accumulating.
+Meta-agents are registered as tools (`ask_meta_planner`, `ask_meta_implementer`, `ask_meta_tester`, `ask_reviewer`, `ask_worker`, `generate_worker_prompt`). Each spawns a pi subagent process with isolated context (`pi --mode json -p --no-session`). Only the returned summary enters the main orchestrator context, keeping token usage O(1) per phase.
+
+### Meta-Agents (Sonnet — all follow decompose→delegate→aggregate)
+
+| Agent | Decomposition | Workers | Aggregation |
+|-------|---------------|---------|-------------|
+| **planner** | Task → per-subsystem subtasks | Parallel sub-planners | Merge + renumber |
+| **implementer** | Plan → per-file code changes | Per-file Haiku coders | Concatenate FILE blocks |
+| **tester** | Changes → per-file test tasks | Per-file Haiku test writers | Concatenate FILE blocks |
+| **reviewer** | Diff → per-file reviews | Per-file Haiku reviewers | Sonnet synthesizes APPROVE/REQUEST_CHANGES |
+| **diagnoser** | Failures → per-error analyses | Per-error Haiku analyzers | Sonnet synthesizes root cause |
+| **verifier** | Metrics → per-domain analyses | Per-domain Haiku analyzers | Sonnet synthesizes PASS/FAIL |
+| **build-fixer** | Errors → per-file fixes | Per-file Haiku fixers | Concatenate FILE blocks |
+| **test-fixer** | Failures → per-file fixes | Per-file Haiku fixers | Concatenate FILE blocks |
+| **terrain/actor/shader/engine** | Task → per-file subtasks | Per-file Haiku coders | Concatenate FILE blocks |
+| **blueprint-gen** | Task → classification questions | Per-dimension Haiku classifiers | Sonnet synthesizes pipeline JSON |
+| **decoupler** | Domain → file group analyses | Per-group Haiku analyzers | Sonnet synthesizes split proposal |
+
+### Fallback Behavior
+If a meta-agent's decomposition fails (unparseable JSON, no subtasks), the system falls back to direct Sonnet execution without delegation. This ensures reliability while preferring the meta pattern.
 
 ### Meta-Tools (Tools That Select Tools)
 The tool shed provides meta-tools for navigating 15+ available tools:
@@ -90,8 +185,8 @@ The tool shed provides meta-tools for navigating 15+ available tools:
 
 ### Agents That Build Agents
 - `generate_worker_prompt` (Sonnet) creates scoped system+user prompts for Haiku workers
-- `ask_meta_implementer` (Sonnet) decomposes a plan into worker-scoped subtasks
-- This is the "prompts that create prompts" pattern
+- Every meta-agent's decomposition phase generates self-contained worker prompts inline
+- This is the "prompts that create prompts" pattern applied universally
 
 ### Phase Artifacts
 State files in `.pi/state/` enable destructive context handoffs between phases:
@@ -103,14 +198,15 @@ State files in `.pi/state/` enable destructive context handoffs between phases:
 
 ## Blueprint Workflow
 
-When executing a `/minion` task, the orchestrator calls tools sequentially:
+When executing a `/minion` task, the orchestrator calls meta-agents sequentially. Each meta-agent internally decomposes and delegates to Haiku workers:
+
 1. **[DETERMINISTIC]** `git_branch` — Create branch from main
-2. **[SONNET]** `ask_meta_planner` — Decompose task into subtasks
-3. **[SONNET]** `ask_meta_implementer` — Generate implementation (may call Haiku workers)
+2. **[META → WORKERS]** `ask_meta_planner` — Sonnet decomposes task → parallel per-subsystem Sonnet planners
+3. **[META → WORKERS]** `ask_meta_implementer` — Sonnet decomposes plan → parallel Haiku per-file coders
 4. **[DETERMINISTIC]** `run_build` — Compile and capture errors
-5. **[HAIKU]** `ask_worker` — Fix build errors if any (max 3 rounds)
-6. **[SONNET]** `ask_meta_tester` — Generate test code
+5. **[META → WORKERS]** `ask_build_fixer` — Sonnet decomposes errors → parallel Haiku per-file fixers (max 3 rounds)
+6. **[META → WORKERS]** `ask_meta_tester` — Sonnet decomposes test task → parallel Haiku per-file test writers
 7. **[DETERMINISTIC]** `run_tests` — Run tests and capture results
-8. **[HAIKU]** `ask_worker` — Fix test failures if any (max 3 rounds)
-9. **[SONNET]** `ask_reviewer` — Review diff for safety and correctness
+8. **[META → WORKERS]** `ask_test_fixer` — Sonnet decomposes failures → parallel Haiku per-file fixers (max 3 rounds)
+9. **[META → WORKERS → SYNTHESIS]** `ask_reviewer` — Sonnet decomposes diff → Haiku per-file reviewers → Sonnet synthesizes verdict
 10. **[DETERMINISTIC]** `git_commit_and_pr` — Commit, push, create PR

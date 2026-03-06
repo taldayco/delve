@@ -414,10 +414,12 @@ void register_rig_systems(flecs::world &ecs,
                         legs.stepping[leg] = true;
                         legs.progress[leg] = 0.0f;
                         legs.prev_foot[leg] = legs.foot[leg];
-                        float tgt_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width
-                                     + step_dx * gait.stride_len * 0.15f * speed_factor;
-                        float tgt_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width
-                                     + step_dy * gait.stride_len * 0.15f * speed_factor;
+                        float c_hip_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width;
+                        float c_hip_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width;
+                        float step_travel = speed * adaptive_duration;
+                        float target_off  = (gait.stride_len * 0.5f + step_travel * 0.75f) * speed_factor;
+                        float tgt_x = c_hip_x + step_dx * target_off;
+                        float tgt_y = c_hip_y + step_dy * target_off;
                         legs.target[leg] = {tgt_x, tgt_y,
                             sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius)};
                     }
@@ -444,8 +446,10 @@ void register_rig_systems(flecs::world &ecs,
                                 legs.stepping[leg]  = true;
                                 legs.progress[leg]  = 0.0f;
                                 legs.prev_foot[leg] = legs.foot[leg];
-                                float tgt_x = hip_x + step_dx * gait.stride_len * 0.3f * speed_factor;
-                                float tgt_y = hip_y + step_dy * gait.stride_len * 0.3f * speed_factor;
+                                float step_travel = speed * adaptive_duration;
+                                float target_off  = (gait.stride_len * 0.5f + step_travel * 0.75f) * speed_factor;
+                                float tgt_x = hip_x + step_dx * target_off;
+                                float tgt_y = hip_y + step_dy * target_off;
                                 legs.target[leg] = {tgt_x, tgt_y,
                                     sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius)};
                             } else {

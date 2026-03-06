@@ -21,17 +21,17 @@ inline constexpr float ISO_VERT_SCALE = 0.8165f;
 struct ActorConfig {
     float hip_width      = 0.25f;
     float shoulder_width = 0.35f;
-    float leg_len        = 0.366f;  // thigh (0.430 * 0.85)
-    float shin_len       = 0.332f;  // shin  (0.390 * 0.85)
-    float torso_len      = 0.520f;  // torso (0.612 * 0.85)
-    float neck_len       = 0.104f;  // neck  (0.122 * 0.85)
-    float head_radius    = 0.139f;  // head  (0.163 * 0.85)
-    float arm_len        = 0.270f;  // upper arm (0.318 * 0.85)
-    float forearm_len    = 0.230f;  // forearm   (0.270 * 0.85)
-    float leg_radius     = 0.07f;
-    float arm_radius     = 0.055f;
-    float torso_radius   = 0.09f;
-    float toe_len        = 0.07f;   // distance from foot to toe tip
+    float leg_len        = 0.366f;   // thigh (0.430 * 0.85)
+    float shin_len       = 0.332f;   // shin  (0.390 * 0.85)
+    float torso_len      = 0.520f;   // torso (0.612 * 0.85)
+    float neck_len       = 0.104f;   // neck  (0.122 * 0.85)
+    float head_radius    = 0.042f;   // head  (0.163 * 0.85 * 0.3)
+    float arm_len        = 0.270f;   // upper arm (0.318 * 0.85)
+    float forearm_len    = 0.230f;   // forearm   (0.270 * 0.85)
+    float leg_radius     = 0.021f;   // 0.07 * 0.3
+    float arm_radius     = 0.017f;   // 0.055 * 0.3
+    float torso_radius   = 0.027f;   // 0.09 * 0.3
+    float toe_len        = 0.07f;    // distance from foot to toe tip
 };
 
 struct ProceduralGait {
@@ -175,6 +175,10 @@ struct RigState {
     float look_pitch      = 0.0f;  // current smoothed look pitch (radians)
     float look_yaw_rate   = 0.0f;  // smooth_damp derivative
     float look_pitch_rate = 0.0f;  // smooth_damp derivative
+
+    // --- Visual body orientation (decoupled from t.facing for smooth turns) ---
+    float visual_facing      = 0.0f;  // smoothed body orientation (radians)
+    float visual_facing_rate = 0.0f;  // smooth_damp derivative
 };
 
 // Hip counter-animation state for rendering pass.

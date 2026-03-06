@@ -147,8 +147,8 @@ public:
         auto l_shoulder_off = rel(J::L_UPPER_ARM, J::CHEST);
         auto r_shoulder_off = rel(J::R_UPPER_ARM, J::CHEST);
 
-        float root_offset_x = pose.joints[(int)J::HIPS].x - t.x;
-        float root_offset_y = pose.joints[(int)J::HIPS].y - t.y;
+        float root_offset_x = pose.joints[(int)J::ROOT].x - t.x;
+        float root_offset_y = pose.joints[(int)J::ROOT].y - t.y;
 
         fprintf(file,
             ",\"arm_diagnostics\":{"

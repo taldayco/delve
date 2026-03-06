@@ -704,6 +704,8 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
   float vel_x = 4.0f; // walking right at full speed
   float max_horiz = gait.stride_len * 0.9f;
   float max_observed = 0.0f;
+  float visual_facing = 0.0f;
+  float visual_facing_rate = 0.0f;
 
   // 60 frames forward, then 120 frames reversed.
   for (int frame = 0; frame < 180; ++frame) {
@@ -712,7 +714,17 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
     float speed = fabsf(vel_x);
     float vel_dx = vel_x / speed;
     float facing = (vel_x > 0) ? 0.0f : 3.14159265f;
-    float rght_x = -sinf(facing);
+
+    // Smooth visual_facing like the live system
+    {
+      float delta = facing - visual_facing;
+      while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
+      while (delta < -glm::pi<float>()) delta += glm::two_pi<float>();
+      visual_facing = smooth_damp_test(visual_facing, visual_facing + delta,
+                                        &visual_facing_rate, 0.15f, dt);
+    }
+
+    float vf_rght_x = -sinf(visual_facing);
     float hip_sign[2] = {-1.0f, 1.0f};
 
     float speed_ratio = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
@@ -720,7 +732,7 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
 
     for (int leg = 0; leg < 2; ++leg) {
       int other = 1 - leg;
-      float hip_x = pos_x + rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
       float half_stride = gait.stride_len * 0.5f;
       float center_x = hip_x + vel_dx * half_stride;
 
@@ -751,7 +763,7 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
 
     // Apply planted-foot clamp (mirrors live GaitSystem).
     for (int leg = 0; leg < 2; ++leg) {
-      float hip_x = pos_x + rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
       if (!legs.stepping[leg]) {
         float dx = legs.foot[leg].x - hip_x;
         float hd = fabsf(dx);
@@ -771,7 +783,7 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
 
     // Track max XY distance from hip.
     for (int leg = 0; leg < 2; ++leg) {
-      float hip_x = pos_x + rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
       float d = fabsf(legs.foot[leg].x - hip_x);
       max_observed = std::max(max_observed, d);
     }
@@ -1494,5 +1506,215 @@ DELVE_TEST(root_z_survives_foreshortening) {
     EXPECT_NEAR(pose.joints[(int)Joint::ROOT].z, root_z, 1e-6f);
     // HIPS should be compressed
     EXPECT_LT(pose.joints[(int)Joint::HIPS].z, hips_z);
+    return true;
+}
+
+// ---- Visual facing / smooth_damp_angle / half-space tests ----
+
+// Test helper: angle-aware smooth_damp (mirrors rig_animation.cpp's static function)
+static float smooth_damp_angle_test(float current, float target, float *velocity,
+                                     float smooth_time, float dt) {
+    float delta = target - current;
+    while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
+    while (delta < -glm::pi<float>()) delta += glm::two_pi<float>();
+    return smooth_damp_test(current, current + delta, velocity, smooth_time, dt);
+}
+
+DELVE_TEST(smooth_damp_angle_convergence) {
+    // smooth_damp_angle should converge from 0 to π/2 within 5 seconds
+    float current = 0.0f;
+    float target = glm::half_pi<float>();
+    float velocity = 0.0f;
+    float dt = 1.0f / 60.0f;
+
+    for (int i = 0; i < 300; ++i)  // 5 seconds at 60 fps
+        current = smooth_damp_angle_test(current, target, &velocity, 0.15f, dt);
+
+    EXPECT_NEAR(current, target, 0.01f);
+    return true;
+}
+
+DELVE_TEST(smooth_damp_angle_wraps_around) {
+    // From -170° to +170° should take the short path (20°), not the long path (340°)
+    float from_deg = -170.0f;
+    float to_deg   =  170.0f;
+    float current  = glm::radians(from_deg);
+    float target   = glm::radians(to_deg);
+    float velocity = 0.0f;
+    float dt = 1.0f / 60.0f;
+
+    // After one step, the value should have decreased (going the short way through -180°)
+    float after_one = smooth_damp_angle_test(current, target, &velocity, 0.15f, dt);
+    // The shortest path from -170° to +170° is through ±180° (20° gap)
+    // So the value should move toward -180° (decreasing), not toward 0° (increasing)
+    EXPECT_LT(after_one, current);
+    return true;
+}
+
+DELVE_TEST(visual_facing_lags_behind_facing) {
+    // After 1 frame at a new facing, visual_facing should have moved but not converged
+    float visual_facing = 0.0f;
+    float visual_facing_rate = 0.0f;
+    float target_facing = glm::half_pi<float>();
+    float dt = 1.0f / 60.0f;
+
+    visual_facing = smooth_damp_angle_test(visual_facing, target_facing,
+                                            &visual_facing_rate, 0.15f, dt);
+
+    // Should have moved toward target but not reached it
+    EXPECT_GT(visual_facing, 0.01f);
+    EXPECT_LT(visual_facing, target_facing * 0.5f);
+
+    // After 1 second (60 more frames), should be very close
+    for (int i = 0; i < 60; ++i)
+        visual_facing = smooth_damp_angle_test(visual_facing, target_facing,
+                                                &visual_facing_rate, 0.15f, dt);
+    EXPECT_NEAR(visual_facing, target_facing, 0.02f);
+    return true;
+}
+
+DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
+    // Simulate a 180° turn and verify no foot crosses the character's center line
+    LegState legs{};
+    ProceduralGait gait{};
+    ActorConfig cfg;
+    float dt = 1.0f / 60.0f;
+
+    float pos_x = 0.0f, pos_y = 0.0f;
+    float vel_x = 4.0f, vel_y = 0.0f;
+    float visual_facing = 0.0f;
+    float visual_facing_rate = 0.0f;
+
+    // Start feet at neutral under hips
+    legs.foot[0] = {-cfg.hip_width, 0.0f, 0.0f};
+    legs.foot[1] = { cfg.hip_width, 0.0f, 0.0f};
+
+    bool any_crossed = false;
+    float hip_sign[2] = {-1.0f, 1.0f};
+
+    // 30 frames right, then 120 frames left
+    for (int frame = 0; frame < 150; ++frame) {
+        if (frame == 30) { vel_x = -4.0f; }
+        pos_x += vel_x * dt;
+        float speed = fabsf(vel_x);
+        float facing = (vel_x > 0) ? 0.0f : glm::pi<float>();
+
+        // Update visual_facing
+        {
+            float delta = facing - visual_facing;
+            while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
+            while (delta < -glm::pi<float>()) delta += glm::two_pi<float>();
+            visual_facing = smooth_damp_test(visual_facing, visual_facing + delta,
+                                              &visual_facing_rate, 0.15f, dt);
+        }
+
+        float vf_rght_x = -sinf(visual_facing), vf_rght_y = cosf(visual_facing);
+        float vel_dx = vel_x / speed;
+        float speed_factor = std::min(1.0f, speed / (gait.move_speed * 0.15f));
+
+        float speed_ratio = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
+        float adaptive_duration = gait.step_duration / speed_ratio;
+
+        // Step initiation (simplified, 1D)
+        for (int leg = 0; leg < 2; ++leg) {
+            float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
+            float half_stride = gait.stride_len * 0.5f;
+            float center_x = hip_x + vel_dx * half_stride * speed_factor;
+
+            if (!legs.stepping[leg]) {
+                float dx = legs.foot[leg].x - center_x;
+                float trigger = half_stride * (0.25f + 0.75f * speed_factor);
+                if (fabsf(dx) > trigger && !legs.stepping[1 - leg]) {
+                    legs.stepping[leg] = true;
+                    legs.progress[leg] = 0.0f;
+                    legs.prev_foot[leg] = legs.foot[leg];
+                    float step_travel = speed * adaptive_duration;
+                    float target_off = (half_stride + step_travel * 0.75f) * speed_factor;
+                    float tgt_x = hip_x + vel_dx * target_off;
+                    // Half-space clamp
+                    float tgt_lat = (tgt_x - pos_x) * vf_rght_x;
+                    if ((hip_sign[leg] < 0 && tgt_lat > 0) || (hip_sign[leg] > 0 && tgt_lat < 0))
+                        tgt_x = pos_x + vf_rght_x * hip_sign[leg] * 0.05f;
+                    legs.target[leg] = {tgt_x, 0.0f, 0.0f};
+                }
+            }
+            if (legs.stepping[leg]) {
+                legs.progress[leg] += dt / adaptive_duration;
+                float p = std::min(legs.progress[leg], 1.0f);
+                float w = p*p*p*(p*(p*6.0f-15.0f)+10.0f);
+                legs.foot[leg].x = legs.prev_foot[leg].x +
+                    (legs.target[leg].x - legs.prev_foot[leg].x) * w;
+                if (legs.progress[leg] >= 1.0f) {
+                    legs.stepping[leg] = false;
+                    legs.foot[leg] = legs.target[leg];
+                }
+            }
+        }
+
+        // Half-space corrective step
+        for (int leg = 0; leg < 2; ++leg) {
+            if (legs.stepping[leg] || legs.stepping[1 - leg]) continue;
+            float lat = (legs.foot[leg].x - pos_x) * vf_rght_x;
+            bool crossed = (hip_sign[leg] < 0) ? (lat > 0.02f) : (lat < -0.02f);
+            if (crossed) {
+                legs.stepping[leg] = true;
+                legs.progress[leg] = 0.0f;
+                legs.prev_foot[leg] = legs.foot[leg];
+                legs.target[leg] = {pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width, 0.0f, 0.0f};
+            }
+        }
+
+        // Check: no foot on wrong side when both feet are planted
+        // (during stepping, one foot may temporarily be on wrong side)
+        if (!legs.stepping[0] && !legs.stepping[1]) {
+            for (int leg = 0; leg < 2; ++leg) {
+                float lat = (legs.foot[leg].x - pos_x) * vf_rght_x;
+                bool wrong_side = (hip_sign[leg] < 0) ? (lat > 0.05f) : (lat < -0.05f);
+                if (wrong_side)
+                    any_crossed = true;
+            }
+        }
+    }
+
+    EXPECT_FALSE(any_crossed);
+    return true;
+}
+
+DELVE_TEST(half_space_corrective_step_triggers) {
+    // Left foot at y=+0.3 when visual_facing=0 (facing +X): rght = (0, 1)
+    // Left hip_sign = -1, so left side is y < 0.
+    // lat = (foot.y - center.y) * rght_y = (0.3 - 0) * 1.0 = 0.3
+    // crossed = (hip_sign < 0) ? (lat > 0.02) = true
+    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;  // facing = 0 → right = (0, 1)
+    float pos_x = 0.0f, pos_y = 0.0f;
+
+    glm::vec3 left_foot(0.0f, 0.3f, 0.0f);  // on the wrong side
+    float hip_sign_left = -1.0f;
+
+    float lat = (left_foot.x - pos_x) * vf_rght_x + (left_foot.y - pos_y) * vf_rght_y;
+    bool crossed = (hip_sign_left < 0) ? (lat > 0.02f) : (lat < -0.02f);
+
+    EXPECT_TRUE(crossed);
+    return true;
+}
+
+DELVE_TEST(foot_target_clamped_to_correct_side) {
+    // Target on wrong side should be projected back
+    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;  // facing = 0
+    float pos_x = 0.0f, pos_y = 0.0f;
+    float hip_sign_left = -1.0f;
+
+    // Target placed at y=+0.2 (wrong side for left leg)
+    float tgt_x = 0.5f, tgt_y = 0.2f;
+    float tgt_lat = (tgt_x - pos_x) * vf_rght_x + (tgt_y - pos_y) * vf_rght_y;
+
+    if ((hip_sign_left < 0 && tgt_lat > 0) || (hip_sign_left > 0 && tgt_lat < 0)) {
+        tgt_x -= vf_rght_x * tgt_lat - vf_rght_x * hip_sign_left * 0.05f;
+        tgt_y -= vf_rght_y * tgt_lat - vf_rght_y * hip_sign_left * 0.05f;
+    }
+
+    // After clamping, lat should be on correct side (≤ 0 for left leg)
+    float new_lat = (tgt_x - pos_x) * vf_rght_x + (tgt_y - pos_y) * vf_rght_y;
+    EXPECT_LT(new_lat, 0.0f);
     return true;
 }

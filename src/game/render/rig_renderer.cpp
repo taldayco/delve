@@ -394,7 +394,7 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         pose.joints[(int)Joint::R_UPPER_LEG].z += hip_anim.hip_bob_y;
 
         // Lateral drop: shift CoM toward stance side.
-        float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+        float rght_x = -sinf(anim.visual_facing), rght_y = cosf(anim.visual_facing);
         float drop_shift = hip_anim.hip_drop_fraction;
         glm::vec3 drop_vec(rght_x * drop_shift, rght_y * drop_shift, 0.0f);
         float side = (hip_anim.hip_rotation_deg >= 0.0f) ? 1.0f : -1.0f;
@@ -404,7 +404,7 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
 
         // Apply isometric height foreshortening.
         {
-            float foot_z = t.z - cfg.leg_len - cfg.shin_len;
+            float foot_z = t.z;
 
             // Save ground-contact joints — must stay at terrain level
             using J = Joint;
@@ -431,8 +431,10 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
         {
             glm::vec3 trace_color(0.3f, 0.85f, 0.85f);  // teal
 
-            emit_flat_circle(j(J::ROOT), cfg.torso_radius * 1.5f, trace_color, 16, verts);
-            emit_cylinder(j(J::ROOT), j(J::HIPS), 0.012f, trace_color, 4, verts);
+            // Ground marker at Transform (terrain-locked), not ROOT joint.
+            glm::vec3 ground_pos(t.x, t.y, t.z);
+            emit_flat_circle(ground_pos, cfg.torso_radius * 1.5f, trace_color, 16, verts);
+            emit_cylinder(ground_pos, j(J::HIPS), 0.012f, trace_color, 4, verts);
 
             // Left foot trace — at foot's own ground level
             glm::vec3 lfoot_ground(j(J::L_FOOT).x, j(J::L_FOOT).y, j(J::L_FOOT).z);

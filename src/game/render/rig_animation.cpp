@@ -29,6 +29,15 @@ static float smooth_damp(float current, float target, float *velocity,
     return target + (delta + temp) * exp_f;
 }
 
+// Angle-aware smooth_damp that handles wraparound at ±π.
+static float smooth_damp_angle(float current, float target, float *velocity,
+                                float smooth_time, float dt) {
+    float delta = target - current;
+    while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
+    while (delta < -glm::pi<float>()) delta += glm::two_pi<float>();
+    return smooth_damp(current, current + delta, velocity, smooth_time, dt);
+}
+
 // Generic two-bone analytical IK solver (extracted from leg IK).
 // H: root joint (hip/shoulder), target: end-effector goal,
 // a: upper bone length, b: lower bone length,
@@ -131,6 +140,12 @@ void register_rig_systems(flecs::world &ecs,
             if (spd > 0.001f)
                 t->facing = atan2f(vel->y, vel->x);
 
+            // Smooth visual body orientation to prevent instant hip-socket swaps
+            anim->visual_facing = smooth_damp_angle(anim->visual_facing, t->facing,
+                                                     &anim->visual_facing_rate, 0.15f, dt);
+            if (spd <= 0.001f)
+                anim->visual_facing_rate = 0.0f;
+
             // Phase 2C: set look-at target in movement direction
             auto *look = player_entity.get_mut<LookAtTarget>();
             if (look) {
@@ -159,22 +174,11 @@ void register_rig_systems(flecs::world &ecs,
             const auto *map_data = ecs.get<MapData>();
             if (!map_data || map_data->basalt_height.empty()) return;
 
-            float dt = ecs.delta_time();
-            ecs.each([&](ActorTag, Transform &t, const ActorConfig &cfg,
-                         const LegState *legs) {
-                float target_z;
-                if (legs) {
-                    // Phase 1B: use average foot height for smoother slope tracking
-                    float avg_foot_z = (legs->foot[0].z + legs->foot[1].z) * 0.5f;
-                    target_z = avg_foot_z + cfg.leg_len + cfg.shin_len;
-                } else {
-                    target_z = sample_world_height(*map_data, t.x, t.y)
-                               + cfg.leg_len + cfg.shin_len;
-                }
-                float dist = fabsf(target_z - t.z);
-                // Stiffer spring when far from ground, softer when close.
-                float k = 8.0f + dist * 4.0f;
-                t.z = t.z + (target_z - t.z) * (1.0f - expf(-k * dt));
+            ecs.each([&](ActorTag, Transform &t, const ActorConfig &,
+                         const LegState *) {
+                // Snap directly to terrain height — no spring, no foot feedback.
+                // ROOT is the immutable ground anchor; feet adapt via IK.
+                t.z = sample_world_height(*map_data, t.x, t.y);
             });
         });
 
@@ -217,6 +221,9 @@ void register_rig_systems(flecs::world &ecs,
 
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
+                // Visual-facing right vector for hip placement (smoothed, prevents leg crossing)
+                float vf_rght_x = -sinf(anim.visual_facing), vf_rght_y = cosf(anim.visual_facing);
+
                 // Hip socket XY offsets (legs offset left/right of facing).
                 float hip_sign[2] = { -1.0f, 1.0f }; // left, right
 
@@ -231,8 +238,8 @@ void register_rig_systems(flecs::world &ecs,
                 for (int leg = 0; leg < 2; ++leg) {
                     int other_leg = 1 - leg;
 
-                    float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
-                    float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
+                    float hip_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
+                    float hip_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width;
 
                     // Trigger check: how far the planted foot is from nominal center.
                     // When idle, center collapses to hip position (no forward offset)
@@ -264,6 +271,14 @@ void register_rig_systems(flecs::world &ecs,
                             float target_off  = (half_stride + step_travel * 0.75f) * speed_factor;
                             float tgt_x = hip_x + vel_dx * target_off;
                             float tgt_y = hip_y + vel_dy * target_off;
+
+                            // Half-space clamp: keep target on correct side of center line
+                            float tgt_lat = (tgt_x - t.x) * vf_rght_x + (tgt_y - t.y) * vf_rght_y;
+                            if ((hip_sign[leg] < 0 && tgt_lat > 0) || (hip_sign[leg] > 0 && tgt_lat < 0)) {
+                                tgt_x -= vf_rght_x * tgt_lat - vf_rght_x * hip_sign[leg] * 0.05f;
+                                tgt_y -= vf_rght_y * tgt_lat - vf_rght_y * hip_sign[leg] * 0.05f;
+                            }
+
                             float tgt_z = sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius);
                             legs.target[leg]    = {tgt_x, tgt_y, tgt_z};
                         }
@@ -305,11 +320,30 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 }
 
+                // ---- Half-space constraint: force corrective step if foot crossed center line ----
+                for (int leg = 0; leg < 2; ++leg) {
+                    if (legs.stepping[leg] || legs.stepping[1 - leg]) continue;
+                    float lat = (legs.foot[leg].x - t.x) * vf_rght_x
+                              + (legs.foot[leg].y - t.y) * vf_rght_y;
+                    bool crossed = (hip_sign[leg] < 0) ? (lat > 0.02f) : (lat < -0.02f);
+                    if (crossed) {
+                        legs.stepping[leg] = true;
+                        legs.progress[leg] = 0.0f;
+                        legs.prev_foot[leg] = legs.foot[leg];
+                        float tgt_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width
+                                     + vel_dx * gait.stride_len * 0.15f * speed_factor;
+                        float tgt_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width
+                                     + vel_dy * gait.stride_len * 0.15f * speed_factor;
+                        legs.target[leg] = {tgt_x, tgt_y,
+                            sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius)};
+                    }
+                }
+
                 // ---- Planted-foot reach clamp ----
                 float max_horiz = gait.stride_len * 0.9f;
                 for (int leg = 0; leg < 2; ++leg) {
-                    float hip_x = t.x + rght_x * hip_sign[leg] * cfg.hip_width;
-                    float hip_y = t.y + rght_y * hip_sign[leg] * cfg.hip_width;
+                    float hip_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
+                    float hip_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width;
 
                     if (!legs.stepping[leg]) {
                         float dx = legs.foot[leg].x - hip_x;
@@ -399,12 +433,13 @@ void register_rig_systems(flecs::world &ecs,
 
                 using J = Joint;
 
-                float facing = t.facing;
+                float facing = anim.visual_facing;
                 float fwd_x  =  cosf(facing), fwd_y  = sinf(facing);
                 float rght_x = -sinf(facing), rght_y = cosf(facing);
 
-                // HIPS and spine chain.
-                glm::vec3 hips(t.x, t.y, t.z);
+                // HIPS derived upward from ROOT (Transform is ground-level).
+                float leg_height = cfg.leg_len + cfg.shin_len;
+                glm::vec3 hips(t.x, t.y, t.z + leg_height);
                 glm::vec3 spine01 = hips  + glm::vec3(0, 0, cfg.torso_len * 0.4f);
                 glm::vec3 chest   = hips  + glm::vec3(0, 0, cfg.torso_len);
                 glm::vec3 neck    = chest + glm::vec3(0, 0, cfg.neck_len);
@@ -417,8 +452,9 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::HEAD]     = head;
 
                 // Hip sockets (L_UPPER_LEG / R_UPPER_LEG).
-                glm::vec3 l_upper_leg(t.x - rght_x * cfg.hip_width, t.y - rght_y * cfg.hip_width, t.z);
-                glm::vec3 r_upper_leg(t.x + rght_x * cfg.hip_width, t.y + rght_y * cfg.hip_width, t.z);
+                float hip_z = t.z + leg_height;
+                glm::vec3 l_upper_leg(t.x - rght_x * cfg.hip_width, t.y - rght_y * cfg.hip_width, hip_z);
+                glm::vec3 r_upper_leg(t.x + rght_x * cfg.hip_width, t.y + rght_y * cfg.hip_width, hip_z);
                 pose.joints[(int)J::L_UPPER_LEG] = l_upper_leg;
                 pose.joints[(int)J::R_UPPER_LEG] = r_upper_leg;
 
@@ -709,7 +745,7 @@ void register_rig_systems(flecs::world &ecs,
                 using J = Joint;
 
                 float speed   = sqrtf(vel.x * vel.x + vel.y * vel.y);
-                float rght_x  = -sinf(t.facing), rght_y = cosf(t.facing);
+                float rght_x  = -sinf(anim.visual_facing), rght_y = cosf(anim.visual_facing);
 
                 // ---- Phase 1C: Slope-driven hip tilt ----
                 if (legs) {
@@ -778,7 +814,7 @@ void register_rig_systems(flecs::world &ecs,
                 float target_lean_x = lean_dir.x * lean_factor;
                 float target_lean_y = lean_dir.y * lean_factor;
 
-                float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
+                float fwd_x = cosf(anim.visual_facing), fwd_y = sinf(anim.visual_facing);
                 float speed_blend = std::min(1.0f, speed / gait.move_speed);
                 float fwd_lean = speed_blend * glm::radians(2.5f);
                 target_lean_x += fwd_x * fwd_lean;
@@ -845,14 +881,8 @@ void register_rig_systems(flecs::world &ecs,
                 }
 
                 // ---- Compute derived joints ----
-                // ROOT: ground anchor below HIPS, clamped to terrain
-                glm::vec3 hips = pose.joints[(int)J::HIPS];
-                float algebraic_root_z = hips.z - (cfg.leg_len + cfg.shin_len);
-                float terrain_z = (map_data && !map_data->basalt_height.empty())
-                    ? sample_world_height(*map_data, hips.x, hips.y)
-                    : algebraic_root_z;
-                pose.joints[(int)J::ROOT] = glm::vec3(hips.x, hips.y,
-                    std::max(algebraic_root_z, terrain_z));
+                // ROOT: ground anchor from Transform (already at ground level).
+                pose.joints[(int)J::ROOT] = glm::vec3(t.x, t.y, t.z);
 
                 // SPINE_02: mid-point between SPINE_01 and CHEST
                 pose.joints[(int)J::SPINE_02] = glm::mix(

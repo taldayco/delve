@@ -96,6 +96,56 @@ struct RigPose {
     glm::vec3 joints[(int)Joint::COUNT] = {};
 };
 
+struct RigTransforms {
+    glm::mat4 bones[(int)Joint::COUNT] = {};
+};
+
+// Assemble a bone-space mat4 from orthonormal basis vectors + position.
+// Convention: col0=Right, col1=Forward, col2=Up, col3=Position(w=1).
+inline glm::mat4 make_bone_mat4(const glm::vec3 &right,
+                                 const glm::vec3 &fwd,
+                                 const glm::vec3 &up,
+                                 const glm::vec3 &pos) {
+    return glm::mat4(
+        glm::vec4(right, 0.0f),
+        glm::vec4(fwd,   0.0f),
+        glm::vec4(up,    0.0f),
+        glm::vec4(pos,   1.0f)
+    );
+}
+
+// Compute an orthonormal frame from a bone direction vector and a reference
+// forward vector.  bone_dir becomes the "up" axis of the basis.
+inline void build_bone_basis(const glm::vec3 &bone_dir,
+                              const glm::vec3 &ref_fwd,
+                              glm::vec3 &out_right,
+                              glm::vec3 &out_fwd,
+                              glm::vec3 &out_up) {
+    float len = glm::length(bone_dir);
+    if (len < 1e-5f) {
+        // Degenerate direction — fallback to identity basis.
+        out_right = glm::vec3(1.0f, 0.0f, 0.0f);
+        out_fwd   = glm::vec3(0.0f, 1.0f, 0.0f);
+        out_up    = glm::vec3(0.0f, 0.0f, 1.0f);
+        return;
+    }
+    out_up = bone_dir / len;
+
+    out_right = glm::cross(ref_fwd, out_up);
+    float right_len = glm::length(out_right);
+    if (right_len < 1e-5f) {
+        // bone_dir is (anti-)parallel to ref_fwd — pick perpendicular fallback.
+        glm::vec3 alt = (std::abs(out_up.z) < 0.9f)
+                            ? glm::vec3(0.0f, 0.0f, 1.0f)
+                            : glm::vec3(1.0f, 0.0f, 0.0f);
+        out_right = glm::normalize(glm::cross(alt, out_up));
+    } else {
+        out_right /= right_len;
+    }
+
+    out_fwd = glm::cross(out_up, out_right);  // guaranteed orthonormal
+}
+
 struct LegState {
     glm::vec3 foot[2]      = {};
     glm::vec3 prev_foot[2] = {};

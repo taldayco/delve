@@ -165,9 +165,10 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<LookAtTarget>({})
       .set<ArmIKGoal>({})
       .set<AnimationOverlay>({})
-      .set<GrabState>({});
+      .set<GrabState>({})
+      .set<RigTransforms>({});
 
-  // Register all 6 animation ECS systems.
+  // Register all animation ECS systems.
   register_rig_systems(ecs, input, camera, anim_log, player_entity);
 }
 

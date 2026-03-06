@@ -1097,6 +1097,223 @@ void register_rig_systems(flecs::world &ecs,
         });
 
     // =========================================================================
+    // 7.5 RigTransformSystem
+    //     Computes per-joint glm::mat4 transforms from finalized joint positions.
+    //     Runs AFTER SkeletonFinaliseSystem, BEFORE AnimationLogSystem.
+    // =========================================================================
+    ecs.system("RigTransformSystem")
+        .kind(flecs::PostUpdate)
+        .run([&ecs](flecs::iter &) {
+            ecs.each([](ActorTag,
+                        const ActorConfig    &cfg,
+                        const RigState       &anim,
+                        const RigPose        &pose,
+                        RigTransforms        &xforms) {
+                using J = Joint;
+                const auto &jt = pose.joints;
+
+                float vf = anim.visual_facing;
+                glm::vec3 vis_fwd(cosf(vf), sinf(vf), 0.0f);
+                glm::vec3 vis_rght(-sinf(vf), cosf(vf), 0.0f);
+
+                float cf = anim.chest_facing;
+                glm::vec3 chest_fwd(cosf(cf), sinf(cf), 0.0f);
+                glm::vec3 chest_rght(-sinf(cf), cosf(cf), 0.0f);
+
+                // --- A. ROOT ---
+                xforms.bones[(int)J::ROOT] = make_bone_mat4(
+                    vis_rght, vis_fwd, glm::vec3(0.0f, 0.0f, 1.0f),
+                    jt[(int)J::ROOT]);
+
+                // --- B. Spine chain (table-driven with chest_blend) ---
+                struct SpineEntry { Joint self; Joint child; float chest_blend; };
+                static constexpr SpineEntry spine_chain[] = {
+                    { J::HIPS,     J::SPINE_01, 0.0f },
+                    { J::SPINE_01, J::SPINE_02, 0.0f },
+                    { J::SPINE_02, J::CHEST,    0.5f },
+                    { J::CHEST,    J::NECK,     1.0f },
+                    { J::NECK,     J::HEAD,     1.0f },
+                };
+                for (const auto &e : spine_chain) {
+                    glm::vec3 bone_dir = jt[(int)e.child] - jt[(int)e.self];
+                    float blen = glm::length(bone_dir);
+                    if (blen < 1e-5f) {
+                        // Degenerate — identity rotation at position
+                        glm::mat4 m(1.0f);
+                        m[3] = glm::vec4(jt[(int)e.self], 1.0f);
+                        xforms.bones[(int)e.self] = m;
+                        continue;
+                    }
+                    glm::vec3 ref = glm::mix(vis_fwd, chest_fwd, e.chest_blend);
+                    float ref_len = glm::length(ref);
+                    if (ref_len < 1e-5f) ref = vis_fwd; // opposing facings fallback
+                    else ref /= ref_len;
+
+                    glm::vec3 right, fwd, up;
+                    build_bone_basis(bone_dir, ref, right, fwd, up);
+                    xforms.bones[(int)e.self] = make_bone_mat4(right, fwd, up, jt[(int)e.self]);
+                }
+                // HEAD: point toward HEAD_END
+                {
+                    glm::vec3 bone_dir = jt[(int)J::HEAD_END] - jt[(int)J::HEAD];
+                    float blen = glm::length(bone_dir);
+                    if (blen < 1e-5f) {
+                        glm::mat4 m(1.0f);
+                        m[3] = glm::vec4(jt[(int)J::HEAD], 1.0f);
+                        xforms.bones[(int)J::HEAD] = m;
+                    } else {
+                        glm::vec3 right, fwd, up;
+                        build_bone_basis(bone_dir, chest_fwd, right, fwd, up);
+                        xforms.bones[(int)J::HEAD] = make_bone_mat4(right, fwd, up, jt[(int)J::HEAD]);
+                    }
+                }
+                // HEAD_END: copy HEAD rotation, override position
+                {
+                    glm::mat4 m = xforms.bones[(int)J::HEAD];
+                    m[3] = glm::vec4(jt[(int)J::HEAD_END], 1.0f);
+                    xforms.bones[(int)J::HEAD_END] = m;
+                }
+
+                // --- C. Limbs (bend-plane-normal method) ---
+                auto compute_limb_chain = [&](Joint upper, Joint lower, Joint end,
+                                              Joint toe, const glm::vec3 &fallback_perp,
+                                              bool is_leg) {
+                    glm::vec3 upper_dir = jt[(int)lower] - jt[(int)upper];
+                    glm::vec3 lower_dir = jt[(int)end]   - jt[(int)lower];
+                    float upper_len = glm::length(upper_dir);
+                    float lower_len = glm::length(lower_dir);
+
+                    // Bend plane normal from cross of bone directions
+                    glm::vec3 bend_normal = fallback_perp;
+                    if (upper_len > 1e-5f && lower_len > 1e-5f) {
+                        glm::vec3 bn = glm::cross(
+                            upper_dir / upper_len, lower_dir / lower_len);
+                        float bn_len = glm::length(bn);
+                        if (bn_len > 1e-5f) bend_normal = bn / bn_len;
+                    }
+
+                    // Upper bone
+                    if (upper_len > 1e-5f) {
+                        glm::vec3 up = upper_dir / upper_len;
+                        glm::vec3 right = bend_normal;
+                        glm::vec3 fwd = glm::cross(up, right);
+                        right = glm::cross(fwd, up); // re-orthogonalize
+                        xforms.bones[(int)upper] = make_bone_mat4(right, fwd, up, jt[(int)upper]);
+                    } else {
+                        glm::mat4 m(1.0f);
+                        m[3] = glm::vec4(jt[(int)upper], 1.0f);
+                        xforms.bones[(int)upper] = m;
+                    }
+
+                    // Lower bone
+                    if (lower_len > 1e-5f) {
+                        glm::vec3 up = lower_dir / lower_len;
+                        // Project bend_normal perpendicular to lower bone direction
+                        glm::vec3 right = bend_normal - glm::dot(bend_normal, up) * up;
+                        float rlen = glm::length(right);
+                        if (rlen < 1e-5f) {
+                            // Fallback: project fallback_perp
+                            right = fallback_perp - glm::dot(fallback_perp, up) * up;
+                            rlen = glm::length(right);
+                            if (rlen < 1e-5f) {
+                                // Arbitrary perpendicular
+                                glm::vec3 alt = (std::abs(up.z) < 0.9f)
+                                    ? glm::vec3(0.0f, 0.0f, 1.0f)
+                                    : glm::vec3(1.0f, 0.0f, 0.0f);
+                                right = glm::normalize(glm::cross(alt, up));
+                                rlen = 1.0f;
+                            }
+                        }
+                        right /= rlen;
+                        glm::vec3 fwd = glm::cross(up, right);
+                        xforms.bones[(int)lower] = make_bone_mat4(right, fwd, up, jt[(int)lower]);
+                    } else {
+                        glm::mat4 m(1.0f);
+                        m[3] = glm::vec4(jt[(int)lower], 1.0f);
+                        xforms.bones[(int)lower] = m;
+                    }
+
+                    // End effector (foot or hand)
+                    if (is_leg) {
+                        // Foot: forward = toe direction, up = world Z
+                        glm::vec3 toe_dir = jt[(int)toe] - jt[(int)end];
+                        float toe_len = glm::length(toe_dir);
+                        glm::vec3 fwd = (toe_len > 1e-5f)
+                            ? toe_dir / toe_len : vis_fwd;
+                        glm::vec3 up(0.0f, 0.0f, 1.0f);
+                        glm::vec3 right = glm::cross(fwd, up);
+                        float rlen = glm::length(right);
+                        if (rlen < 1e-5f) right = vis_rght;
+                        else right /= rlen;
+                        up = glm::cross(right, fwd);
+                        xforms.bones[(int)end] = make_bone_mat4(right, fwd, up, jt[(int)end]);
+                        // Toe: copy foot rotation at toe position
+                        glm::mat4 m = xforms.bones[(int)end];
+                        m[3] = glm::vec4(jt[(int)toe], 1.0f);
+                        xforms.bones[(int)toe] = m;
+                    } else {
+                        // Hand: continue forearm direction
+                        if (lower_len > 1e-5f) {
+                            glm::mat4 m = xforms.bones[(int)lower];
+                            m[3] = glm::vec4(jt[(int)end], 1.0f);
+                            xforms.bones[(int)end] = m;
+                        } else {
+                            glm::mat4 m(1.0f);
+                            m[3] = glm::vec4(jt[(int)end], 1.0f);
+                            xforms.bones[(int)end] = m;
+                        }
+                    }
+                };
+
+                // Left leg
+                compute_limb_chain(J::L_UPPER_LEG, J::L_LOWER_LEG, J::L_FOOT, J::L_TOE,
+                    glm::vec3(-vis_rght.x, -vis_rght.y, 0.0f), true);
+                // Right leg
+                compute_limb_chain(J::R_UPPER_LEG, J::R_LOWER_LEG, J::R_FOOT, J::R_TOE,
+                    glm::vec3(vis_rght.x, vis_rght.y, 0.0f), true);
+                // Left arm
+                compute_limb_chain(J::L_UPPER_ARM, J::L_LOWER_ARM, J::L_HAND, J::L_HAND,
+                    glm::vec3(-chest_fwd.x, -chest_fwd.y, 0.0f), false);
+                // Right arm
+                compute_limb_chain(J::R_UPPER_ARM, J::R_LOWER_ARM, J::R_HAND, J::R_HAND,
+                    glm::vec3(-chest_fwd.x, -chest_fwd.y, 0.0f), false);
+
+                // --- D. Clavicles ---
+                auto compute_clavicle = [&](Joint clav, Joint upper_arm) {
+                    glm::vec3 bone_dir = jt[(int)upper_arm] - jt[(int)clav];
+                    float blen = glm::length(bone_dir);
+                    if (blen < 1e-5f) {
+                        glm::mat4 m(1.0f);
+                        m[3] = glm::vec4(jt[(int)clav], 1.0f);
+                        xforms.bones[(int)clav] = m;
+                    } else {
+                        glm::vec3 right, fwd, up;
+                        build_bone_basis(bone_dir, chest_fwd, right, fwd, up);
+                        xforms.bones[(int)clav] = make_bone_mat4(right, fwd, up, jt[(int)clav]);
+                    }
+                };
+                compute_clavicle(J::L_CLAVICLE, J::L_UPPER_ARM);
+                compute_clavicle(J::R_CLAVICLE, J::R_UPPER_ARM);
+
+                // --- E. IK Virtual Joints (identity rotation at position) ---
+                static constexpr Joint ik_joints[] = {
+                    J::POLE_KNEE_L, J::POLE_KNEE_R,
+                    J::POLE_ELBOW_L, J::POLE_ELBOW_R,
+                    J::IK_FOOT_L, J::IK_FOOT_R,
+                    J::IK_HAND_L, J::IK_HAND_R,
+                };
+                for (Joint j : ik_joints) {
+                    glm::mat4 m(1.0f);
+                    m[3] = glm::vec4(jt[(int)j], 1.0f);
+                    xforms.bones[(int)j] = m;
+                }
+
+                (void)cfg;
+                (void)chest_rght;
+            });
+        });
+
+    // =========================================================================
     // 6. AnimationLogSystem
     //    JSONL frame telemetry — runs after SkeletonFinaliseSystem.
     // =========================================================================

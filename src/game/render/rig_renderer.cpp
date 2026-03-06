@@ -367,14 +367,15 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     if (!initialized || !rig_vbo || !transfer_buf) return 0;
 
     std::vector<BasaltVertex> verts;
-    verts.reserve(1024);
+    verts.reserve(16384);
 
     glm::vec3 body_color(0.55f, 0.52f, 0.48f);
     glm::vec3 ik_goal_color(0.2f, 0.8f, 0.2f);      // green for IK goals
     glm::vec3 pole_color(0.9f, 0.5f, 0.1f);          // orange for pole targets
 
     ecs.each([&](ActorTag, const RigPose &pose_in, const ActorConfig &cfg,
-                 const Transform &t, const ProceduralGait &gait, const RigState &anim) {
+                 const Transform &t, const ProceduralGait &gait, const RigState &anim,
+                 const ProceduralMesh &mesh) {
         // Apply hip counter-animation on top of the already-posed skeleton.
         constexpr AnimationConfig anim_cfg{};
         RigHipState hip_anim;
@@ -422,6 +423,20 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
             }
 
             for (int k = 0; k < 5; ++k) pose.joints[ground_joints[k]].z = saved[k];
+        }
+
+        // ---- Procedural cage mesh (emitted first so debug shapes overdraw) ----
+        if (!mesh.vertices.empty()) {
+            float foot_z = t.z;
+            float scale  = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
+            for (const BasaltVertex &sv : mesh.vertices) {
+                BasaltVertex v = sv;
+                v.pos_z = foot_z + (v.pos_z - foot_z) * scale;
+                v.nz *= scale;
+                float nlen = std::sqrt(v.nx * v.nx + v.ny * v.ny + v.nz * v.nz);
+                if (nlen > 1e-6f) { v.nx /= nlen; v.ny /= nlen; v.nz /= nlen; }
+                verts.push_back(v);
+            }
         }
 
         using J = Joint;
@@ -541,6 +556,11 @@ uint32_t RigRenderer::prepare(SDL_GPUCommandBuffer *cmd, flecs::world &ecs) {
     if (verts.empty()) return 0;
 
     uint32_t count = (uint32_t)std::min(verts.size(), (size_t)MAX_RIG_VERTICES);
+    if (verts.size() > MAX_RIG_VERTICES) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "RigRenderer: vertex overflow — %zu clamped to %u",
+                    verts.size(), MAX_RIG_VERTICES);
+    }
     uint32_t byte_size = count * (uint32_t)sizeof(BasaltVertex);
 
     // Map transfer buffer, copy geometry.

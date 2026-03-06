@@ -1,6 +1,8 @@
 #pragma once
 #include <glm/glm.hpp>
 #include <cstdint>
+#include "terrain/terrain_mesh.h"  // BasaltVertex
+#include <vector>
 
 struct Player  {};
 struct ActorTag {};
@@ -145,6 +147,10 @@ inline void build_bone_basis(const glm::vec3 &bone_dir,
 
     out_fwd = glm::cross(out_up, out_right);  // guaranteed orthonormal
 }
+
+struct ProceduralMesh {
+    std::vector<BasaltVertex> vertices;
+};
 
 struct LegState {
     glm::vec3 foot[2]      = {};

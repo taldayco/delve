@@ -14,6 +14,98 @@
 // File-scope animation config — single instance shared by GaitSystem and RigRenderer.
 static const AnimationConfig s_anim_cfg{};
 
+struct IsoCompensation {
+    float width_scale;
+    float equator_t;
+    float radial_z_comp;
+};
+
+static IsoCompensation iso_compensate_bone(const glm::vec3 &a, const glm::vec3 &b) {
+    glm::vec3 dir = b - a;
+    float len = glm::length(dir);
+    if (len < 1e-5f) return {1.0f, 0.2f, 0.18f};
+    dir /= len;
+    float dot_z = glm::dot(dir, glm::vec3(0.0f, 0.0f, 1.0f));
+    float z_align = fabsf(dot_z);
+    IsoCompensation comp;
+    comp.width_scale   = 1.0f + sqrtf(z_align) * 2.0f;
+    comp.equator_t     = 0.2f + z_align * 0.15f;
+    comp.radial_z_comp = 0.18f + z_align * (1.0f - 0.18f);
+    return comp;
+}
+
+// Extrude a tapered open-ended prism (cage) along a bone.
+// mat_A: start joint transform (col0=Right, col1=Fwd, col2=Up, col3=Pos).
+// pos_B: end joint world position.
+// radius_A/radius_B: cross-section radii at start/end (allows tapering).
+// segments: 3 or 4 for low-poly net aesthetic.
+// color: xyz=RGB, w=sheen.
+static void append_bone_cage(std::vector<BasaltVertex> &verts,
+                              const glm::mat4 &mat_A,
+                              const glm::vec3 &pos_B,
+                              float radius_A, float radius_B,
+                              int segments, glm::vec4 color) {
+    glm::vec3 pos_A      = glm::vec3(mat_A[3]);
+    glm::vec3 bone_right = glm::vec3(mat_A[0]);
+    glm::vec3 bone_fwd   = glm::vec3(mat_A[1]);
+
+    glm::vec3 bone_vec = pos_B - pos_A;
+    float bone_len = glm::length(bone_vec);
+    if (bone_len < 1e-5f) return;
+    glm::vec3 bone_dir = bone_vec / bone_len;
+
+    segments = std::max(segments, 3);
+    segments = std::min(segments, 8);
+
+    IsoCompensation comp = iso_compensate_bone(pos_A, pos_B);
+
+    constexpr int MAX_SIDES = 8;
+    constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
+    glm::vec3 ring_A[MAX_SIDES];
+    glm::vec3 ring_B[MAX_SIDES];
+
+    for (int i = 0; i < segments; ++i) {
+        float angle = (float)i * (TWO_PI / (float)segments);
+        float ca = cosf(angle), sa = sinf(angle);
+        glm::vec3 dir = bone_right * ca + bone_fwd * sa;
+
+        glm::vec3 off_A = dir * radius_A;
+        off_A.z *= comp.radial_z_comp;
+        ring_A[i] = pos_A + off_A;
+
+        glm::vec3 off_B = dir * radius_B;
+        off_B.z *= comp.radial_z_comp;
+        ring_B[i] = pos_B + off_B;
+    }
+
+    for (int i = 0; i < segments; ++i) {
+        int j = (i + 1) % segments;
+
+        glm::vec3 p00 = ring_A[i];
+        glm::vec3 p10 = ring_A[j];
+        glm::vec3 p01 = ring_B[i];
+        glm::vec3 p11 = ring_B[j];
+
+        glm::vec3 cross_val = glm::cross(p10 - p00, p01 - p00);
+        float cross_len = glm::length(cross_val);
+        glm::vec3 face_n = (cross_len > 1e-7f)
+                               ? (cross_val / cross_len)
+                               : bone_dir;
+
+        auto push = [&](const glm::vec3 &pos) {
+            BasaltVertex v;
+            v.pos_x   = pos.x;  v.pos_y   = pos.y;  v.pos_z   = pos.z;
+            v.color_r = color.x; v.color_g = color.y; v.color_b = color.z;
+            v.sheen   = color.w;
+            v.nx = face_n.x; v.ny = face_n.y; v.nz = face_n.z;
+            verts.push_back(v);
+        };
+
+        push(p00); push(p10); push(p01);
+        push(p10); push(p11); push(p01);
+    }
+}
+
 // Unity-style critically-damped spring smoother.
 // Smoothly moves 'current' toward 'target' over time.
 // 'velocity' is internal state that must persist across calls.
@@ -1314,8 +1406,89 @@ void register_rig_systems(flecs::world &ecs,
         });
 
     // =========================================================================
-    // 6. AnimationLogSystem
-    //    JSONL frame telemetry — runs after SkeletonFinaliseSystem.
+    // 7.75 MeshGenerationSystem
+    //      Generates procedural bone cage meshes from RigTransforms + ActorConfig.
+    //      Runs AFTER RigTransformSystem, BEFORE AnimationLogSystem.
+    // =========================================================================
+    ecs.system("MeshGenerationSystem")
+        .kind(flecs::PostUpdate)
+        .run([&ecs](flecs::iter &) {
+            ecs.each([](ActorTag,
+                        const ActorConfig    &cfg,
+                        const RigPose        &pose,
+                        const RigTransforms  &xforms,
+                        ProceduralMesh       &mesh) {
+                using J = Joint;
+                mesh.vertices.clear();
+                mesh.vertices.reserve(2048);
+
+                auto &v = mesh.vertices;
+                const auto &b = xforms.bones;
+                const auto &jt = pose.joints;
+
+                glm::vec4 body(0.55f, 0.52f, 0.48f, 0.1f);  // warm grey, low sheen
+
+                // --- SPINE CHAIN (4 segments, 4-sided) ---
+                append_bone_cage(v, b[(int)J::HIPS],     jt[(int)J::SPINE_01],
+                                 cfg.torso_radius * 1.2f, cfg.torso_radius, 4, body);
+                append_bone_cage(v, b[(int)J::SPINE_01], jt[(int)J::SPINE_02],
+                                 cfg.torso_radius,        cfg.torso_radius, 4, body);
+                append_bone_cage(v, b[(int)J::SPINE_02], jt[(int)J::CHEST],
+                                 cfg.torso_radius,        cfg.torso_radius * 1.1f, 4, body);
+                append_bone_cage(v, b[(int)J::CHEST],    jt[(int)J::NECK],
+                                 cfg.torso_radius * 0.5f, cfg.head_radius * 0.5f, 4, body);
+
+                // --- HEAD CHAIN (2 segments, 4-sided) ---
+                append_bone_cage(v, b[(int)J::NECK],     jt[(int)J::HEAD],
+                                 cfg.head_radius * 0.4f,  cfg.head_radius * 0.6f, 4, body);
+                append_bone_cage(v, b[(int)J::HEAD],     jt[(int)J::HEAD_END],
+                                 cfg.head_radius * 0.6f,  cfg.head_radius * 0.3f, 4, body);
+
+                // --- LEFT LEG (4 segments, 3-sided) ---
+                append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::L_UPPER_LEG],
+                                 cfg.leg_radius * 1.1f,       cfg.leg_radius * 1.1f, 3, body);
+                append_bone_cage(v, b[(int)J::L_UPPER_LEG],   jt[(int)J::L_LOWER_LEG],
+                                 cfg.leg_radius,              cfg.leg_radius, 3, body);
+                append_bone_cage(v, b[(int)J::L_LOWER_LEG],   jt[(int)J::L_FOOT],
+                                 cfg.leg_radius,              cfg.leg_radius * 0.8f, 3, body);
+                append_bone_cage(v, b[(int)J::L_FOOT],        jt[(int)J::L_TOE],
+                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 3, body);
+
+                // --- RIGHT LEG (4 segments, 3-sided) ---
+                append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::R_UPPER_LEG],
+                                 cfg.leg_radius * 1.1f,       cfg.leg_radius * 1.1f, 3, body);
+                append_bone_cage(v, b[(int)J::R_UPPER_LEG],   jt[(int)J::R_LOWER_LEG],
+                                 cfg.leg_radius,              cfg.leg_radius, 3, body);
+                append_bone_cage(v, b[(int)J::R_LOWER_LEG],   jt[(int)J::R_FOOT],
+                                 cfg.leg_radius,              cfg.leg_radius * 0.8f, 3, body);
+                append_bone_cage(v, b[(int)J::R_FOOT],        jt[(int)J::R_TOE],
+                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 3, body);
+
+                // --- LEFT ARM (4 segments, 3-sided) ---
+                append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::L_CLAVICLE],
+                                 cfg.arm_radius * 1.4f,       cfg.arm_radius * 1.4f, 3, body);
+                append_bone_cage(v, b[(int)J::L_CLAVICLE],    jt[(int)J::L_UPPER_ARM],
+                                 cfg.arm_radius * 1.4f,       cfg.arm_radius, 3, body);
+                append_bone_cage(v, b[(int)J::L_UPPER_ARM],   jt[(int)J::L_LOWER_ARM],
+                                 cfg.arm_radius,              cfg.arm_radius, 3, body);
+                append_bone_cage(v, b[(int)J::L_LOWER_ARM],   jt[(int)J::L_HAND],
+                                 cfg.arm_radius,              cfg.arm_radius * 0.75f, 3, body);
+
+                // --- RIGHT ARM (4 segments, 3-sided) ---
+                append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::R_CLAVICLE],
+                                 cfg.arm_radius * 1.4f,       cfg.arm_radius * 1.4f, 3, body);
+                append_bone_cage(v, b[(int)J::R_CLAVICLE],    jt[(int)J::R_UPPER_ARM],
+                                 cfg.arm_radius * 1.4f,       cfg.arm_radius, 3, body);
+                append_bone_cage(v, b[(int)J::R_UPPER_ARM],   jt[(int)J::R_LOWER_ARM],
+                                 cfg.arm_radius,              cfg.arm_radius, 3, body);
+                append_bone_cage(v, b[(int)J::R_LOWER_ARM],   jt[(int)J::R_HAND],
+                                 cfg.arm_radius,              cfg.arm_radius * 0.75f, 3, body);
+            });
+        });
+
+    // =========================================================================
+    // 9. AnimationLogSystem
+    //    JSONL frame telemetry — runs after MeshGenerationSystem.
     // =========================================================================
     ecs.system("AnimationLogSystem")
         .kind(flecs::PostUpdate)

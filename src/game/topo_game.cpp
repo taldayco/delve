@@ -142,7 +142,9 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
           const auto *t = player_entity.get<Transform>();
           if (t) {
             camera_system.follow(camera, t->x, t->y);
-            camera.follow_z = t->z;
+            const auto *pose = player_entity.get<RigPose>();
+            float chest_z = pose ? pose->joints[(int)Joint::CHEST].z : t->z;
+            camera.follow_z = chest_z;
           }
         }
 

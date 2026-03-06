@@ -14,26 +14,6 @@
 // File-scope animation config — single instance shared by GaitSystem and RigRenderer.
 static const AnimationConfig s_anim_cfg{};
 
-struct IsoCompensation {
-    float width_scale;
-    float equator_t;
-    float radial_z_comp;
-};
-
-static IsoCompensation iso_compensate_bone(const glm::vec3 &a, const glm::vec3 &b) {
-    glm::vec3 dir = b - a;
-    float len = glm::length(dir);
-    if (len < 1e-5f) return {1.0f, 0.2f, 0.18f};
-    dir /= len;
-    float dot_z = glm::dot(dir, glm::vec3(0.0f, 0.0f, 1.0f));
-    float z_align = fabsf(dot_z);
-    IsoCompensation comp;
-    comp.width_scale   = 1.0f + sqrtf(z_align) * 2.0f;
-    comp.equator_t     = 0.2f + z_align * 0.15f;
-    comp.radial_z_comp = 0.18f + z_align * (1.0f - 0.18f);
-    return comp;
-}
-
 // Extrude a tapered open-ended prism (cage) along a bone.
 // mat_A: start joint transform (col0=Right, col1=Fwd, col2=Up, col3=Pos).
 // pos_B: end joint world position.
@@ -52,12 +32,16 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
     glm::vec3 bone_vec = pos_B - pos_A;
     float bone_len = glm::length(bone_vec);
     if (bone_len < 1e-5f) return;
+    (void)color;
     glm::vec3 bone_dir = bone_vec / bone_len;
+
+    // Shell offset: inflate cage radii so mesh hovers outside debug bones.
+    const float shell_padding = 0.06f;
+    radius_A += shell_padding;
+    radius_B += shell_padding;
 
     segments = std::max(segments, 3);
     segments = std::min(segments, 8);
-
-    IsoCompensation comp = iso_compensate_bone(pos_A, pos_B);
 
     constexpr int MAX_SIDES = 8;
     constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
@@ -69,14 +53,14 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
         float ca = cosf(angle), sa = sinf(angle);
         glm::vec3 dir = bone_right * ca + bone_fwd * sa;
 
-        glm::vec3 off_A = dir * radius_A;
-        off_A.z *= comp.radial_z_comp;
-        ring_A[i] = pos_A + off_A;
-
-        glm::vec3 off_B = dir * radius_B;
-        off_B.z *= comp.radial_z_comp;
-        ring_B[i] = pos_B + off_B;
+        ring_A[i] = pos_A + dir * radius_A;
+        ring_B[i] = pos_B + dir * radius_B;
     }
+
+    // Neon cyan override + centroid shrink for lattice gaps
+    constexpr float net_r = 0.0f, net_g = 1.0f, net_b = 1.0f;
+    constexpr float net_sheen = 0.3f;
+    constexpr float SHRINK = 0.8f; // 20% shrink toward centroid
 
     for (int i = 0; i < segments; ++i) {
         int j = (i + 1) % segments;
@@ -86,23 +70,33 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
         glm::vec3 p01 = ring_B[i];
         glm::vec3 p11 = ring_B[j];
 
+        // Face normal from ORIGINAL (un-shrunk) quad
         glm::vec3 cross_val = glm::cross(p10 - p00, p01 - p00);
         float cross_len = glm::length(cross_val);
         glm::vec3 face_n = (cross_len > 1e-7f)
                                ? (cross_val / cross_len)
                                : bone_dir;
 
-        auto push = [&](const glm::vec3 &pos) {
-            BasaltVertex v;
-            v.pos_x   = pos.x;  v.pos_y   = pos.y;  v.pos_z   = pos.z;
-            v.color_r = color.x; v.color_g = color.y; v.color_b = color.z;
-            v.sheen   = color.w;
-            v.nx = face_n.x; v.ny = face_n.y; v.nz = face_n.z;
-            verts.push_back(v);
+        // Emit one triangle shrunk toward its centroid
+        auto push_tri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2) {
+            glm::vec3 centroid = (v0 + v1 + v2) / 3.0f;
+            v0 = centroid + (v0 - centroid) * SHRINK;
+            v1 = centroid + (v1 - centroid) * SHRINK;
+            v2 = centroid + (v2 - centroid) * SHRINK;
+
+            auto emit = [&](const glm::vec3 &pos) {
+                BasaltVertex bv;
+                bv.pos_x   = pos.x;  bv.pos_y   = pos.y;  bv.pos_z   = pos.z;
+                bv.color_r = net_r;   bv.color_g = net_g;   bv.color_b = net_b;
+                bv.sheen   = net_sheen;
+                bv.nx = face_n.x; bv.ny = face_n.y; bv.nz = face_n.z;
+                verts.push_back(bv);
+            };
+            emit(v0); emit(v1); emit(v2);
         };
 
-        push(p00); push(p10); push(p01);
-        push(p10); push(p11); push(p01);
+        push_tri(p00, p10, p01);
+        push_tri(p10, p11, p01);
     }
 }
 

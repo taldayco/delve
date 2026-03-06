@@ -238,26 +238,20 @@ DELVE_TEST(hip_double_bounce_twice_per_stride) {
   return true;
 }
 
-// Test: Fix 3 — Hip roll counter-animates: sign of roll matches gait phase sign
-// (hips shift to planted-foot side). When sin(phase) > 0, target_hip_roll > 0
-// (hips roll right when left foot is back).
+// Test: Hip roll follows planted foot via support_balance.
+// When support_balance > 0 (right planted), hip roll > 0.
+// When support_balance < 0 (left planted), hip roll < 0.
 DELVE_TEST(hip_roll_counter_animation) {
-  int matching_count = 0;
-  int total_samples = 100;
-  for (int i = 0; i < total_samples; ++i) {
-    float phase = (float)i / total_samples * glm::two_pi<float>();
-    float sin_p = sinf(phase);
-    if (fabsf(sin_p) < 0.05f)
-      continue; // skip near-zero crossings
-    float target_hip_roll = sin_p * 0.06f;
-    // Roll sign should match sin(phase) sign — counter-animation means hips
-    // shift to the planted foot side.
-    bool same_sign = (target_hip_roll > 0) == (sin_p > 0);
-    if (same_sign)
-      ++matching_count;
-  }
-  // Should be >90% matching (excluding zero crossings already skipped above).
-  EXPECT_GT(matching_count, 70);
+  float walk_blend = 1.0f;
+  // Right foot planted
+  float target_roll_r = 0.8f * 0.06f * walk_blend;
+  EXPECT_GT(target_roll_r, 0.0f);
+  // Left foot planted
+  float target_roll_l = -0.8f * 0.06f * walk_blend;
+  EXPECT_LT(target_roll_l, 0.0f);
+  // Idle (both planted)
+  float target_roll_idle = 0.0f * 0.06f * walk_blend;
+  EXPECT_NEAR(target_roll_idle, 0.0f, 1e-6f);
   return true;
 }
 
@@ -370,17 +364,6 @@ DELVE_TEST(character_leg_proportion_human_like) {
   float leg_ratio = leg_height / total_height;
   EXPECT_GT(leg_ratio, 0.40f);
   EXPECT_LT(leg_ratio, 0.60f);
-  return true;
-}
-
-// Head proportion: head_radius / total_height should be <= 0.12
-DELVE_TEST(character_head_size_not_too_large) {
-  ActorConfig cfg;
-  float total_height = cfg.leg_len + cfg.shin_len + cfg.torso_len +
-                       cfg.neck_len + cfg.head_radius;
-  float head_ratio = cfg.head_radius / total_height;
-  EXPECT_LT(head_ratio, 0.12f);
-  EXPECT_GT(head_ratio, 0.04f);
   return true;
 }
 

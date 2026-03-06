@@ -36,6 +36,8 @@ struct ActorConfig {
 
 struct ProceduralGait {
     float phase         = 0.0f;
+    float phase_target  = 0.0f;   // discrete target set by step events
+    float phase_rate    = 0.0f;   // smooth_damp derivative for phase blending
     float stride_len    = 0.85f;
     float step_height   = 0.16f;   // proportional to stride length
     float step_duration = 0.25f;
@@ -107,6 +109,8 @@ struct LegState {
 
     // Turn-aware step priority (-1 = none)
     int       turn_step_queued = -1;
+
+    int       last_step_leg = -1;  // Which leg stepped most recently (-1 = none yet)
 };
 
 // All mutable per-actor animation state. Lives in ECS so it's copyable and
@@ -116,9 +120,9 @@ struct RigState {
     glm::vec3 smooth_velocity{0.0f};   // current smoothed velocity
     glm::vec3 velocity_rate{0.0f};     // SmoothDamp internal derivative state
 
-    // --- Hip sway (was s_sway_phase / s_sway_amt) ---
-    float sway_phase  = 0.0f;
-    float sway_amount = 0.04f;
+    // --- Leg-driven support balance ---
+    float support_balance      = 0.0f;  // [-1,+1]: -1=left planted, +1=right planted
+    float support_balance_rate = 0.0f;  // smooth_damp derivative
 
     // --- Torso lean (was s_lean_x / s_lean_y) ---
     // Smoothed lean values per spine segment (successive breaking)

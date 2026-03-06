@@ -52,7 +52,7 @@ static void solve_two_bone(glm::vec3 H, glm::vec3 target,
     glm::vec3 axis = target - H;
     float D = glm::length(axis);
     float min_D = fabsf(a - b) + 0.001f;
-    float max_D = a + b - 0.005f;
+    float max_D = a + b - 0.001f;
 
     float stretch_limit = max_D * 1.15f;
     if (D > stretch_limit && D > 1e-5f)
@@ -271,10 +271,12 @@ void register_rig_systems(flecs::world &ecs,
                 constexpr float SWING_RATE = 2.7f; // rad/s per unit speed
                 gait.phase += speed * dt * SWING_RATE;
 
-                float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
+                (void)0; // rght_x/rght_y removed — unified basis below
 
-                // Visual-facing right vector for hip placement (smoothed, prevents leg crossing)
-                float vf_rght_x = -sinf(anim.visual_facing), vf_rght_y = cosf(anim.visual_facing);
+                // Unified right vector derived from step direction (orthogonal to travel).
+                // This ensures hip offsets and half-space math use the same basis as
+                // foot placement, preventing asymmetric reach during turns.
+                float step_rght_x = -step_dy, step_rght_y = step_dx;
 
                 // Hip socket XY offsets (legs offset left/right of facing).
                 float hip_sign[2] = { -1.0f, 1.0f }; // left, right
@@ -289,22 +291,30 @@ void register_rig_systems(flecs::world &ecs,
                 float speed_factor = std::min(1.0f, speed / (gait.move_speed * 0.15f));
                 speed_factor *= (1.0f - turn_urgency * 0.5f);  // reduce forward prediction during pivots
 
-                // Turn-aware step sequencing: trailing foot steps first
+                // Turn-aware step sequencing: trailing foot steps first.
+                // Use the unified step basis (step_dx/dy) for consistent behind calculation.
                 if (turn_urgency > 0.4f && !legs.stepping[0] && !legs.stepping[1]) {
                     float behind[2];
                     for (int i = 0; i < 2; ++i) {
                         float fx = legs.foot[i].x - t.x;
                         float fy = legs.foot[i].y - t.y;
-                        behind[i] = fx * vf_fwd_x + fy * vf_fwd_y;
+                        behind[i] = fx * step_dx + fy * step_dy;
                     }
                     legs.turn_step_queued = (behind[0] < behind[1]) ? 0 : 1;
+                }
+                // Starvation guard: if turn_urgency drops below threshold while a
+                // step is queued but neither leg is stepping, reset the queue so the
+                // blocked leg isn't permanently locked out by floating-point drift.
+                if (turn_urgency <= 0.4f && legs.turn_step_queued >= 0
+                    && !legs.stepping[0] && !legs.stepping[1]) {
+                    legs.turn_step_queued = -1;
                 }
 
                 for (int leg = 0; leg < 2; ++leg) {
                     int other_leg = 1 - leg;
 
-                    float hip_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
-                    float hip_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width;
+                    float hip_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width;
+                    float hip_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width;
 
                     // Trigger check: how far the planted foot is from nominal center.
                     // When idle, center collapses to hip position (no forward offset)
@@ -343,10 +353,10 @@ void register_rig_systems(flecs::world &ecs,
                             float tgt_y = hip_y + step_dy * target_off;
 
                             // Half-space clamp: keep target on correct side of center line
-                            float tgt_lat = (tgt_x - t.x) * vf_rght_x + (tgt_y - t.y) * vf_rght_y;
-                            if ((hip_sign[leg] < 0 && tgt_lat > 0) || (hip_sign[leg] > 0 && tgt_lat < 0)) {
-                                tgt_x -= vf_rght_x * tgt_lat - vf_rght_x * hip_sign[leg] * 0.05f;
-                                tgt_y -= vf_rght_y * tgt_lat - vf_rght_y * hip_sign[leg] * 0.05f;
+                            float tgt_lat = (tgt_x - t.x) * step_rght_x + (tgt_y - t.y) * step_rght_y;
+                            if ((hip_sign[leg] < 0 && tgt_lat > 0.02f) || (hip_sign[leg] > 0 && tgt_lat < -0.02f)) {
+                                tgt_x -= step_rght_x * (tgt_lat - hip_sign[leg] * 0.05f);
+                                tgt_y -= step_rght_y * (tgt_lat - hip_sign[leg] * 0.05f);
                             }
 
                             float tgt_z = sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius);
@@ -395,16 +405,18 @@ void register_rig_systems(flecs::world &ecs,
                 // ---- Half-space constraint: force corrective step if foot crossed center line ----
                 for (int leg = 0; leg < 2; ++leg) {
                     if (legs.stepping[leg] || legs.stepping[1 - leg]) continue;
-                    float lat = (legs.foot[leg].x - t.x) * vf_rght_x
-                              + (legs.foot[leg].y - t.y) * vf_rght_y;
+                    float lat = (legs.foot[leg].x - t.x) * step_rght_x
+                              + (legs.foot[leg].y - t.y) * step_rght_y;
+                    // Symmetrical threshold: left (hip_sign=-1) must be on left (lat<0),
+                    // right (hip_sign=+1) must be on right (lat>0).
                     bool crossed = (hip_sign[leg] < 0) ? (lat > 0.02f) : (lat < -0.02f);
                     if (crossed) {
                         legs.stepping[leg] = true;
                         legs.progress[leg] = 0.0f;
                         legs.prev_foot[leg] = legs.foot[leg];
-                        float tgt_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width
+                        float tgt_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width
                                      + step_dx * gait.stride_len * 0.15f * speed_factor;
-                        float tgt_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width
+                        float tgt_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width
                                      + step_dy * gait.stride_len * 0.15f * speed_factor;
                         legs.target[leg] = {tgt_x, tgt_y,
                             sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius)};
@@ -414,8 +426,8 @@ void register_rig_systems(flecs::world &ecs,
                 // ---- Planted-foot world-lock & reach clamp ----
                 float max_horiz = gait.stride_len * 0.9f;
                 for (int leg = 0; leg < 2; ++leg) {
-                    float hip_x = t.x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
-                    float hip_y = t.y + vf_rght_y * hip_sign[leg] * cfg.hip_width;
+                    float hip_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width;
+                    float hip_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width;
 
                     if (!legs.stepping[leg]) {
                         // World-lock: restore XY to plant position
@@ -661,23 +673,27 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::R_HAND]      = r_hand;
 
                 // ---- Leg IK — using shared two-bone solver ----
-                glm::vec3 fallback_perp(rght_x, rght_y, 0.0f);
+                // Per-leg pole targets and fallback perpendiculars use a guaranteed
+                // orthogonal basis. The outward flare is symmetrical: left knee
+                // bends slightly outward-left, right knee outward-right.
 
-                // Left leg.
+                // Left leg: fallback pushes knee outward (−right = left)
+                glm::vec3 l_fallback(-rght_x, -rght_y, 0.0f);
                 glm::vec3 l_pole = l_upper_leg + glm::vec3(fwd_x * 0.5f - rght_x * 0.08f,
                                                              fwd_y * 0.5f - rght_y * 0.08f, 0.2f);
                 glm::vec3 l_lower_leg, l_foot;
                 solve_two_bone(l_upper_leg, legs.foot[0], cfg.leg_len, cfg.shin_len,
-                               l_pole, fallback_perp, l_lower_leg, l_foot);
+                               l_pole, l_fallback, l_lower_leg, l_foot);
                 pose.joints[(int)J::L_LOWER_LEG] = l_lower_leg;
                 pose.joints[(int)J::L_FOOT]      = l_foot;
 
-                // Right leg.
+                // Right leg: fallback pushes knee outward (+right)
+                glm::vec3 r_fallback(rght_x, rght_y, 0.0f);
                 glm::vec3 r_pole = r_upper_leg + glm::vec3(fwd_x * 0.5f + rght_x * 0.08f,
                                                              fwd_y * 0.5f + rght_y * 0.08f, 0.2f);
                 glm::vec3 r_lower_leg, r_foot;
                 solve_two_bone(r_upper_leg, legs.foot[1], cfg.leg_len, cfg.shin_len,
-                               r_pole, fallback_perp, r_lower_leg, r_foot);
+                               r_pole, r_fallback, r_lower_leg, r_foot);
                 pose.joints[(int)J::R_LOWER_LEG] = r_lower_leg;
                 pose.joints[(int)J::R_FOOT]      = r_foot;
             });
@@ -859,9 +875,16 @@ void register_rig_systems(flecs::world &ecs,
                                                    * (foot_diff > 0 ? 1.0f : -1.0f) * 0.1f;
                 }
 
-                // ---- CoM hip sway ----
-                anim.sway_phase += speed * dt * 6.0f;
-                float sway = sinf(anim.sway_phase) * anim.sway_amount;
+                // ---- CoM hip sway (leg-driven) ----
+                // Target: shift toward planted foot (-1 left, +1 right)
+                float balance_target = 0.0f;
+                if (legs) {
+                    if (legs->stepping[0] && !legs->stepping[1]) balance_target =  1.0f;
+                    else if (legs->stepping[1] && !legs->stepping[0]) balance_target = -1.0f;
+                }
+                anim.support_balance = smooth_damp(anim.support_balance, balance_target,
+                                                    &anim.support_balance_rate, 0.08f, dt);
+                float sway = anim.support_balance * 0.04f;
                 glm::vec3 sway_vec(rght_x * sway, rght_y * sway, 0.0f);
                 pose.joints[(int)J::HIPS]     += sway_vec;
                 pose.joints[(int)J::SPINE_01] += sway_vec;
@@ -1094,7 +1117,7 @@ void register_rig_systems(flecs::world &ecs,
             anim_log.log_gait(*gait);
             anim_log.log_legs(*legs, *t, *cfg);
             anim_log.log_joints(*pose, *t);
-            anim_log.log_finalize(anim->sway_phase, anim->sway_amount,
+            anim_log.log_finalize(anim->support_balance,
                                    anim->lean_x, anim->lean_y);
             anim_log.log_camera(camera);
             anim_log.log_dynamics(*anim, *vel, dt);

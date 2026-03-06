@@ -188,17 +188,16 @@ public:
             cam.world_x, cam.world_y, cam.zoom, cam.following ? "true" : "false");
     }
 
-    void log_finalize(float sway_phase, float sway_amount, float lean_x, float lean_y) {
+    void log_finalize(float support_balance, float lean_x, float lean_y) {
         if (!active || !file) return;
-        float sway_displacement = sinf(sway_phase) * sway_amount;
+        float sway_displacement = support_balance * 0.04f;
         fprintf(file,
             ",\"finalize\":{"
-            "\"sway_phase\":%.4f,"
-            "\"sway_amount\":%.4f,"
             "\"sway_displacement\":%.4f,"
+            "\"support_balance\":%.4f,"
             "\"lean_x\":%.4f,\"lean_y\":%.4f,"
             "\"lean_magnitude\":%.4f}",
-            sway_phase, sway_amount, sway_displacement,
+            sway_displacement, support_balance,
             lean_x, lean_y,
             sqrtf(lean_x * lean_x + lean_y * lean_y));
     }

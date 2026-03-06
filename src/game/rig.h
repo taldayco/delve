@@ -100,6 +100,13 @@ struct LegState {
     glm::vec3 target[2]    = {};
     float     progress[2]  = {};
     bool      stepping[2]  = {};
+
+    // World-locked plant positions
+    glm::vec3 plant_pos[2] = {};
+    bool      planted[2]   = {};
+
+    // Turn-aware step priority (-1 = none)
+    int       turn_step_queued = -1;
 };
 
 // All mutable per-actor animation state. Lives in ECS so it's copyable and
@@ -166,6 +173,10 @@ struct RigState {
     float hip_bob       = 0.0f;  // vertical double-bounce offset (world units)
     float hip_bob_rate  = 0.0f;  // smooth_damp derivative
 
+    // --- Step-event hip dip ---
+    float hip_dip      = 0.0f;  // vertical dip during foot transition (world units)
+    float hip_dip_rate = 0.0f;  // smooth_damp derivative
+
     // --- Slope-driven hip tilt (Phase 1C) ---
     float hip_tilt      = 0.0f;  // lateral tilt from foot height diff (radians)
     float hip_tilt_rate = 0.0f;  // smooth_damp derivative
@@ -179,6 +190,16 @@ struct RigState {
     // --- Visual body orientation (decoupled from t.facing for smooth turns) ---
     float visual_facing      = 0.0f;  // smoothed body orientation (radians)
     float visual_facing_rate = 0.0f;  // smooth_damp derivative
+
+    // --- Turn detection state ---
+    float turn_delta       = 0.0f;  // signed: t.facing - visual_facing, wrapped [-PI,PI]
+    float turn_magnitude   = 0.0f;  // abs(turn_delta), [0, PI]
+    float turn_urgency     = 0.0f;  // turn_magnitude / PI, [0, 1]
+    bool  in_large_turn    = false; // hysteresis flag (enter > 60°, exit < 20°)
+
+    // --- Chest counter-rotation ---
+    float chest_facing      = 0.0f;  // smoothed upper-body orientation (lags visual_facing)
+    float chest_facing_rate = 0.0f;  // smooth_damp derivative
 };
 
 // Hip counter-animation state for rendering pass.

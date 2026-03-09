@@ -200,6 +200,60 @@ TextureHandle upload_pixels_to_texture(SDL_GPUDevice *device,
   return { texture, sampler, width, height };
 }
 
+TextureHandle upload_rgba_texture(SDL_GPUDevice *device,
+                                  const uint8_t *pixels, int width,
+                                  int height, bool srgb) {
+  SDL_GPUTextureCreateInfo tex_info = {};
+  tex_info.type                 = SDL_GPU_TEXTURETYPE_2D;
+  tex_info.format               = srgb ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB
+                                       : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+  tex_info.width                = (uint32_t)width;
+  tex_info.height               = (uint32_t)height;
+  tex_info.layer_count_or_depth = 1;
+  tex_info.num_levels           = 1;
+  tex_info.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+
+  SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &tex_info);
+  if (!texture) return {};
+
+  SDL_GPUTransferBufferCreateInfo ti = {};
+  ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  ti.size  = (uint32_t)(width * height * 4);
+  SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &ti);
+  if (!transfer) { SDL_ReleaseGPUTexture(device, texture); return {}; }
+
+  void *data = SDL_MapGPUTransferBuffer(device, transfer, false);
+  if (!data) {
+    SDL_ReleaseGPUTransferBuffer(device, transfer);
+    SDL_ReleaseGPUTexture(device, texture);
+    return {};
+  }
+  SDL_memcpy(data, pixels, ti.size);
+  SDL_UnmapGPUTransferBuffer(device, transfer);
+
+  SDL_GPUCommandBuffer *cmd   = SDL_AcquireGPUCommandBuffer(device);
+  SDL_GPUCopyPass      *pass  = SDL_BeginGPUCopyPass(cmd);
+  SDL_GPUTextureTransferInfo src = { transfer, 0 };
+  SDL_GPUTextureRegion       dst = { texture, 0, 0, 0, 0, (uint32_t)width, (uint32_t)height, 1 };
+  SDL_UploadToGPUTexture(pass, &src, &dst, false);
+  SDL_EndGPUCopyPass(pass);
+  SDL_SubmitGPUCommandBuffer(cmd);
+  SDL_WaitForGPUIdle(device);
+  SDL_ReleaseGPUTransferBuffer(device, transfer);
+
+  SDL_GPUSamplerCreateInfo si = {};
+  si.min_filter        = SDL_GPU_FILTER_LINEAR;
+  si.mag_filter        = SDL_GPU_FILTER_LINEAR;
+  si.mipmap_mode       = SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
+  si.address_mode_u    = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  si.address_mode_v    = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  si.address_mode_w    = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+  SDL_GPUSampler *sampler = SDL_CreateGPUSampler(device, &si);
+  if (!sampler) { SDL_ReleaseGPUTexture(device, texture); return {}; }
+
+  return { texture, sampler, width, height };
+}
+
 void UploadManager::init(SDL_GPUDevice *device, uint32_t size) {
   capacity = size;
   cursor   = 0;

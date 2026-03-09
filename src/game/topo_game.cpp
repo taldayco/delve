@@ -1,4 +1,5 @@
 #include "topo_game.h"
+#include "core/gltf_loader.h"
 #include "render/rig_animation.h"
 #include "terrain/basalt.h"
 #include "terrain/lava.h"
@@ -203,6 +204,15 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (ready_mesh_pending) {
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
+    // Build instanced terrain data from columns
+    if (ready_map_pending && !ready_map_pending->columns.empty()) {
+      auto *ts = ecs.get<TerrainState>();
+      if (ts) {
+        instanced_terrain.build_instances(ready_map_pending->columns, *ts);
+        instanced_terrain.upload(gpu.device);
+      }
+    }
+
     auto *map_data = ecs.get_mut<MapData>();
     auto *contours = ecs.get_mut<ContourData>();
 
@@ -295,6 +305,25 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
 void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world &ecs) {
   if (!terrain_renderer.is_initialized()) {
     terrain_renderer.init(gpu.device, gpu.game_window, asset_manager);
+    terrain_renderer.instanced_terrain = &instanced_terrain;
+
+    // Load glTF column mesh for instanced terrain
+    if (!gltf_column_loaded) {
+      GltfAsset column_asset = load_gltf(std::string(ASSET_DIR) + "/meshes/basalt_column.glb");
+      if (column_asset.ok && !column_asset.meshes.empty()) {
+        auto &mesh = column_asset.meshes[0];
+        terrain_renderer.upload_gltf_column_mesh(gpu.device,
+            mesh.vertices.data(), mesh.vertices.size() * sizeof(GltfVertex),
+            mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t),
+            mesh.indices.size());
+        gltf_column_loaded = true;
+        SDL_Log("Loaded basalt column mesh: %zu verts, %zu indices",
+                mesh.vertices.size(), mesh.indices.size());
+      } else {
+        SDL_Log("Failed to load basalt column: %s", column_asset.error.c_str());
+      }
+    }
+
     background_renderer.init(gpu.device,
                              SDL_GetGPUSwapchainTextureFormat(gpu.device, gpu.game_window),
                              terrain_renderer.get_depth_format(),
@@ -487,6 +516,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 void TopoGame::on_cleanup(flecs::world &ecs) {
   anim_log.close();
   task_system.shutdown();
+  instanced_terrain.cleanup(gpu_ctx.device);
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
   rig_renderer.cleanup(gpu_ctx.device);
@@ -597,6 +627,11 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Text("Map Scale");
   ImGui::SliderFloat("Map Scale", &ts->map_scale, 0.25f, 4.0f);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
+
+  ImGui::Separator();
+  ImGui::Text("Rendering Mode");
+  ImGui::Checkbox("Use Instanced Terrain", &terrain_renderer.use_instanced);
+  ImGui::Checkbox("Use PBR Shading", &terrain_renderer.use_pbr);
 
   ImGui::Separator();
   if (ImGui::Button("Regenerate", {-1, 40})) ts->need_regenerate = true;

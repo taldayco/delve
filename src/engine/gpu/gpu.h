@@ -52,6 +52,9 @@ void release_texture(SDL_GPUDevice *device, const TextureHandle &handle);
 TextureHandle upload_pixels_to_texture(SDL_GPUDevice *device,
                                        const uint32_t *pixels, int width,
                                        int height);
+TextureHandle upload_rgba_texture(SDL_GPUDevice *device,
+                                  const uint8_t *pixels, int width,
+                                  int height, bool srgb);
 
 // GPU buffer utilities (used by terrain renderer and any other subsystem)
 SDL_GPUBuffer *gpu_create_buffer(SDL_GPUDevice *device, uint32_t size,

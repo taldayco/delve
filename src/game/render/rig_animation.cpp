@@ -14,7 +14,69 @@
 // File-scope animation config — single instance shared by GaitSystem and RigRenderer.
 static const AnimationConfig s_anim_cfg{};
 
-// Extrude a tapered open-ended prism (cage) along a bone.
+// Draw a 3-sided triangular prism (wireframe strut) between two points.
+// Produces 18 vertices (3 quad faces, each split into 2 triangles).
+static void emit_strut(std::vector<BasaltVertex> &verts,
+                       const glm::vec3 &pA, const glm::vec3 &pB,
+                       float thickness) {
+    glm::vec3 seg = pB - pA;
+    float len = glm::length(seg);
+    if (len < 1e-5f) return;
+    glm::vec3 dir = seg / len;
+
+    // Stable perpendicular basis — fallback when dir is near-parallel to Z.
+    glm::vec3 right;
+    if (fabsf(glm::dot(dir, glm::vec3(0.0f, 0.0f, 1.0f))) < 0.99f)
+        right = glm::normalize(glm::cross(glm::vec3(0.0f, 0.0f, 1.0f), dir));
+    else
+        right = glm::normalize(glm::cross(glm::vec3(1.0f, 0.0f, 0.0f), dir));
+    glm::vec3 fwd = glm::cross(dir, right);
+
+    // 3-sided ring offsets at 0°, 120°, 240°.
+    constexpr int SIDES = 3;
+    constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
+    glm::vec3 ring_A[SIDES], ring_B[SIDES];
+    for (int i = 0; i < SIDES; ++i) {
+        float angle = (float)i * (TWO_PI / (float)SIDES);
+        glm::vec3 offset = (right * cosf(angle) + fwd * sinf(angle)) * thickness;
+        ring_A[i] = pA + offset;
+        ring_B[i] = pB + offset;
+    }
+
+    // Hardcoded neon cyan with sheen 0.3.
+    constexpr float cr = 0.0f, cg = 1.0f, cb = 1.0f;
+    constexpr float sheen = 0.3f;
+
+    auto push = [&](const glm::vec3 &pos, const glm::vec3 &n) {
+        BasaltVertex bv;
+        bv.pos_x   = pos.x;  bv.pos_y   = pos.y;  bv.pos_z   = pos.z;
+        bv.color_r = cr;      bv.color_g = cg;      bv.color_b = cb;
+        bv.sheen   = sheen;
+        bv.nx = n.x; bv.ny = n.y; bv.nz = n.z;
+        verts.push_back(bv);
+    };
+
+    // Emit 3 quad faces (6 triangles, 18 vertices).
+    for (int i = 0; i < SIDES; ++i) {
+        int j = (i + 1) % SIDES;
+
+        glm::vec3 p00 = ring_A[i];
+        glm::vec3 p10 = ring_A[j];
+        glm::vec3 p01 = ring_B[i];
+        glm::vec3 p11 = ring_B[j];
+
+        // Flat-shaded face normal.
+        glm::vec3 cross_val = glm::cross(p10 - p00, p01 - p00);
+        float cross_len = glm::length(cross_val);
+        glm::vec3 face_n = (cross_len > 1e-7f) ? (cross_val / cross_len) : dir;
+
+        // Two triangles per quad.
+        push(p00, face_n); push(p10, face_n); push(p01, face_n);
+        push(p10, face_n); push(p11, face_n); push(p01, face_n);
+    }
+}
+
+// Emit wireframe struts forming a tapered cage along a bone.
 // mat_A: start joint transform (col0=Right, col1=Fwd, col2=Up, col3=Pos).
 // pos_B: end joint world position.
 // radius_A/radius_B: cross-section radii at start/end (allows tapering).
@@ -33,12 +95,6 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
     float bone_len = glm::length(bone_vec);
     if (bone_len < 1e-5f) return;
     (void)color;
-    glm::vec3 bone_dir = bone_vec / bone_len;
-
-    // Shell offset: inflate cage radii so mesh hovers outside debug bones.
-    const float shell_padding = 0.06f;
-    radius_A += shell_padding;
-    radius_B += shell_padding;
 
     segments = std::max(segments, 3);
     segments = std::min(segments, 8);
@@ -57,46 +113,16 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
         ring_B[i] = pos_B + dir * radius_B;
     }
 
-    // Neon cyan override + centroid shrink for lattice gaps
-    constexpr float net_r = 0.0f, net_g = 1.0f, net_b = 1.0f;
-    constexpr float net_sheen = 0.3f;
-    constexpr float SHRINK = 0.8f; // 20% shrink toward centroid
+    constexpr float STRUT_THICKNESS = 0.003f;
 
     for (int i = 0; i < segments; ++i) {
         int j = (i + 1) % segments;
-
-        glm::vec3 p00 = ring_A[i];
-        glm::vec3 p10 = ring_A[j];
-        glm::vec3 p01 = ring_B[i];
-        glm::vec3 p11 = ring_B[j];
-
-        // Face normal from ORIGINAL (un-shrunk) quad
-        glm::vec3 cross_val = glm::cross(p10 - p00, p01 - p00);
-        float cross_len = glm::length(cross_val);
-        glm::vec3 face_n = (cross_len > 1e-7f)
-                               ? (cross_val / cross_len)
-                               : bone_dir;
-
-        // Emit one triangle shrunk toward its centroid
-        auto push_tri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2) {
-            glm::vec3 centroid = (v0 + v1 + v2) / 3.0f;
-            v0 = centroid + (v0 - centroid) * SHRINK;
-            v1 = centroid + (v1 - centroid) * SHRINK;
-            v2 = centroid + (v2 - centroid) * SHRINK;
-
-            auto emit = [&](const glm::vec3 &pos) {
-                BasaltVertex bv;
-                bv.pos_x   = pos.x;  bv.pos_y   = pos.y;  bv.pos_z   = pos.z;
-                bv.color_r = net_r;   bv.color_g = net_g;   bv.color_b = net_b;
-                bv.sheen   = net_sheen;
-                bv.nx = face_n.x; bv.ny = face_n.y; bv.nz = face_n.z;
-                verts.push_back(bv);
-            };
-            emit(v0); emit(v1); emit(v2);
-        };
-
-        push_tri(p00, p10, p01);
-        push_tri(p10, p11, p01);
+        // Longitudinal struts (along bone axis)
+        emit_strut(verts, ring_A[i], ring_B[i], STRUT_THICKNESS);
+        // Circumferential hoops at start ring
+        emit_strut(verts, ring_A[i], ring_A[j], STRUT_THICKNESS);
+        // Circumferential hoops at end ring
+        emit_strut(verts, ring_B[i], ring_B[j], STRUT_THICKNESS);
     }
 }
 
@@ -1365,7 +1391,8 @@ void register_rig_systems(flecs::world &ecs,
                     glm::vec3(-chest_fwd.x, -chest_fwd.y, 0.0f), false);
 
                 // --- D. Clavicles ---
-                auto compute_clavicle = [&](Joint clav, Joint upper_arm) {
+                auto compute_clavicle = [&](Joint clav, Joint upper_arm,
+                                            const glm::vec3 &ref) {
                     glm::vec3 bone_dir = jt[(int)upper_arm] - jt[(int)clav];
                     float blen = glm::length(bone_dir);
                     if (blen < 1e-5f) {
@@ -1374,12 +1401,12 @@ void register_rig_systems(flecs::world &ecs,
                         xforms.bones[(int)clav] = m;
                     } else {
                         glm::vec3 right, fwd, up;
-                        build_bone_basis(bone_dir, chest_fwd, right, fwd, up);
+                        build_bone_basis(bone_dir, ref, right, fwd, up);
                         xforms.bones[(int)clav] = make_bone_mat4(right, fwd, up, jt[(int)clav]);
                     }
                 };
-                compute_clavicle(J::L_CLAVICLE, J::L_UPPER_ARM);
-                compute_clavicle(J::R_CLAVICLE, J::R_UPPER_ARM);
+                compute_clavicle(J::L_CLAVICLE, J::L_UPPER_ARM, chest_fwd);
+                compute_clavicle(J::R_CLAVICLE, J::R_UPPER_ARM, -chest_fwd);
 
                 // --- E. IK Virtual Joints (identity rotation at position) ---
                 static constexpr Joint ik_joints[] = {
@@ -1422,61 +1449,61 @@ void register_rig_systems(flecs::world &ecs,
 
                 glm::vec4 body(0.55f, 0.52f, 0.48f, 0.1f);  // warm grey, low sheen
 
-                // --- SPINE CHAIN (4 segments, 4-sided) ---
+                // --- SPINE CHAIN (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],     jt[(int)J::SPINE_01],
-                                 cfg.torso_radius * 1.2f, cfg.torso_radius, 4, body);
+                                 cfg.torso_radius * 1.3f, cfg.torso_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::SPINE_01], jt[(int)J::SPINE_02],
-                                 cfg.torso_radius,        cfg.torso_radius, 4, body);
+                                 cfg.torso_radius * 1.0f, cfg.torso_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::SPINE_02], jt[(int)J::CHEST],
-                                 cfg.torso_radius,        cfg.torso_radius * 1.1f, 4, body);
+                                 cfg.torso_radius * 1.0f, cfg.torso_radius * 1.4f, 6, body);
                 append_bone_cage(v, b[(int)J::CHEST],    jt[(int)J::NECK],
-                                 cfg.torso_radius * 0.5f, cfg.head_radius * 0.5f, 4, body);
+                                 cfg.torso_radius * 1.4f, cfg.neck_radius,         6, body);
 
-                // --- HEAD CHAIN (2 segments, 4-sided) ---
+                // --- HEAD CHAIN (2 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::NECK],     jt[(int)J::HEAD],
-                                 cfg.head_radius * 0.4f,  cfg.head_radius * 0.6f, 4, body);
+                                 cfg.head_radius * 0.4f,  cfg.head_radius * 0.6f, 6, body);
                 append_bone_cage(v, b[(int)J::HEAD],     jt[(int)J::HEAD_END],
-                                 cfg.head_radius * 0.6f,  cfg.head_radius * 0.3f, 4, body);
+                                 cfg.head_radius * 0.6f,  cfg.head_radius * 0.3f, 6, body);
 
-                // --- LEFT LEG (4 segments, 3-sided) ---
+                // --- LEFT LEG (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::L_UPPER_LEG],
-                                 cfg.leg_radius * 1.1f,       cfg.leg_radius * 1.1f, 3, body);
+                                 cfg.leg_radius * 1.4f,       cfg.leg_radius * 1.4f, 6, body);
                 append_bone_cage(v, b[(int)J::L_UPPER_LEG],   jt[(int)J::L_LOWER_LEG],
-                                 cfg.leg_radius,              cfg.leg_radius, 3, body);
+                                 cfg.leg_radius * 1.4f,       cfg.leg_radius * 0.9f, 6, body);
                 append_bone_cage(v, b[(int)J::L_LOWER_LEG],   jt[(int)J::L_FOOT],
-                                 cfg.leg_radius,              cfg.leg_radius * 0.8f, 3, body);
+                                 cfg.leg_radius * 0.9f,       cfg.leg_radius * 0.8f, 6, body);
                 append_bone_cage(v, b[(int)J::L_FOOT],        jt[(int)J::L_TOE],
-                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 3, body);
+                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 6, body);
 
-                // --- RIGHT LEG (4 segments, 3-sided) ---
+                // --- RIGHT LEG (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::R_UPPER_LEG],
-                                 cfg.leg_radius * 1.1f,       cfg.leg_radius * 1.1f, 3, body);
+                                 cfg.leg_radius * 1.4f,       cfg.leg_radius * 1.4f, 6, body);
                 append_bone_cage(v, b[(int)J::R_UPPER_LEG],   jt[(int)J::R_LOWER_LEG],
-                                 cfg.leg_radius,              cfg.leg_radius, 3, body);
+                                 cfg.leg_radius * 1.4f,       cfg.leg_radius * 0.9f, 6, body);
                 append_bone_cage(v, b[(int)J::R_LOWER_LEG],   jt[(int)J::R_FOOT],
-                                 cfg.leg_radius,              cfg.leg_radius * 0.8f, 3, body);
+                                 cfg.leg_radius * 0.9f,       cfg.leg_radius * 0.8f, 6, body);
                 append_bone_cage(v, b[(int)J::R_FOOT],        jt[(int)J::R_TOE],
-                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 3, body);
+                                 cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 6, body);
 
-                // --- LEFT ARM (4 segments, 3-sided) ---
+                // --- LEFT ARM (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::L_CLAVICLE],
-                                 cfg.arm_radius * 1.4f,       cfg.arm_radius * 1.4f, 3, body);
+                                 cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.5f, 6, body);
                 append_bone_cage(v, b[(int)J::L_CLAVICLE],    jt[(int)J::L_UPPER_ARM],
-                                 cfg.arm_radius * 1.4f,       cfg.arm_radius, 3, body);
+                                 cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::L_UPPER_ARM],   jt[(int)J::L_LOWER_ARM],
-                                 cfg.arm_radius,              cfg.arm_radius, 3, body);
+                                 cfg.arm_radius * 1.0f,       cfg.arm_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::L_LOWER_ARM],   jt[(int)J::L_HAND],
-                                 cfg.arm_radius,              cfg.arm_radius * 0.75f, 3, body);
+                                 cfg.arm_radius * 1.0f,       cfg.arm_radius * 0.75f, 6, body);
 
-                // --- RIGHT ARM (4 segments, 3-sided) ---
+                // --- RIGHT ARM (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::R_CLAVICLE],
-                                 cfg.arm_radius * 1.4f,       cfg.arm_radius * 1.4f, 3, body);
+                                 cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.5f, 6, body);
                 append_bone_cage(v, b[(int)J::R_CLAVICLE],    jt[(int)J::R_UPPER_ARM],
-                                 cfg.arm_radius * 1.4f,       cfg.arm_radius, 3, body);
+                                 cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::R_UPPER_ARM],   jt[(int)J::R_LOWER_ARM],
-                                 cfg.arm_radius,              cfg.arm_radius, 3, body);
+                                 cfg.arm_radius * 1.0f,       cfg.arm_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::R_LOWER_ARM],   jt[(int)J::R_HAND],
-                                 cfg.arm_radius,              cfg.arm_radius * 0.75f, 3, body);
+                                 cfg.arm_radius * 1.0f,       cfg.arm_radius * 0.75f, 6, body);
             });
         });
 

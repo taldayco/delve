@@ -1,5 +1,6 @@
 #pragma once
 #include "terrain/terrain_mesh.h"
+#include "terrain/instanced_terrain.h"
 #include "core/asset_manager.h"
 #include "gpu/gpu.h"
 #include <SDL3/SDL.h>
@@ -7,8 +8,16 @@
 
 class TerrainRenderer {
 public:
+  bool use_instanced = false;
+  bool use_pbr       = false;
+  InstancedTerrain *instanced_terrain = nullptr;
+
   void init(SDL_GPUDevice *device, SDL_Window *window, AssetManager &am);
   void upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh);
+  void upload_gltf_column_mesh(SDL_GPUDevice *device,
+                                const void *vertex_data, uint32_t vertex_bytes,
+                                const void *index_data, uint32_t index_bytes,
+                                uint32_t index_count);
   void rebuild_dirty_pipelines(SDL_Window *window);
 
 
@@ -76,6 +85,8 @@ public:
 private:
 
   void init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window *window);
+  void init_instanced_pipeline(SDL_GPUDevice *device, SDL_Window *window);
+  void init_pbr_pipeline(SDL_GPUDevice *device, SDL_Window *window);
   void init_compute_pipelines(SDL_GPUDevice *device);
   void init_cluster_buffers(SDL_GPUDevice *device, uint32_t tilesX, uint32_t tilesY, uint32_t num_slices);
 
@@ -86,6 +97,8 @@ private:
                          const std::vector<GpuPointLight> &lights);
   void stage_shaded_draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
                          const SceneUniforms &uniforms);
+  void stage_instanced_draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
+                             const SceneUniforms &uniforms);
 
 
   void release_buffers(SDL_GPUDevice *device);
@@ -104,9 +117,11 @@ private:
   uint32_t                 depth_w = 0, depth_h  = 0;
 
 
-  SDL_GPUGraphicsPipeline *terrain_pipeline         = nullptr;
-  SDL_GPUGraphicsPipeline *lava_pipeline            = nullptr;
-  SDL_GPUGraphicsPipeline *contour_pipeline         = nullptr;
+  SDL_GPUGraphicsPipeline *terrain_pipeline            = nullptr;
+  SDL_GPUGraphicsPipeline *lava_pipeline               = nullptr;
+  SDL_GPUGraphicsPipeline *contour_pipeline            = nullptr;
+  SDL_GPUGraphicsPipeline *instanced_terrain_pipeline  = nullptr;
+  SDL_GPUGraphicsPipeline *pbr_terrain_pipeline        = nullptr;
 
 
   SDL_GPUComputePipeline  *cluster_gen_pipeline     = nullptr;
@@ -125,6 +140,10 @@ private:
 
   SDL_GPUBuffer *contour_vbo    = nullptr;
   uint32_t       contour_vertex_count = 0;
+
+  SDL_GPUBuffer *gltf_column_vbo         = nullptr;
+  SDL_GPUBuffer *gltf_column_ibo         = nullptr;
+  uint32_t       gltf_column_index_count = 0;
 
 
   SDL_GPUBuffer *point_light_ssbo   = nullptr;

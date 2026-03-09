@@ -8,6 +8,7 @@
 #include "terrain/map_data.h"
 #include "terrain/terrain_renderer.h"
 #include "terrain/terrain_mesh.h"
+#include "terrain/instanced_terrain.h"
 #include "core/task_system.h"
 #include "input/input.h"
 #include "camera/camera.h"
@@ -20,6 +21,7 @@
 class TopoGame : public Application {
 public:
   TerrainRenderer    terrain_renderer;
+  InstancedTerrain   instanced_terrain;
   BackgroundRenderer background_renderer;
   RigRenderer        rig_renderer;
   InputSystem        input;
@@ -56,4 +58,5 @@ private:
   // Debounce timer (seconds) to avoid queuing rapid sequential regenerations
   // when sliders are dragged continuously.
   float regen_cooldown = 0.0f;
+  bool  gltf_column_loaded = false;
 };

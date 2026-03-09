@@ -68,6 +68,11 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/contour.frag.glsl
     ${SHADER_DIR}/background.vert.glsl
     ${SHADER_DIR}/background.frag.glsl
+    ${SHADER_DIR}/instanced_terrain.vert.glsl
+    ${SHADER_DIR}/instanced_terrain.frag.glsl
+    ${SHADER_DIR}/pbr_static.vert.glsl
+    ${SHADER_DIR}/pbr_static.frag.glsl
+    ${SHADER_DIR}/pbr_skinned.vert.glsl
 )
 
 set(COMPUTE_SHADER_SOURCES
@@ -79,6 +84,7 @@ set(COMPUTE_SHADER_SOURCES
 set(SHADER_INCLUDES
     ${SHADER_DIR}/coord.glsl
     ${SHADER_DIR}/lighting_common.glsl
+    ${SHADER_DIR}/pbr_common.glsl
 )
 
 set(SHADER_OUTPUTS)
@@ -134,10 +140,16 @@ add_library(topo_engine STATIC
     src/engine/render/sprite.cpp
     src/engine/render/render_system.cpp
     src/engine/render/background.cpp
+    src/engine/core/cgltf_impl.cpp
+    src/engine/core/stb_image_impl.cpp
+    src/engine/core/gltf_loader.cpp
+    src/engine/core/animator.cpp
 )
 
 target_include_directories(topo_engine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cgltf
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
 )
 
 target_link_libraries(topo_engine PUBLIC
@@ -167,6 +179,7 @@ add_executable(topogen
     src/game/terrain/map_util.cpp
     src/game/render/rig_renderer.cpp
     src/game/render/rig_animation.cpp
+    src/game/terrain/instanced_terrain.cpp
 )
 
 target_include_directories(topogen PRIVATE
@@ -176,6 +189,7 @@ target_include_directories(topogen PRIVATE
 
 target_compile_definitions(topogen PRIVATE
     SHADER_DIR="${SHADER_OUT_DIR}"
+    ASSET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
     GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 

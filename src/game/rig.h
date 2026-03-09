@@ -33,6 +33,7 @@ struct ActorConfig {
     float leg_radius     = 0.021f;   // 0.07 * 0.3
     float arm_radius     = 0.017f;   // 0.055 * 0.3
     float torso_radius   = 0.027f;   // 0.09 * 0.3
+    float neck_radius    = 0.015f;   // 0.05 * 0.3
     float toe_len        = 0.07f;    // distance from foot to toe tip
 };
 

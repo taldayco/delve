@@ -27,10 +27,10 @@ static json params_to_json(const ElevationParams &elev,
     {"elevation", {
       {"frequency",  elev.frequency}, {"octaves",    elev.octaves},
       {"lacunarity", elev.lacunarity},{"gain",        elev.gain},
-      {"seed",       elev.seed},      {"scurve_bias", elev.scurve_bias}
+      {"scurve_bias", elev.scurve_bias}
     }},
     {"worley", {
-      {"frequency",      worley.frequency},    {"seed",           worley.seed},
+      {"frequency",      worley.frequency},
       {"jitter",         worley.jitter},       {"warp_amp",       worley.warp_amp},
       {"warp_frequency", worley.warp_frequency},{"warp_octaves",  worley.warp_octaves}
     }},
@@ -42,7 +42,8 @@ static json params_to_json(const ElevationParams &elev,
     {"terrain", {
       {"use_isometric",  ts.use_isometric},
       {"current_palette",ts.current_palette},
-      {"map_scale",      ts.map_scale}
+      {"map_scale",      ts.map_scale},
+      {"master_seed",    ts.master_seed}
     }}
   };
 }
@@ -56,13 +57,11 @@ static void json_to_params(const json &j, ElevationParams &elev,
     if (e.contains("octaves"))     elev.octaves     = e["octaves"];
     if (e.contains("lacunarity"))  elev.lacunarity  = e["lacunarity"];
     if (e.contains("gain"))        elev.gain        = e["gain"];
-    if (e.contains("seed"))        elev.seed        = e["seed"];
     if (e.contains("scurve_bias")) elev.scurve_bias = e["scurve_bias"];
   }
   if (j.contains("worley")) {
     auto &w = j["worley"];
     if (w.contains("frequency"))       worley.frequency       = w["frequency"];
-    if (w.contains("seed"))            worley.seed            = w["seed"];
     if (w.contains("jitter"))          worley.jitter          = w["jitter"];
     if (w.contains("warp_amp"))        worley.warp_amp        = w["warp_amp"];
     if (w.contains("warp_frequency"))  worley.warp_frequency  = w["warp_frequency"];
@@ -79,6 +78,14 @@ static void json_to_params(const json &j, ElevationParams &elev,
     if (t.contains("use_isometric"))   ts.use_isometric   = t["use_isometric"];
     if (t.contains("current_palette")) ts.current_palette = t["current_palette"];
     if (t.contains("map_scale"))       ts.map_scale       = t["map_scale"];
+    if (t.contains("master_seed"))     ts.master_seed     = t["master_seed"];
+  }
+
+  // Backward compatibility: old configs with individual seeds but no master_seed
+  if (!j.contains("terrain") || !j["terrain"].contains("master_seed")) {
+    if (j.contains("elevation") && j["elevation"].contains("seed")) {
+      ts.master_seed = j["elevation"]["seed"];
+    }
   }
 }
 
@@ -91,7 +98,6 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
   ecs.set<WorleyParams>({});
   ecs.set<CompositionParams>({});
   ecs.set<MapData>({});
-  ecs.set<NoiseCache>({});
   ecs.set<ContourData>({});
 
   task_system.init(1);
@@ -345,7 +351,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
   auto *worley   = ecs.get_mut<WorleyParams>();
   auto *comp     = ecs.get_mut<CompositionParams>();
   auto *map_data = ecs.get_mut<MapData>();
-  auto *cache    = ecs.get_mut<NoiseCache>();
   auto *contours = ecs.get_mut<ContourData>();
 
   constexpr float REGEN_COOLDOWN_SEC = 0.2f;
@@ -365,6 +370,12 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     regen_cooldown = REGEN_COOLDOWN_SEC;
 
     elev->map_scale = ts->map_scale;
+
+    // Derive per-layer seeds from master seed
+    elev->seed   = ts->master_seed;
+    river->seed  = ts->master_seed * 7 + 1;
+    worley->seed = ts->master_seed * 13 + 3;
+
     auto elev_snap   = *elev;
     auto river_snap  = *river;
     auto worley_snap = *worley;
@@ -392,7 +403,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       auto md = std::make_shared<MapData>();
       md->allocate(Config::MAP_WIDTH, Config::MAP_HEIGHT);
 
-      compose_layers(*md, elev_snap, river_snap, worley_snap, comp_snap, nullptr);
+      compose_layers(*md, elev_snap, river_snap, worley_snap, comp_snap, &async_terrain.async_cache);
       if (should_abort()) { async_terrain.is_generating = false; return; }
 
       md->columns = generate_basalt_columns_v2(*md, Config::HEX_SIZE);
@@ -549,7 +560,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   auto *worley = ecs.get_mut<WorleyParams>();
   auto *comp   = ecs.get_mut<CompositionParams>();
   auto *ws     = ecs.get_mut<WindowState>();
-  auto *cache  = ecs.get_mut<NoiseCache>();
   auto *contours = ecs.get<ContourData>();
 
   ImGuiIO &io = ImGui::GetIO();
@@ -566,6 +576,10 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   }
 
   ImGui::Separator();
+  ImGui::SliderInt("Master Seed", &ts->master_seed, 0, 10000);
+  ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
+
+  ImGui::Separator();
   ImGui::Text("Elevation");
   ImGui::SliderFloat("Frequency",   &elev->frequency,   0.001f, 0.05f);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
@@ -574,8 +588,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::SliderFloat("Lacunarity",  &elev->lacunarity,  1.0f, 4.0f);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
   ImGui::SliderFloat("Gain",        &elev->gain,        0.1f, 1.0f);
-  ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
-  ImGui::SliderInt(  "Seed",        &elev->seed,        0, 10000);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
   ImGui::SliderInt(  "Terrace Levels", &comp->terrace_levels, 3, 20);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
@@ -587,8 +599,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Separator();
   ImGui::Text("Worley Noise");
   ImGui::SliderFloat("Worley Freq",  &worley->frequency,      0.001f, 0.1f);
-  ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
-  ImGui::SliderInt(  "Worley Seed",  &worley->seed,           0, 10000);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
   ImGui::SliderFloat("Worley Jitter",&worley->jitter,         0.0f, 2.0f);
   ts->need_regenerate |= ImGui::IsItemDeactivatedAfterEdit();
@@ -642,7 +652,8 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
     ts->use_isometric   = DEFAULT_ISOMETRIC;
     ts->current_palette = 0;
     ts->map_scale       = Config::DEFAULT_MAP_SCALE;
-    cache->invalidate_all();
+    ts->master_seed     = 1337;
+    async_terrain.async_cache.invalidate_all();
     ts->need_regenerate = true;
   }
 
@@ -661,7 +672,7 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
       try {
         json j = json::parse(f);
         json_to_params(j, *elev, *worley, *comp, *ts);
-        cache->invalidate_all();
+        async_terrain.async_cache.invalidate_all();
         ts->need_regenerate = true;
         save_status_timer = -60;
       } catch (...) { save_status_timer = -1; }

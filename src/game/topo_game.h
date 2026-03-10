@@ -3,7 +3,6 @@
 #include "game_state.h"
 #include "rig.h"
 #include "terrain/noise_layers.h"
-#include "terrain/noise_cache.h"
 #include "terrain/noise_composer.h"
 #include "terrain/map_data.h"
 #include "terrain/terrain_renderer.h"

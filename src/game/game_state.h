@@ -3,6 +3,7 @@
 #include "terrain/contour.h"
 #include "terrain/map_data.h"
 #include "terrain/terrain_mesh.h"
+#include "terrain/noise_cache.h"
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -31,6 +32,7 @@ struct GamePhase {
 struct TerrainState {
   bool  use_isometric   = DEFAULT_ISOMETRIC;
   int   current_palette = 0;
+  int   master_seed     = 1337;
   float map_scale       = Config::DEFAULT_MAP_SCALE;
   float contour_opacity = Config::DEFAULT_CONTOUR_OPACITY;
   bool  need_regenerate = true;
@@ -44,6 +46,7 @@ struct AsyncTerrainState {
   std::shared_ptr<MapData>     pending_map;
   std::shared_ptr<ContourData> pending_contours;
   std::mutex                   pending_mtx;
+  NoiseCache                   async_cache;
 };
 
 struct WindowState {

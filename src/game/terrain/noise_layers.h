@@ -6,7 +6,7 @@ struct ElevationParams {
   int octaves = 6;
   float lacunarity = 2.0f;
   float gain = 0.5f;
-  int seed = 1337;
+  int seed = 0;
   float scurve_bias = 0.65f;
   float map_scale = 1.0f;
 };
@@ -16,14 +16,14 @@ struct RiverParams {
   int octaves = 4;
   float lacunarity = 2.0f;
   float gain = 0.5f;
-  int seed = 7331;
+  int seed = 0;
   float threshold = 0.7f;
   float map_scale = 1.0f;
 };
 
 struct WorleyParams {
   float frequency = 0.015f;
-  int seed = 4242;
+  int seed = 0;
   float jitter = 1.0f;
   float map_scale = 1.0f;
   float warp_amp = 40.0f;

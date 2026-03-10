@@ -995,7 +995,8 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
                                          SDL_GPUCommandBuffer *cmd,
                                          const SceneUniforms &uniforms) {
 
-  if (use_instanced && instanced_terrain_pipeline && instanced_terrain && instanced_terrain->has_data()) {
+  if (use_instanced && instanced_terrain_pipeline && instanced_terrain && instanced_terrain->has_data()
+      && gltf_column_vbo && gltf_column_ibo && gltf_column_index_count > 0) {
     stage_instanced_draw(pass, cmd, uniforms);
   } else if (basalt_vbo && basalt_ibo && basalt_total_index_count > 0 && terrain_pipeline) {
     // Select pipeline: PBR or Lambertian
@@ -1191,9 +1192,6 @@ void TerrainRenderer::release_buffers(SDL_GPUDevice *device) {
   rel(lava_vbo,    "lava_vbo");
   rel(lava_ibo,    "lava_ibo");
   rel(contour_vbo, "contour_vbo");
-  if (gltf_column_vbo) { SDL_ReleaseGPUBuffer(device, gltf_column_vbo); gltf_column_vbo = nullptr; }
-  if (gltf_column_ibo) { SDL_ReleaseGPUBuffer(device, gltf_column_ibo); gltf_column_ibo = nullptr; }
-  gltf_column_index_count = 0;
   has_data = false;
 }
 
@@ -1219,6 +1217,9 @@ void TerrainRenderer::cleanup(SDL_GPUDevice *device) {
   SDL_WaitForGPUIdle(device);
 
   release_buffers(device);
+  if (gltf_column_vbo) { SDL_ReleaseGPUBuffer(device, gltf_column_vbo); gltf_column_vbo = nullptr; }
+  if (gltf_column_ibo) { SDL_ReleaseGPUBuffer(device, gltf_column_ibo); gltf_column_ibo = nullptr; }
+  gltf_column_index_count = 0;
   release_cluster_buffers(device);
 
   if (dummy_ssbo)               { SDL_ReleaseGPUBuffer(device, dummy_ssbo);                           dummy_ssbo               = nullptr; }

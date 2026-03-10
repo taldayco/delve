@@ -36,6 +36,7 @@ void InstancedTerrain::build_instances(const std::vector<HexColumn> &columns,
 
         cpu_instances.push_back({model, cr, cg, cb, 1.0f});
     }
+
 }
 
 void InstancedTerrain::upload(SDL_GPUDevice *device) {

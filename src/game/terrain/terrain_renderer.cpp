@@ -610,8 +610,7 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
 
 
 void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh) {
-  // One GPU idle wait to ensure old buffers are no longer in use, then release them.
-  SDL_WaitForGPUIdle(device);
+  // Caller is responsible for SDL_WaitForGPUIdle before calling this.
   release_buffers(device);
 
   // --- Gather all CPU data first so we can size transfer buffers exactly ---

@@ -119,12 +119,12 @@ void compose_layers(MapData &data, const ElevationParams &elev,
     SDL_Log("  River mask: cache hit");
   }
 
-  if (!cache || !cache->get2(NoiseCache::WORLEY, worley_hash, data.worley,
-                             data.worley_edge)) {
+  if (!cache || !cache->get3(NoiseCache::WORLEY, worley_hash, data.worley,
+                             data.worley_edge, data.worley_cell_value)) {
     generate_worley_layer(data.worley, data.worley_edge, data.worley_cell_value, w, h, worley_scaled);
     if (cache)
-      cache->put2(NoiseCache::WORLEY, worley_hash, data.worley,
-                  data.worley_edge);
+      cache->put3(NoiseCache::WORLEY, worley_hash, data.worley,
+                  data.worley_edge, data.worley_cell_value);
     SDL_Log("  Worley: generated");
   } else {
     SDL_Log("  Worley: cache hit");

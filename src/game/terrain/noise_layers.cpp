@@ -151,6 +151,7 @@ void generate_worley_layer(std::vector<float> &out_value,
   int n = width * height;
   out_value.resize(n);
   out_edge.resize(n);
+  out_cell_value.resize(n);
 
 
   FastNoiseLite warp(params.seed + 31337);

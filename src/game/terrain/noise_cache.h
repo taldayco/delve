@@ -60,29 +60,29 @@ struct NoiseCache {
     return false;
   }
 
-  void put(Slot slot, uint64_t param_hash, const std::vector<float> &data) {
+  void put(Slot slot, uint64_t param_hash, std::vector<float> data) {
     auto &e = entries[slot];
     e.param_hash = param_hash;
-    e.data = data;
+    e.data = std::move(data);
     e.valid = true;
   }
 
-  void put2(Slot slot, uint64_t param_hash, const std::vector<float> &data1,
-            const std::vector<float> &data2) {
+  void put2(Slot slot, uint64_t param_hash, std::vector<float> data1,
+            std::vector<float> data2) {
     auto &e = entries[slot];
     e.param_hash = param_hash;
-    e.data = data1;
-    e.data2 = data2;
+    e.data = std::move(data1);
+    e.data2 = std::move(data2);
     e.valid = true;
   }
 
-  void put3(Slot slot, uint64_t param_hash, const std::vector<float> &data1,
-            const std::vector<float> &data2, const std::vector<float> &data3) {
+  void put3(Slot slot, uint64_t param_hash, std::vector<float> data1,
+            std::vector<float> data2, std::vector<float> data3) {
     auto &e = entries[slot];
     e.param_hash = param_hash;
-    e.data = data1;
-    e.data2 = data2;
-    e.data3 = data3;
+    e.data = std::move(data1);
+    e.data2 = std::move(data2);
+    e.data3 = std::move(data3);
     e.valid = true;
   }
 

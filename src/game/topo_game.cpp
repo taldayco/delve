@@ -207,6 +207,26 @@ void TopoGame::on_render_tool(GpuContext &gpu, FrameContext &frame, flecs::world
 void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (!terrain_renderer.is_initialized()) return;
 
+  bool needs_depth_rebuild_early = terrain_renderer.depth_needs_rebuild();
+  uint32_t target_w_early = needs_depth_rebuild_early
+                      ? terrain_renderer.desired_depth_w
+                      : terrain_renderer.depth_width();
+  uint32_t target_h_early = needs_depth_rebuild_early
+                      ? terrain_renderer.desired_depth_h
+                      : terrain_renderer.depth_height();
+  bool needs_cluster_rebuild_early = false;
+  if (target_w_early > 0 && target_h_early > 0) {
+    uint32_t tilesX = (uint32_t)std::ceil(target_w_early / 16.0f);
+    uint32_t tilesY = (uint32_t)std::ceil(target_h_early / 16.0f);
+    needs_cluster_rebuild_early = (tilesX != terrain_renderer.cluster_tiles_x() ||
+                                   tilesY != terrain_renderer.cluster_tiles_y());
+  }
+
+  // Single GPU idle wait if any operation needs it.
+  if (ready_mesh_pending || needs_depth_rebuild_early || needs_cluster_rebuild_early) {
+    SDL_WaitForGPUIdle(gpu.device);
+  }
+
   if (ready_mesh_pending) {
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
@@ -271,29 +291,10 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
     }
   }
 
-  bool needs_depth_rebuild = terrain_renderer.depth_needs_rebuild();
-
-  uint32_t target_w = terrain_renderer.depth_needs_rebuild()
-                      ? terrain_renderer.desired_depth_w
-                      : terrain_renderer.depth_width();
-  uint32_t target_h = terrain_renderer.depth_needs_rebuild()
-                      ? terrain_renderer.desired_depth_h
-                      : terrain_renderer.depth_height();
-
-  bool needs_cluster_rebuild = false;
-  if (target_w > 0 && target_h > 0) {
-    uint32_t tilesX = (uint32_t)std::ceil(target_w / 16.0f);
-    uint32_t tilesY = (uint32_t)std::ceil(target_h / 16.0f);
-    needs_cluster_rebuild = (tilesX != terrain_renderer.cluster_tiles_x() ||
-                             tilesY != terrain_renderer.cluster_tiles_y());
-  }
-
-  if (needs_cluster_rebuild || needs_depth_rebuild) {
-    SDL_WaitForGPUIdle(gpu.device);
-
+  if (needs_depth_rebuild_early || needs_cluster_rebuild_early) {
     terrain_renderer.prepare_frame_resources(gpu.device);
 
-    if (needs_cluster_rebuild) {
+    if (needs_cluster_rebuild_early) {
       uint32_t w = terrain_renderer.depth_width();
       uint32_t h = terrain_renderer.depth_height();
       if (w > 0 && h > 0) {
@@ -653,7 +654,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
     ts->current_palette = 0;
     ts->map_scale       = Config::DEFAULT_MAP_SCALE;
     ts->master_seed     = 1337;
-    async_terrain.async_cache.invalidate_all();
     ts->need_regenerate = true;
   }
 
@@ -672,7 +672,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
       try {
         json j = json::parse(f);
         json_to_params(j, *elev, *worley, *comp, *ts);
-        async_terrain.async_cache.invalidate_all();
         ts->need_regenerate = true;
         save_status_timer = -60;
       } catch (...) { save_status_timer = -1; }

@@ -27,6 +27,7 @@ import {
 } from "../tools.js";
 import { state, getState, setState, attachAgentListeners, detachAgentListeners, setPhase, recordFailure } from "./display.js";
 import { extractFilePaths, parseReviewDecision } from "./helpers.js";
+import { acquireRunLock, releaseRunLock } from "../tools/state.js";
 
 export function registerMinionVariantCommands(pi: ExtensionAPI) {
   // ── /minion-quick command ─────────────────────────────────────────────
@@ -44,6 +45,12 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
       if (state) {
         ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
+      const lock = acquireRunLock();
+      if (!lock.acquired) {
+        ctx.ui.notify(lock.reason, "error");
         return;
       }
 
@@ -169,6 +176,7 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
         detachAgentListeners();
         setState(null);
       } finally {
+        releaseRunLock();
         if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
@@ -189,6 +197,12 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
       if (state) {
         ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
+      const lock = acquireRunLock();
+      if (!lock.acquired) {
+        ctx.ui.notify(lock.reason, "error");
         return;
       }
 
@@ -268,6 +282,7 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
         detachAgentListeners();
         setState(null);
       } finally {
+        releaseRunLock();
         if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
@@ -288,6 +303,12 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
       if (state) {
         ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
+      const lock = acquireRunLock();
+      if (!lock.acquired) {
+        ctx.ui.notify(lock.reason, "error");
         return;
       }
 
@@ -399,6 +420,7 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
         detachAgentListeners();
         setState(null);
       } finally {
+        releaseRunLock();
         if (worktreePath) cleanupWorktree(worktreePath);
       }
     },
@@ -419,6 +441,12 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
       if (state) {
         ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
+        return;
+      }
+
+      const lock = acquireRunLock();
+      if (!lock.acquired) {
+        ctx.ui.notify(lock.reason, "error");
         return;
       }
 
@@ -494,6 +522,7 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
         detachAgentListeners();
         setState(null);
       } finally {
+        releaseRunLock();
         if (worktreePath) cleanupWorktree(worktreePath);
       }
     },

@@ -315,7 +315,10 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const { existsSync, unlinkSync } = require("node:fs");
     const { join } = require("node:path");
 
-    const wt = ctx.data.worktreePath || process.cwd();
+    if (!ctx.data.worktreePath) {
+      return { ok: false, output: "Visual test skipped — no worktree path provided" };
+    }
+    const wt = ctx.data.worktreePath;
     const binaryPath = join(wt, "build/topogen");
     const baselinePath = join(wt, VISUAL_TEST_BASELINE);
 

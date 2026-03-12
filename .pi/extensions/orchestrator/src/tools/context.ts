@@ -5,6 +5,7 @@ import {
   isVikingAvailable,
   vikingSearch,
   vikingOverview,
+  vikingAbstract,
   SUBSYSTEM_VIKING_URI,
 } from "./viking.js";
 import type { MapCoverageReport } from "./types.js";
@@ -251,6 +252,93 @@ export async function getSubsystemCodebaseContext(subsystem: string, baseCwd?: s
   }
 
   return getSubsystemCodebaseContextKeyword(subsystem, baseCwd);
+}
+
+// ─── Model Context Limits (mirrors spawn.ts) ────────────────────────────────
+
+const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  "anthropic/claude-opus-4-6": 200_000,
+  "anthropic/claude-sonnet-4-6": 200_000,
+  "anthropic/claude-haiku-4-5": 200_000,
+};
+const CONTEXT_BUDGET_RATIO = 0.4;
+
+/**
+ * Get codebase context with Viking tier downgrade based on token budget.
+ * Tries L1 (overview) first; if results exceed budget, downgrades to L0 (summary);
+ * if still over or Viking unavailable, falls back to keyword-based file listings.
+ *
+ * Budget = 40% of model context window × 4 chars/token.
+ */
+export async function getCodebaseContextBudgeted(
+  task: string,
+  model: string,
+  baseCwd?: string,
+): Promise<string> {
+  const { readFileSync, existsSync } = require("node:fs");
+  const { join } = require("node:path");
+  const cwd = baseCwd || process.cwd();
+
+  const contextLimit = MODEL_CONTEXT_LIMITS[model] || 200_000;
+  const budgetChars = Math.floor(contextLimit * CONTEXT_BUDGET_RATIO * 4);
+
+  // Always include config.h
+  const sections: string[] = [];
+  const configPath = join(cwd, "src/game/config.h");
+  let configSection = "";
+  if (existsSync(configPath)) {
+    configSection = `### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``;
+    sections.push(configSection);
+  }
+
+  const reservedChars = configSection.length;
+  const availableChars = budgetChars - reservedChars;
+
+  if (await isVikingAvailable()) {
+    // Try L1 first (detailed overviews)
+    const l1Results = await vikingSearch(task, "L1", "viking://resources/delve", 8);
+    if (l1Results.length > 0) {
+      const l1Sections = l1Results.map((r) => `### ${r.uri}\n${r.snippet}`);
+      const l1Total = l1Sections.reduce((sum, s) => sum + s.length, 0);
+
+      if (l1Total <= availableChars) {
+        console.error(`[context-budget] L1 tier: ${l1Total} chars within ${availableChars} budget`);
+        sections.push(...l1Sections);
+        return sections.join("\n\n");
+      }
+
+      // L1 exceeds budget — downgrade to L0 (summaries)
+      console.error(`[context-budget] L1 tier ${l1Total} chars exceeds ${availableChars} budget — downgrading to L0`);
+      const l0Results = await vikingSearch(task, "L0", "viking://resources/delve", 8);
+      if (l0Results.length > 0) {
+        const l0Sections = l0Results.map((r) => `### ${r.uri}\n${r.snippet}`);
+        const l0Total = l0Sections.reduce((sum, s) => sum + s.length, 0);
+
+        if (l0Total <= availableChars) {
+          console.error(`[context-budget] L0 tier: ${l0Total} chars within ${availableChars} budget`);
+          sections.push(...l0Sections);
+          return sections.join("\n\n");
+        }
+
+        // L0 still exceeds — take what fits
+        console.error(`[context-budget] L0 tier ${l0Total} chars still exceeds budget — truncating to fit`);
+        let used = 0;
+        for (const s of l0Sections) {
+          if (used + s.length > availableChars) break;
+          sections.push(s);
+          used += s.length;
+        }
+        if (sections.length > (configSection ? 1 : 0)) {
+          return sections.join("\n\n");
+        }
+      }
+    }
+    // Viking returned no results — fall through to keyword
+    console.error("[context-budget] Viking returned no results — falling back to keyword");
+  }
+
+  // Keyword fallback
+  return (configSection ? configSection + "\n\n" : "") + getCodebaseContextKeyword(task, baseCwd).replace(configSection, "").trim();
 }
 
 export function detectMapCoverage(): MapCoverageReport {

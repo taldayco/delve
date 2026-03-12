@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { spawnSubagent } from "./spawn.js";
 import { loadAgentConfig, PROJECT_ROOT } from "./config.js";
 import { writeState } from "./state.js";
-import { isVikingAvailable, vikingSearch } from "../tools/viking.js";
+import { isVikingAvailable, vikingRead, pathToVikingUri } from "../tools/viking.js";
+import { sanitizeJsonOutput } from "./parsing.js";
 import type { MetaDecomposition } from "./types.js";
 
 export function loadFileContents(files: string[], budgetChars?: number, cwd?: string): string {
@@ -116,8 +117,7 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
 
   // Parse JSON from the response
   try {
-    const jsonMatch = result.match(/```json\s*([\s\S]*?)```/);
-    const json = JSON.parse(jsonMatch ? jsonMatch[1].trim() : result);
+    const json = JSON.parse(sanitizeJsonOutput(result));
     return {
       systemPrompt: json.system_prompt || "",
       userPrompt: json.user_prompt || "",
@@ -132,10 +132,26 @@ ${opts.constraints.map((c) => `- ${c}`).join("\n")}`;
   }
 }
 
+const MAX_WORKER_CONCURRENCY = 4;
+
+/** Run async tasks with a concurrency limit (semaphore pattern). */
+async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results: T[] = new Array(tasks.length);
+  let next = 0;
+  async function worker() {
+    while (next < tasks.length) {
+      const idx = next++;
+      results[idx] = await tasks[idx]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, () => worker()));
+  return results;
+}
+
 /**
- * Delegate a decomposed set of worker subtasks to Haiku workers in parallel.
- * Each worker receives the file content + focused instructions.
- * Returns aggregated FILE blocks from all workers.
+ * Delegate a decomposed set of worker subtasks to Haiku workers with concurrency cap.
+ * Headers (.h, .glsl) run first, then implementations (.cpp, .comp.glsl) — both
+ * capped at MAX_WORKER_CONCURRENCY to avoid API rate limits.
  */
 export async function delegateToWorkers(
   decomposition: MetaDecomposition,
@@ -146,7 +162,11 @@ export async function delegateToWorkers(
   const workerConfig = loadAgentConfig("worker");
   const workerModel = workerConfig.model || "anthropic/claude-haiku-4-5";
 
-  const workerPromises = decomposition.subtasks.map(async (st) => {
+  const isHeader = (f: string) => /\.(h|hpp|glsl)$/i.test(f) && !/\.(comp\.glsl)$/i.test(f);
+  const headerTasks = decomposition.subtasks.filter((st) => isHeader(st.file));
+  const implTasks = decomposition.subtasks.filter((st) => !isHeader(st.file));
+
+  const makeWorkerFn = (st: typeof decomposition.subtasks[0]) => async () => {
     // Load the target file (always direct read — need exact current contents)
     const fileContents: Record<string, string> = {};
     const targetPath = st.file.startsWith("/") ? st.file : join(basePath, st.file);
@@ -154,16 +174,18 @@ export async function delegateToWorkers(
       fileContents[st.file] = readFileSync(targetPath, "utf-8");
     }
 
-    // Load context files: Viking L2 with direct-read fallback
+    // Load context files: Viking direct read with file-read fallback
     const useViking = await isVikingAvailable();
     for (const dep of st.context_files.slice(0, 3)) {
       if (useViking) {
-        // Try Viking L2 search — may include cross-linked context
-        const results = await vikingSearch(dep, "L2", undefined, 1);
-        if (results.length > 0 && results[0].snippet) {
-          const content = results[0].snippet;
-          fileContents[dep] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
-          continue;
+        // Try Viking direct read via mapped URI — returns full indexed content
+        const uri = pathToVikingUri(dep);
+        if (uri) {
+          const content = await vikingRead(uri);
+          if (content) {
+            fileContents[dep] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
+            continue;
+          }
         }
       }
       // Fallback: direct file read
@@ -253,12 +275,14 @@ Integrate the isolated implementation into the target file, adapting types and i
       fileContents,
       cwd,
     });
-  });
+  };
 
   // suppress unused variable warning
   void workerModel;
   void subsystem;
 
-  const results = await Promise.all(workerPromises);
-  return results.join("\n\n");
+  // Run headers first (dependencies), then implementations — both concurrency-capped
+  const headerResults = await runWithConcurrency(headerTasks.map(makeWorkerFn), MAX_WORKER_CONCURRENCY);
+  const implResults = await runWithConcurrency(implTasks.map(makeWorkerFn), MAX_WORKER_CONCURRENCY);
+  return [...headerResults, ...implResults].join("\n\n");
 }

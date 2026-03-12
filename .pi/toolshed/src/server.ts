@@ -48,6 +48,12 @@ import {
   toolDependenciesSchema, toolDependencies,
 } from "./tools-meta.js";
 
+import {
+  vikingSearchSchema, vikingSearch,
+  vikingReadSchema, vikingRead,
+  vikingWriteMemorySchema, vikingWriteMemory,
+} from "./tools-viking.js";
+
 // ─── Server Setup ───────────────────────────────────────────────────────────
 
 const server = new McpServer({
@@ -104,6 +110,12 @@ server.tool("app_compare_frames", "Compare two PNG frame captures and return a s
 server.tool("suggest_tools", "Given a task description, suggest which tools are most relevant. Meta-tool: tools that select tools.", suggestToolsSchema, suggestTools);
 server.tool("compose_toolchain", "Given a workflow, return an ordered sequence of tools to call with dependency info.", composeToolchainSchema, composeToolchain);
 server.tool("tool_dependencies", "Get prerequisite and downstream tools for a specific tool.", toolDependenciesSchema, toolDependencies);
+
+// ─── Viking Tools ────────────────────────────────────────────────────────────
+
+server.tool("viking_search", "Semantic search across OpenViking-indexed codebase resources. Returns scored results with snippets.", vikingSearchSchema, vikingSearch);
+server.tool("viking_read", "Read the full content of a Viking-indexed resource by URI.", vikingReadSchema, vikingRead);
+server.tool("viking_write_memory", "Write content to a persistent Viking memory URI (viking://memories/ namespace).", vikingWriteMemorySchema, vikingWriteMemory);
 
 // ─── Start Server ───────────────────────────────────────────────────────────
 

@@ -226,4 +226,32 @@ export const TOOL_REGISTRY: ToolMeta[] = [
     description: "Compare two PNG frame captures for similarity percentage.",
     cost: "cheap",
   },
+  // Viking tools
+  {
+    name: "viking_search",
+    category: "viking",
+    keywords: ["search", "semantic", "context", "codebase", "viking", "openviking"],
+    prerequisites: [],
+    enables: ["viking_read"],
+    description: "Semantic search across OpenViking-indexed codebase resources.",
+    cost: "moderate",
+  },
+  {
+    name: "viking_read",
+    category: "viking",
+    keywords: ["read", "content", "resource", "viking", "uri", "file"],
+    prerequisites: [],
+    enables: [],
+    description: "Read full content of a Viking-indexed resource by URI.",
+    cost: "moderate",
+  },
+  {
+    name: "viking_write_memory",
+    category: "viking",
+    keywords: ["write", "memory", "persist", "save", "viking", "note"],
+    prerequisites: [],
+    enables: [],
+    description: "Write content to persistent Viking memory (viking://memories/ namespace).",
+    cost: "cheap",
+  },
 ];

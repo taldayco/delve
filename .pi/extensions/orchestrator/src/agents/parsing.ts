@@ -9,6 +9,14 @@ import type { Subtask, WorkerSubtask, MetaDecomposition } from "./types.js";
 
 export { Subtask };
 
+/** Strip markdown fences and preamble from LLM JSON output. */
+export function sanitizeJsonOutput(raw: string): string {
+  const fenced = raw.match(/```\w*\s*([\s\S]*?)```/);
+  const inner = fenced ? fenced[1].trim() : raw.trim();
+  const jsonStart = inner.search(/[{\[]/);
+  return jsonStart >= 0 ? inner.slice(jsonStart) : inner;
+}
+
 export const SUBSYSTEM_PATH_PATTERNS: [RegExp, string][] = [
   [/src\/game\/terrain\//i, "terrain"],
   [/src\/game\/render\//i, "actor"],
@@ -75,8 +83,7 @@ export function parseSubtasks(plan: string): Subtask[] {
  */
 export function parseMetaDecomposition(output: string): MetaDecomposition {
   try {
-    const jsonMatch = output.match(/```json\s*([\s\S]*?)```/);
-    const raw = jsonMatch ? jsonMatch[1].trim() : output.trim();
+    const raw = sanitizeJsonOutput(output);
     const parsed = JSON.parse(raw);
     const subtasks: WorkerSubtask[] = (parsed.subtasks || []).map((st: any) => ({
       file: st.file || "",

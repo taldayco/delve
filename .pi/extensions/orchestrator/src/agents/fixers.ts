@@ -11,6 +11,7 @@ export async function askBuildFixer(opts: {
   buildOutput: string;
   round: number;
   maxRounds: number;
+  tools?: string[];
   cwd?: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -62,7 +63,7 @@ Decompose these errors into per-file fix tasks.`;
     systemPrompt: decomposerPrompt,
     model,
     thinking: "low",
-    tools: config.tools.length > 0 ? config.tools : undefined,
+    tools: opts.tools ?? (config.tools.length > 0 ? config.tools : undefined),
     agentName: "build-fixer-meta",
     cwd: opts.cwd,
     signal: opts.signal,
@@ -84,7 +85,7 @@ Fix compilation errors. Output COMPLETE file content for each file:
 \`\`\``,
       model: "anthropic/claude-haiku-4-5",
       thinking: "off",
-      tools: config.tools.length > 0 ? config.tools : undefined,
+      tools: opts.tools ?? (config.tools.length > 0 ? config.tools : undefined),
       agentName: "build-fixer",
       cwd: opts.cwd,
     });
@@ -192,6 +193,7 @@ export async function askDiagnoser(opts: {
   task: string;
   testOutput: string;
   recentCommits: string;
+  tools?: string[];
   cwd?: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -251,7 +253,7 @@ Decompose these test failures into per-error analysis tasks.`;
     systemPrompt: decomposerPrompt,
     model,
     thinking: diagnoserConfig.thinking || "low",
-    tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
+    tools: opts.tools ?? (diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"]),
     agentName: "diagnoser-meta",
     cwd: opts.cwd,
     signal: opts.signal,
@@ -287,7 +289,7 @@ Do NOT propose fixes — only diagnose.
       systemPrompt: directPrompt,
       model,
       thinking: diagnoserConfig.thinking || "low",
-      tools: diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"],
+      tools: opts.tools ?? (diagnoserConfig.tools.length > 0 ? diagnoserConfig.tools : ["read", "bash"]),
       agentName: "diagnoser",
       cwd: opts.cwd,
       signal: opts.signal,

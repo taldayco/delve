@@ -210,3 +210,71 @@ export async function vikingCommitSession(sessionId: string): Promise<boolean> {
   });
   return resp.ok;
 }
+
+// ─── Persistent Memory ─────────────────────────────────────────────────────
+
+/**
+ * Write content to a persistent Viking memory URI.
+ * Uses the viking://memories/ namespace which is not overwritten by ingest.py re-indexing.
+ * @param uri - Target URI (e.g. "viking://memories/delve/diagnoses/2026-03-12T...")
+ * @param content - Content to persist
+ */
+export async function vikingWriteMemory(uri: string, content: string): Promise<boolean> {
+  const resp = await callBridge({
+    command: "write",
+    args: { uri, content },
+  });
+  if (!resp.ok) {
+    vikingDebug(`writeMemory failed for ${uri}: ${resp.error}`);
+  }
+  return resp.ok;
+}
+
+// ─── Path → URI Mapping ────────────────────────────────────────────────────
+
+/**
+ * Cached directory map loaded from .pi/viking_directory_map.json.
+ * Written by ingest.py as the single source of truth for path→URI mappings.
+ * Sorted longest-prefix-first so specific dirs (src/game/terrain) match before
+ * broader ones (src/game).
+ */
+let _directoryMapCache: [string, string][] | null = null;
+
+function loadDirectoryMap(): [string, string][] {
+  if (_directoryMapCache) return _directoryMapCache;
+
+  const { readFileSync } = require("node:fs");
+  const mapPath = join(dirname(dirname(dirname(dirname(__filename)))), "viking_directory_map.json");
+
+  try {
+    const raw: Record<string, string> = JSON.parse(readFileSync(mapPath, "utf-8"));
+    // Sort by key length descending so most-specific prefix wins
+    _directoryMapCache = Object.entries(raw)
+      .sort((a, b) => b[0].length - a[0].length)
+      .map(([dir, uri]) => [
+        dir.endsWith("/") ? dir : dir + "/",
+        uri.endsWith("/") ? uri : uri + "/",
+      ]);
+    vikingDebug(`loaded directory map (${_directoryMapCache.length} entries) from ${mapPath}`);
+  } catch (e: any) {
+    vikingDebug(`failed to load directory map: ${e.message}`);
+    _directoryMapCache = [];
+  }
+
+  return _directoryMapCache;
+}
+
+/**
+ * Convert a project-relative file path to a viking:// URI.
+ * Returns undefined if the path doesn't match any known directory.
+ */
+export function pathToVikingUri(filePath: string): string | undefined {
+  // Normalize: strip leading ./ or /
+  const normalized = filePath.replace(/^\.\//, "").replace(/^\//, "");
+  for (const [prefix, vikingPrefix] of loadDirectoryMap()) {
+    if (normalized.startsWith(prefix)) {
+      return vikingPrefix + normalized.slice(prefix.length);
+    }
+  }
+  return undefined;
+}

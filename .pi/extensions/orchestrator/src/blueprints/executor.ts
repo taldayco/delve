@@ -141,7 +141,17 @@ export async function executeBlueprint(
       }
     }
   } catch (error: any) {
-    return { ok: false, failedPhase: "unknown", completedPhases, worktreePath: context.data.worktreePath };
+    const msg = error?.message || String(error);
+    const stack = error?.stack || "";
+    console.error(`[blueprint] Unhandled error in phase ${currentPhaseName}:\n${msg}\n${stack}`);
+    context.ctx.ui.notify(`Blueprint error in ${currentPhaseName}: ${msg}`, "error");
+    return {
+      ok: false,
+      failedPhase: currentPhaseName ?? "unknown",
+      errorMessage: msg,
+      completedPhases,
+      worktreePath: context.data.worktreePath,
+    };
   }
 
   return { ok: true, completedPhases, worktreePath: context.data.worktreePath };

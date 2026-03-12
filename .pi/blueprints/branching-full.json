@@ -48,6 +48,12 @@
       "on_failure": "diagnose"
     },
     {
+      "name": "visual_test",
+      "type": "deterministic",
+      "handler": "visual_test",
+      "on_failure": "diagnose"
+    },
+    {
       "name": "diagnose",
       "type": "agentic",
       "handler": "diagnose",

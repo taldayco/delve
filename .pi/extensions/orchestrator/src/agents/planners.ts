@@ -12,6 +12,7 @@ async function askSubsystemPlanner(opts: {
   task: string;
   subsystem: string;
   codebaseContext: string;
+  tools?: string[];
   cwd?: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -56,7 +57,7 @@ ${opts.codebaseContext}`;
     systemPrompt,
     model: plannerConfig.model || "anthropic/claude-sonnet-4-6",
     thinking: plannerConfig.thinking || "medium",
-    tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
+    tools: opts.tools ?? (plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined),
     agentName: `planner-${opts.subsystem}`,
     cwd: opts.cwd,
     signal: opts.signal,
@@ -72,6 +73,7 @@ ${opts.codebaseContext}`;
 export async function askParallelPlanner(opts: {
   task: string;
   subsystemContexts: Record<string, string>;
+  tools?: string[];
   cwd?: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -83,6 +85,7 @@ export async function askParallelPlanner(opts: {
       task: opts.task,
       subsystem,
       codebaseContext: opts.subsystemContexts[subsystem],
+      tools: opts.tools,
       cwd: opts.cwd,
       signal: opts.signal,
     })
@@ -122,6 +125,7 @@ export async function askParallelPlanner(opts: {
 export async function askMetaPlanner(opts: {
   task: string;
   codebaseContext: string;
+  tools?: string[];
   cwd?: string;
   signal?: AbortSignal;
 }): Promise<string> {
@@ -173,7 +177,7 @@ ${opts.codebaseContext}`;
     systemPrompt,
     model: plannerConfig.model || "anthropic/claude-sonnet-4-6",
     thinking: plannerConfig.thinking || "medium",
-    tools: plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined,
+    tools: opts.tools ?? (plannerConfig.tools.length > 0 ? plannerConfig.tools : undefined),
     agentName: "planner",
     cwd: opts.cwd,
     signal: opts.signal,

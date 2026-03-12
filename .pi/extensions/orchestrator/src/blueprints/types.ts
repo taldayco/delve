@@ -43,6 +43,7 @@ export interface BlueprintContext {
 export interface BlueprintResult {
   ok: boolean;
   failedPhase?: string;
+  errorMessage?: string;
   completedPhases: string[];
   worktreePath?: string;
 }

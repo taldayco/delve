@@ -24,6 +24,7 @@ import {
   getChangedFiles,
   getDiff,
   getCodebaseContext,
+  getCodebaseContextBudgeted,
   resolveSubsystems,
   runShaderValidation,
   applyFileBlocks,
@@ -37,6 +38,40 @@ import {
 } from "../tools.js";
 import type { BlueprintContext } from "./types.js";
 import { SELF_PHASE_HANDLERS } from "./handlers-self.js";
+
+// ─── Visual Test Helpers ──────────────────────────────────────────────────────
+
+const VISUAL_TEST_SIMILARITY_THRESHOLD = 99;
+const VISUAL_TEST_BASELINE = ".pi/baselines/visual_baseline.png";
+const VISUAL_TEST_CAPTURE = "/tmp/delve-visual-test-capture.png";
+const VISUAL_TEST_SOCKET = "/tmp/delve-visual-test.sock";
+const VISUAL_TEST_SETTLE_MS = 2000; // wait for scene to render
+
+/** Send a command to the running app via Unix socket IPC. */
+function agentCommand(
+  socketPath: string,
+  cmd: string,
+  params: Record<string, any> = {},
+): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const { createConnection } = require("node:net");
+  return new Promise((resolve) => {
+    const socket = createConnection({ path: socketPath }, () => {
+      socket.write(JSON.stringify({ cmd, params }) + "\n");
+    });
+    let buffer = "";
+    socket.on("data", (data: Buffer) => {
+      buffer += data.toString();
+      const nl = buffer.indexOf("\n");
+      if (nl >= 0) {
+        socket.end();
+        try { resolve(JSON.parse(buffer.substring(0, nl))); }
+        catch { resolve({ ok: false, error: "Parse error" }); }
+      }
+    });
+    socket.on("error", (err: Error) => resolve({ ok: false, error: err.message }));
+    socket.setTimeout(10_000, () => { socket.end(); resolve({ ok: false, error: "Timeout" }); });
+  });
+}
 
 // ─── Phase Handlers ──────────────────────────────────────────────────────────
 
@@ -96,11 +131,21 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       for (const sub of subsystems) {
         subsystemContexts[sub] = await getSubsystemCodebaseContext(sub, wt);
       }
-      plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts, cwd: wt, signal: ctx.signal });
+      plan = await askParallelPlanner({
+        task: ctx.prompt, subsystemContexts, cwd: wt, signal: ctx.signal,
+        tools: ["code_list_subsystem", "code_find_definition", "code_find_usages", "git_status", "git_diff_from_main", "project_overview", "viking_search", "viking_read"],
+      });
     } else {
-      // Single-agent planning for single-subsystem tasks
-      const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
-      plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext, cwd: wt, signal: ctx.signal });
+      // Single-agent planning — use budgeted context (L1 → L0 → keyword)
+      const codebaseContext = await getCodebaseContextBudgeted(
+        ctx.prompt,
+        "anthropic/claude-sonnet-4-6",
+        wt,
+      );
+      plan = await askMetaPlanner({
+        task: ctx.prompt, codebaseContext, cwd: wt, signal: ctx.signal,
+        tools: ["code_list_subsystem", "code_find_definition", "code_find_usages", "git_status", "git_diff_from_main", "project_overview", "viking_search", "viking_read"],
+      });
     }
 
     ctx.data.plan = plan;
@@ -178,6 +223,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         buildOutput: build.summary,
         round: round + 1,
         maxRounds: MAX_BUILD_FIX_ROUNDS,
+        tools: ["build_configure", "build_compile", "build_clean", "code_find_definition", "code_find_usages", "viking_search", "viking_read"],
         cwd: wt,
         signal: ctx.signal,
       });
@@ -264,6 +310,101 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     return { ok: result.ok, output: result.summary };
   },
 
+  visual_test: async (ctx) => {
+    const { spawn } = require("node:child_process");
+    const { existsSync, unlinkSync } = require("node:fs");
+    const { join } = require("node:path");
+
+    const wt = ctx.data.worktreePath || process.cwd();
+    const binaryPath = join(wt, "build/topogen");
+    const baselinePath = join(wt, VISUAL_TEST_BASELINE);
+
+    // Skip if no baseline exists (first run — nothing to compare against)
+    if (!existsSync(baselinePath)) {
+      return { ok: true, output: "Visual test skipped — no baseline image found" };
+    }
+
+    // Skip if binary doesn't exist (build failed earlier but was optional)
+    if (!existsSync(binaryPath)) {
+      return { ok: false, output: "Visual test skipped — build/topogen not found" };
+    }
+
+    // Clean stale socket
+    try { unlinkSync(VISUAL_TEST_SOCKET); } catch { /* ignore */ }
+
+    // Launch app in agent mode
+    const appProc = spawn(binaryPath, ["--agent-mode", "--agent-socket", VISUAL_TEST_SOCKET], {
+      cwd: wt,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    try {
+      // Wait for socket to appear (up to 10s)
+      const startTime = Date.now();
+      while (Date.now() - startTime < 10_000) {
+        if (existsSync(VISUAL_TEST_SOCKET)) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (!existsSync(VISUAL_TEST_SOCKET)) {
+        return { ok: false, output: "Visual test failed — app did not start (socket timeout)" };
+      }
+
+      // Position camera to a known state
+      await agentCommand(VISUAL_TEST_SOCKET, "send_input", { key: "Home" });
+      // Let the scene settle
+      await new Promise((r) => setTimeout(r, VISUAL_TEST_SETTLE_MS));
+
+      // Capture frame
+      const captureResult = await agentCommand(VISUAL_TEST_SOCKET, "capture_frame", { path: VISUAL_TEST_CAPTURE });
+      if (!captureResult.ok) {
+        return { ok: false, output: `Visual test failed — capture error: ${captureResult.error}` };
+      }
+
+      // Stop app before comparing (frees GPU resources)
+      await agentCommand(VISUAL_TEST_SOCKET, "quit");
+      await new Promise((r) => setTimeout(r, 500));
+
+      // Compare frames using the toolshed's frame_diff logic inline
+      // We shell out to a small node script to avoid duplicating the PNG decoder
+      const compareScript = `
+        const { compareFrames } = require("${join(wt, ".pi/toolshed/src/frame_diff.ts").replace(/\\/g, "\\\\")}");
+        const r = compareFrames("${baselinePath.replace(/\\/g, "\\\\")}", "${VISUAL_TEST_CAPTURE.replace(/\\/g, "\\\\")}");
+        process.stdout.write(JSON.stringify(r));
+      `;
+      const { execSync } = require("node:child_process");
+      let similarity: number;
+      try {
+        const tsxBin = join(wt, ".pi/toolshed/node_modules/.bin/tsx");
+        const diffOutput = execSync(`${tsxBin} --eval '${compareScript}'`, {
+          cwd: wt,
+          encoding: "utf-8",
+          timeout: 30_000,
+        });
+        const diffResult = JSON.parse(diffOutput.trim());
+        similarity = diffResult.similarity ?? 0;
+        ctx.data.visualTestResult = diffResult;
+      } catch (e: any) {
+        return { ok: false, output: `Visual test failed — frame comparison error: ${e.message}` };
+      }
+
+      if (similarity < VISUAL_TEST_SIMILARITY_THRESHOLD) {
+        return {
+          ok: false,
+          output: `Visual regression detected: similarity ${similarity}% < ${VISUAL_TEST_SIMILARITY_THRESHOLD}% threshold`,
+        };
+      }
+
+      return { ok: true, output: `Visual test PASSED — similarity ${similarity}%` };
+    } finally {
+      // Ensure app is killed regardless of outcome
+      if (!appProc.killed) {
+        appProc.kill("SIGTERM");
+        await new Promise((r) => setTimeout(r, 300));
+        if (!appProc.killed) appProc.kill("SIGKILL");
+      }
+    }
+  },
+
   diagnose: async (ctx) => {
     const testResult = runTests(ctx.data.worktreePath);
     const { execSync } = require("node:child_process");
@@ -276,11 +417,26 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       task: ctx.prompt,
       testOutput: testResult.summary,
       recentCommits,
+      tools: ["test_run", "test_list", "app_launch", "app_send_input", "app_capture_frame", "app_compare_frames", "app_get_state", "app_stop", "viking_write_memory", "viking_search", "viking_read"],
       cwd: ctx.data.worktreePath,
       signal: ctx.signal,
     });
     ctx.data.diagnosis = diagnosis;
     writeState("diagnosis.md", diagnosis);
+
+    // Persist diagnosis to Viking persistent memory + session
+    if (diagnosis.length > 0 && await isVikingAvailable()) {
+      const { vikingWriteMemory } = await import("../tools/viking.js");
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      await vikingWriteMemory(
+        `viking://memories/delve/diagnoses/${timestamp}`,
+        `# Diagnosis: ${ctx.prompt.slice(0, 80)}\n\n${diagnosis}`,
+      );
+      if (ctx.data.vikingSessionId) {
+        await vikingAddMessage(ctx.data.vikingSessionId, `Diagnosis:\n${diagnosis}`, "assistant");
+      }
+    }
+
     return { ok: diagnosis.length > 0, output: "Diagnosis complete" };
   },
 

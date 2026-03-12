@@ -12,6 +12,7 @@ Maps project directories to viking:// URIs:
 Also seeds KEYWORD_SYNONYMS as an OpenViking SKILL for agent knowledge.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -117,7 +118,23 @@ def ingest_game_toplevel(client: SyncOpenViking) -> int:
     return count
 
 
+def write_directory_map() -> None:
+    """Write DIRECTORY_MAP to .pi/viking_directory_map.json as the single source of truth.
+
+    Includes the top-level src/game/ → game mapping that ingest_game_toplevel handles.
+    """
+    pi_dir = PROJECT_ROOT / ".pi"
+    pi_dir.mkdir(exist_ok=True)
+    full_map = {**DIRECTORY_MAP, "src/game": "viking://resources/delve/game"}
+    out_path = pi_dir / "viking_directory_map.json"
+    out_path.write_text(json.dumps(full_map, indent=2) + "\n")
+    print(f"Wrote directory map to {out_path.relative_to(PROJECT_ROOT)}\n")
+
+
 def main() -> None:
+    # Write the directory map before connecting — it's useful even if Viking is down
+    write_directory_map()
+
     print("Connecting to OpenViking...")
     client = SyncOpenViking()
     client.ping()

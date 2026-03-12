@@ -30,3 +30,6 @@ struct Animator {
 
 glm::mat4 joint_transform_to_mat4(const JointTransform &t);
 void compute_global_transforms(Animator &animator);
+
+struct GltfSkinData;
+SkeletonDef build_skeleton_def(const GltfSkinData &skin);

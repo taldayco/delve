@@ -28,6 +28,10 @@ import {
   runShaderValidation,
   applyFileBlocks,
   getSubsystemCodebaseContext,
+  isVikingAvailable,
+  vikingCreateSession,
+  vikingAddMessage,
+  vikingCommitSession,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
 } from "../tools.js";
@@ -63,8 +67,18 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
   resolve_subsystem: async (ctx) => {
     const wt = ctx.data.worktreePath;
-    const subsystems = resolveSubsystems(ctx.prompt);
-    const codebaseContext = getCodebaseContext(ctx.prompt, wt);
+
+    // Start a Viking memory session if available
+    if (await isVikingAvailable()) {
+      const sessionId = await vikingCreateSession(`blueprint-${Date.now()}`);
+      if (sessionId) {
+        ctx.data.vikingSessionId = sessionId;
+        await vikingAddMessage(sessionId, `Task: ${ctx.prompt}`, "user");
+      }
+    }
+
+    const subsystems = await resolveSubsystems(ctx.prompt);
+    const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
     const contextFiles = extractFilePaths(codebaseContext);
     ctx.data.subsystems = subsystems;
     ctx.data.contextFiles = contextFiles;
@@ -73,19 +87,19 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
   plan: async (ctx) => {
     const wt = ctx.data.worktreePath;
-    const subsystems = ctx.data.subsystems || resolveSubsystems(ctx.prompt);
+    const subsystems = ctx.data.subsystems || await resolveSubsystems(ctx.prompt);
     let plan: string;
 
     if (subsystems.length > 1) {
       // Parallel planning for multi-subsystem tasks
       const subsystemContexts: Record<string, string> = {};
       for (const sub of subsystems) {
-        subsystemContexts[sub] = getSubsystemCodebaseContext(sub, wt);
+        subsystemContexts[sub] = await getSubsystemCodebaseContext(sub, wt);
       }
       plan = await askParallelPlanner({ task: ctx.prompt, subsystemContexts, cwd: wt, signal: ctx.signal });
     } else {
       // Single-agent planning for single-subsystem tasks
-      const codebaseContext = getCodebaseContext(ctx.prompt, wt);
+      const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
       plan = await askMetaPlanner({ task: ctx.prompt, codebaseContext, cwd: wt, signal: ctx.signal });
     }
 
@@ -95,7 +109,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
   implement: async (ctx) => {
     const wt = ctx.data.worktreePath;
-    const subsystems = ctx.data.subsystems || resolveSubsystems(ctx.prompt);
+    const subsystems = ctx.data.subsystems || await resolveSubsystems(ctx.prompt);
     const contextFiles = ctx.data.contextFiles || [];
     const taskWithDiagnosis = ctx.data.diagnosis
       ? `${ctx.prompt}\n\n## Diagnosis\n${ctx.data.diagnosis}`
@@ -108,7 +122,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
       // Retry planner with format correction if no subtasks parsed
       if (subtasks.length === 0) {
-        const codebaseContext = getCodebaseContext(ctx.prompt, wt);
+        const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
         const correctedPlan = await askMetaPlanner({
           task: `Your previous output was:\n\n${ctx.data.plan}\n\nReformat this into the EXACT required format. Each subtask MUST use this header format:\n## Subtask N [subsystem]\n- Files: ...\n- Changes: ...\n- Acceptance criteria: ...\n\nValid subsystem tags: terrain, actor, shader, engine. Do NOT use ### or em-dashes. Use ## and [tag].`,
           codebaseContext: "",
@@ -325,6 +339,37 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       output: allPass
         ? `Verification PASSED (${metrics.domains.length} domains)`
         : `Verification FAILED:\n${verificationOutput}`,
+    };
+  },
+
+  memory_iterate: async (ctx) => {
+    const sessionId = ctx.data.vikingSessionId;
+    if (!sessionId || !(await isVikingAvailable())) {
+      return { ok: true, output: "Viking unavailable — memory phase skipped" };
+    }
+
+    // Record task outcome as a session message
+    const subsystems = ctx.data.subsystems || [];
+    const completedPhases = Object.keys(ctx.data).filter(
+      (k) => ctx.data[k] === true || (typeof ctx.data[k] === "string" && ctx.data[k].length > 0),
+    );
+    const outcome = ctx.data.buildOk && ctx.data.testsOk !== false ? "success" : "partial";
+
+    const summary = [
+      `## Run Summary`,
+      `- Subsystems: [${subsystems.join(", ")}]`,
+      `- Outcome: ${outcome}`,
+      `- Build: ${ctx.data.buildOk ? "PASS" : "FAIL/SKIP"}`,
+      `- Tests: ${ctx.data.testsOk === true ? "PASS" : ctx.data.testsOk === false ? "FAIL" : "SKIP"}`,
+      `- Data keys: ${completedPhases.join(", ")}`,
+    ].join("\n");
+
+    await vikingAddMessage(sessionId, summary, "assistant");
+    const committed = await vikingCommitSession(sessionId);
+
+    return {
+      ok: true,
+      output: committed ? "Memory committed" : "Memory commit failed (non-fatal)",
     };
   },
 

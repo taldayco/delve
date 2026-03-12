@@ -180,6 +180,7 @@ add_executable(topogen
     src/game/render/rig_renderer.cpp
     src/game/render/rig_animation.cpp
     src/game/terrain/instanced_terrain.cpp
+    src/game/joint_mapping.cpp
 )
 
 target_include_directories(topogen PRIVATE

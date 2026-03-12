@@ -11,8 +11,7 @@ struct SkinnedVertex {
     float roughness;                  //  4B  (location 4: FLOAT)
     float metallic;                   //  4B  (location 5: FLOAT)
     uint32_t joint_indices;           //  4B  (location 6: UBYTE4, packed)
-    float weight_x, weight_y, weight_z; // 12B (location 7: FLOAT3)
-    float _pad0;                      //  4B  padding to 72B
+    float weight_x, weight_y, weight_z, weight_w; // 16B (location 7: FLOAT4)
 };  // 72 bytes total
 static_assert(sizeof(SkinnedVertex) == 72, "SkinnedVertex must be 72 bytes");
 
@@ -27,3 +26,8 @@ struct SkinnedMeshData {
     uint32_t                   joint_count = 0;
     glm::vec3 aabb_min{0}, aabb_max{0};
 };
+
+struct GltfMeshData;
+struct GltfSkinData;
+
+SkinnedMeshData build_skinned_mesh(const GltfMeshData &mesh, const GltfSkinData &skin);

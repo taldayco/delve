@@ -53,6 +53,8 @@ public:
   SDL_GPUBuffer           *get_point_light_ssbo()  const { return point_light_ssbo;  }
   SDL_GPUGraphicsPipeline *get_terrain_pipeline()  const { return terrain_pipeline;  }
   SDL_GPUBuffer           *get_dummy_ssbo()        const { return dummy_ssbo;        }
+  SDL_GPUBuffer           *get_light_grid_ssbo()   const { return light_grid_ssbo;   }
+  SDL_GPUBuffer           *get_global_index_ssbo() const { return global_index_ssbo; }
 
   // Called from on_pre_frame_game (no frame cmd buf open). Releases and recreates
   // the depth texture if desired_depth_w/h differ from current depth_w/h.

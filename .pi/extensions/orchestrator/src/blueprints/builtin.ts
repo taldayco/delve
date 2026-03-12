@@ -16,6 +16,7 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
       { name: "Run tests", type: "deterministic", handler: "test" },
       { name: "Review", type: "agentic", handler: "review", optional: true },
       { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
     ],
   },
 
@@ -28,6 +29,7 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
       { name: "Implement", type: "agentic", handler: "implement" },
       { name: "Build", type: "deterministic", handler: "build" },
       { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
     ],
   },
 
@@ -41,6 +43,7 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
       { name: "Build", type: "deterministic", handler: "build" },
       { name: "Review", type: "agentic", handler: "review", optional: true },
       { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
     ],
   },
 
@@ -55,6 +58,7 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
       { name: "Build", type: "deterministic", handler: "build" },
       { name: "Run tests", type: "deterministic", handler: "test" },
       { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
     ],
   },
 
@@ -68,6 +72,7 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
       { name: "Build", type: "deterministic", handler: "build" },
       { name: "Validate shaders", type: "deterministic", handler: "shader_validate" },
       { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
     ],
   },
 };

@@ -14,7 +14,7 @@ layout(location = 3) in vec3  in_color;
 layout(location = 4) in float in_roughness;
 layout(location = 5) in float in_metallic;
 layout(location = 6) in uvec4 in_joint_indices;
-layout(location = 7) in vec3  in_weights;
+layout(location = 7) in vec4  in_weights;
 
 layout(location = 0) out vec3  frag_color;
 layout(location = 1) out vec3  frag_world_pos;
@@ -26,11 +26,10 @@ layout(location = 6) out float frag_metallic;
 
 void main() {
     // 4-bone linear blend skinning
-    float w3 = 1.0 - in_weights.x - in_weights.y - in_weights.z;
     mat4 skin_mat = joint_matrices[in_joint_indices.x] * in_weights.x
                   + joint_matrices[in_joint_indices.y] * in_weights.y
                   + joint_matrices[in_joint_indices.z] * in_weights.z
-                  + joint_matrices[in_joint_indices.w] * w3;
+                  + joint_matrices[in_joint_indices.w] * in_weights.w;
 
     vec4 world_pos = skin_mat * vec4(in_pos, 1.0);
     gl_Position    = projection * view * world_pos;

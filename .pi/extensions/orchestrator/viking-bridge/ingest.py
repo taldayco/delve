@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""One-shot ingestion script: indexes the Delve codebase into OpenViking.
+
+Maps project directories to viking:// URIs:
+  src/game/terrain/  → viking://resources/delve/terrain/
+  src/game/render/   → viking://resources/delve/actor/
+  src/shaders/       → viking://resources/delve/shader/
+  src/engine/        → viking://resources/delve/engine/
+  src/test/          → viking://resources/delve/test/
+  src/game/*.{h,cpp} → viking://resources/delve/game/
+
+Also seeds KEYWORD_SYNONYMS as an OpenViking SKILL for agent knowledge.
+"""
+
+import os
+import sys
+from pathlib import Path
+
+try:
+    from openviking import SyncOpenViking
+except ImportError:
+    print("ERROR: openviking package not installed. Run: pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(1)
+
+# Project root is 4 levels up from this script
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent.parent.parent.parent
+
+DIRECTORY_MAP = {
+    "src/game/terrain": "viking://resources/delve/terrain",
+    "src/game/render": "viking://resources/delve/actor",
+    "src/shaders": "viking://resources/delve/shader",
+    "src/engine": "viking://resources/delve/engine",
+    "src/test": "viking://resources/delve/test",
+}
+
+EXTENSIONS = {".h", ".cpp", ".glsl", ".comp.glsl"}
+
+# Subsystem taxonomy from context.ts KEYWORD_SYNONYMS (seeded as a SKILL)
+SUBSYSTEM_SKILL = """# Delve Subsystem Taxonomy
+
+Canonical subsystems: terrain, actor, shader, engine
+
+## Keyword → Subsystem Mapping
+- player/character/humanoid/npc/creature/figure → actor
+- walk/run/move/locomotion/gait/stride/step → actor + animation
+- limb/joint/arm/leg/torso/body/head/spine/shoulder/hip/knee/elbow → actor
+- animation/animate/skeleton/bone/keyframe/rig/pose/ik → animation (→ actor)
+- render/draw → actor (render subsystem)
+- terrain/noise/palette/hex/contour/lava/mesh/elevation/plateau → terrain
+- engine/camera/input/gpu/shader/test → engine (or shader for shader keyword)
+
+## Directory Layout
+- src/game/terrain/ — Terrain generation pipeline
+- src/game/render/ — Actor/rig rendering
+- src/shaders/ — GLSL shaders (SPIR-V compiled)
+- src/engine/ — Reusable engine framework
+- src/test/ — Test infrastructure
+- src/game/ — Top-level game files (topo_game, config, joint_mapping)
+"""
+
+
+def should_index(path: Path) -> bool:
+    """Check if a file should be indexed based on extension."""
+    return any(path.name.endswith(ext) for ext in EXTENSIONS)
+
+
+def ingest_directory(client: SyncOpenViking, src_dir: str, viking_base: str) -> int:
+    """Recursively index files from src_dir into viking_base URI."""
+    full_dir = PROJECT_ROOT / src_dir
+    if not full_dir.is_dir():
+        print(f"  SKIP {src_dir} (not found)")
+        return 0
+
+    count = 0
+    for root, _dirs, files in os.walk(full_dir):
+        for fname in sorted(files):
+            fpath = Path(root) / fname
+            if not should_index(fpath):
+                continue
+            rel = fpath.relative_to(full_dir)
+            uri = f"{viking_base}/{rel}"
+            content = fpath.read_text(errors="replace")
+            metadata = {
+                "source_path": str(fpath.relative_to(PROJECT_ROOT)),
+                "language": fpath.suffix.lstrip("."),
+                "lines": content.count("\n") + 1,
+            }
+            client.add_resource(uri=uri, content=content, metadata=metadata)
+            count += 1
+            print(f"  + {uri}")
+
+    return count
+
+
+def ingest_game_toplevel(client: SyncOpenViking) -> int:
+    """Index top-level src/game/ files (not subdirectories)."""
+    game_dir = PROJECT_ROOT / "src" / "game"
+    if not game_dir.is_dir():
+        return 0
+
+    count = 0
+    for fpath in sorted(game_dir.iterdir()):
+        if fpath.is_file() and should_index(fpath):
+            rel = fpath.relative_to(game_dir)
+            uri = f"viking://resources/delve/game/{rel}"
+            content = fpath.read_text(errors="replace")
+            metadata = {
+                "source_path": str(fpath.relative_to(PROJECT_ROOT)),
+                "language": fpath.suffix.lstrip("."),
+                "lines": content.count("\n") + 1,
+            }
+            client.add_resource(uri=uri, content=content, metadata=metadata)
+            count += 1
+            print(f"  + {uri}")
+
+    return count
+
+
+def main() -> None:
+    print("Connecting to OpenViking...")
+    client = SyncOpenViking()
+    client.ping()
+    print("Connected.\n")
+
+    total = 0
+
+    # Index mapped directories
+    for src_dir, viking_uri in DIRECTORY_MAP.items():
+        print(f"Indexing {src_dir} → {viking_uri}/")
+        count = ingest_directory(client, src_dir, viking_uri)
+        total += count
+        print(f"  ({count} files)\n")
+
+    # Index top-level game files
+    print("Indexing src/game/ (top-level) → viking://resources/delve/game/")
+    count = ingest_game_toplevel(client)
+    total += count
+    print(f"  ({count} files)\n")
+
+    # Seed subsystem taxonomy as a SKILL
+    print("Seeding subsystem taxonomy SKILL...")
+    client.add_resource(
+        uri="viking://agent/skills/delve-subsystems",
+        content=SUBSYSTEM_SKILL,
+        metadata={"type": "skill", "domain": "delve"},
+    )
+    print("  + viking://agent/skills/delve-subsystems\n")
+
+    print(f"Done. Indexed {total} files + 1 skill.")
+
+
+if __name__ == "__main__":
+    main()

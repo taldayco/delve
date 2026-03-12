@@ -1,6 +1,12 @@
 // ─── Codebase Context ────────────────────────────────────────────────────────
 
 import { shell } from "./shell.js";
+import {
+  isVikingAvailable,
+  vikingSearch,
+  vikingOverview,
+  SUBSYSTEM_VIKING_URI,
+} from "./viking.js";
 import type { MapCoverageReport } from "./types.js";
 
 // Two-tier synonym map: natural language terms → fine-grained subsystem names
@@ -58,23 +64,36 @@ export const SUBSYSTEM_CANONICAL: Record<string, string> = {
   engine_ui: "engine", engine_ipc: "engine",
 };
 
-export function getCodebaseContext(task: string, baseCwd?: string): string {
-  // Gather relevant context based on task keywords
-  const sections: string[] = [];
+// ─── Keyword Fallback Implementations ───────────────────────────────────────
 
-  // Always include project overview
+function resolveSubsystemsKeyword(task: string): string[] {
+  const taskLower = (task || "").toLowerCase();
+  const matched = new Set<string>();
+
+  for (const [keyword, subsystems] of Object.entries(KEYWORD_SYNONYMS)) {
+    const re = new RegExp(`\\b${keyword}\\b`, "i");
+    if (re.test(taskLower)) {
+      for (const sub of subsystems) {
+        const canonical = SUBSYSTEM_CANONICAL[sub];
+        if (canonical) matched.add(canonical);
+      }
+    }
+  }
+
+  return Array.from(matched);
+}
+
+function getCodebaseContextKeyword(task: string, baseCwd?: string): string {
+  const sections: string[] = [];
   const { readFileSync, existsSync } = require("node:fs");
   const { join } = require("node:path");
   const cwd = baseCwd || process.cwd();
 
-  // Read config.h for constants
   const configPath = join(cwd, "src/game/config.h");
   if (existsSync(configPath)) {
     sections.push(`### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``);
   }
 
-  // Resolve task keywords → canonical subsystem names via synonym map
-  // Use word-boundary regex to avoid substring matches
   const taskLower = (task || "").toLowerCase();
   const matchedSubsystems = new Set<string>();
 
@@ -87,7 +106,6 @@ export function getCodebaseContext(task: string, baseCwd?: string): string {
     }
   }
 
-  // Resolve subsystems → directories and list files
   const listedDirs = new Set<string>();
   for (const subsystem of matchedSubsystems) {
     const dirs = SUBSYSTEM_DIRS[subsystem] || [];
@@ -101,7 +119,6 @@ export function getCodebaseContext(task: string, baseCwd?: string): string {
     }
   }
 
-  // If no specific subsystem matched, show the main terrain and game dirs
   if (listedDirs.size === 0) {
     const ls = shell("find src/game -type f -name '*.h' | sort 2>/dev/null", cwd);
     if (ls.ok) {
@@ -112,28 +129,21 @@ export function getCodebaseContext(task: string, baseCwd?: string): string {
   return sections.join("\n\n");
 }
 
-/**
- * Get codebase context scoped to a single canonical subsystem.
- * Returns config.h + file listings only for that subsystem's directories.
- */
-export function getSubsystemCodebaseContext(subsystem: string, baseCwd?: string): string {
+function getSubsystemCodebaseContextKeyword(subsystem: string, baseCwd?: string): string {
   const { readFileSync, existsSync } = require("node:fs");
   const { join } = require("node:path");
   const cwd = baseCwd || process.cwd();
   const sections: string[] = [];
 
-  // Always include project overview
   const configPath = join(cwd, "src/game/config.h");
   if (existsSync(configPath)) {
     sections.push(`### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``);
   }
 
-  // Find all fine-grained subsystem names that map to this canonical subsystem
   const fineGrained = Object.entries(SUBSYSTEM_CANONICAL)
     .filter(([_, canonical]) => canonical === subsystem)
     .map(([fine]) => fine);
 
-  // Collect directories for this subsystem
   const listedDirs = new Set<string>();
   for (const fine of fineGrained) {
     const dirs = SUBSYSTEM_DIRS[fine] || [];
@@ -150,26 +160,97 @@ export function getSubsystemCodebaseContext(subsystem: string, baseCwd?: string)
   return sections.join("\n\n");
 }
 
+// ─── Public API (Viking with Keyword Fallback) ──────────────────────────────
+
 /**
  * Resolve a task description to canonical subsystem names.
- * Uses word-boundary matching to avoid substring false positives.
- * Returns deduplicated array of: "terrain", "actor", "shader", "engine".
+ * Viking path: L0 search scoped to viking://resources/delve, extract subsystem from URIs.
+ * Fallback: keyword regex matching.
  */
-export function resolveSubsystems(task: string): string[] {
-  const taskLower = (task || "").toLowerCase();
-  const matched = new Set<string>();
+export async function resolveSubsystems(task: string): Promise<string[]> {
+  if (await isVikingAvailable()) {
+    const results = await vikingSearch(task, "L0", "viking://resources/delve", 5);
+    if (results.length > 0) {
+      const matched = new Set<string>();
+      for (const r of results) {
+        // Extract subsystem from URI: viking://resources/delve/<subsystem>/...
+        const m = r.uri.match(/^viking:\/\/resources\/delve\/([^/]+)/);
+        if (m) {
+          const sub = m[1];
+          // Map known URI segments to canonical names
+          if (sub in SUBSYSTEM_VIKING_URI || ["terrain", "actor", "shader", "engine", "test", "game"].includes(sub)) {
+            const canonical = sub === "test" ? "engine" : sub === "game" ? "engine" : sub;
+            matched.add(canonical);
+          }
+        }
+      }
+      if (matched.size > 0) return Array.from(matched);
+    }
+  }
 
-  for (const [keyword, subsystems] of Object.entries(KEYWORD_SYNONYMS)) {
-    const re = new RegExp(`\\b${keyword}\\b`, "i");
-    if (re.test(taskLower)) {
-      for (const sub of subsystems) {
-        const canonical = SUBSYSTEM_CANONICAL[sub];
-        if (canonical) matched.add(canonical);
+  return resolveSubsystemsKeyword(task);
+}
+
+/**
+ * Get codebase context for a task.
+ * Viking path: config.h + L1 search results (~2K token overviews per match).
+ * Fallback: config.h + directory file listings.
+ */
+export async function getCodebaseContext(task: string, baseCwd?: string): Promise<string> {
+  if (await isVikingAvailable()) {
+    const sections: string[] = [];
+    const { readFileSync, existsSync } = require("node:fs");
+    const { join } = require("node:path");
+    const cwd = baseCwd || process.cwd();
+
+    // Always include config.h
+    const configPath = join(cwd, "src/game/config.h");
+    if (existsSync(configPath)) {
+      sections.push(`### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``);
+    }
+
+    // L1 search for relevant overviews
+    const results = await vikingSearch(task, "L1", "viking://resources/delve", 8);
+    if (results.length > 0) {
+      for (const r of results) {
+        sections.push(`### ${r.uri}\n${r.snippet}`);
+      }
+      return sections.join("\n\n");
+    }
+    // If Viking search returned no results, fall through
+  }
+
+  return getCodebaseContextKeyword(task, baseCwd);
+}
+
+/**
+ * Get codebase context scoped to a single canonical subsystem.
+ * Viking path: config.h + L1 overview of the subsystem's viking:// directory.
+ * Fallback: config.h + file listings.
+ */
+export async function getSubsystemCodebaseContext(subsystem: string, baseCwd?: string): Promise<string> {
+  if (await isVikingAvailable()) {
+    const vikingUri = SUBSYSTEM_VIKING_URI[subsystem];
+    if (vikingUri) {
+      const overview = await vikingOverview(vikingUri);
+      if (overview) {
+        const sections: string[] = [];
+        const { readFileSync, existsSync } = require("node:fs");
+        const { join } = require("node:path");
+        const cwd = baseCwd || process.cwd();
+
+        const configPath = join(cwd, "src/game/config.h");
+        if (existsSync(configPath)) {
+          sections.push(`### src/game/config.h\n\`\`\`cpp\n${readFileSync(configPath, "utf-8").slice(0, 3000)}\n\`\`\``);
+        }
+
+        sections.push(`### ${vikingUri} (L1 Overview)\n${overview}`);
+        return sections.join("\n\n");
       }
     }
   }
 
-  return Array.from(matched);
+  return getSubsystemCodebaseContextKeyword(subsystem, baseCwd);
 }
 
 export function detectMapCoverage(): MapCoverageReport {
@@ -196,7 +277,6 @@ export function detectMapCoverage(): MapCoverageReport {
     } catch { /* ignore */ }
   }
 
-  // Check for directory names not covered by any keyword
   const allKeywords = new Set(Object.keys(KEYWORD_SYNONYMS));
   const unmappedKeywords: string[] = [];
   for (const dir of unmappedDirs) {

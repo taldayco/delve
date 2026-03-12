@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSubagent } from "./spawn.js";
 import { loadAgentConfig, PROJECT_ROOT } from "./config.js";
 import { writeState } from "./state.js";
+import { isVikingAvailable, vikingSearch } from "../tools/viking.js";
 import type { MetaDecomposition } from "./types.js";
 
 export function loadFileContents(files: string[], budgetChars?: number, cwd?: string): string {
@@ -146,13 +147,26 @@ export async function delegateToWorkers(
   const workerModel = workerConfig.model || "anthropic/claude-haiku-4-5";
 
   const workerPromises = decomposition.subtasks.map(async (st) => {
-    // Load the target file and any context files
+    // Load the target file (always direct read — need exact current contents)
     const fileContents: Record<string, string> = {};
     const targetPath = st.file.startsWith("/") ? st.file : join(basePath, st.file);
     if (existsSync(targetPath) && statSync(targetPath).isFile()) {
       fileContents[st.file] = readFileSync(targetPath, "utf-8");
     }
+
+    // Load context files: Viking L2 with direct-read fallback
+    const useViking = await isVikingAvailable();
     for (const dep of st.context_files.slice(0, 3)) {
+      if (useViking) {
+        // Try Viking L2 search — may include cross-linked context
+        const results = await vikingSearch(dep, "L2", undefined, 1);
+        if (results.length > 0 && results[0].snippet) {
+          const content = results[0].snippet;
+          fileContents[dep] = content.length > 4000 ? content.slice(0, 4000) + "\n... [truncated]" : content;
+          continue;
+        }
+      }
+      // Fallback: direct file read
       const depPath = dep.startsWith("/") ? dep : join(basePath, dep);
       if (existsSync(depPath) && statSync(depPath).isFile()) {
         const content = readFileSync(depPath, "utf-8");

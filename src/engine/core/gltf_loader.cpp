@@ -1,4 +1,5 @@
 #include "core/gltf_loader.h"
+#include "core/skinned_mesh.h"
 #include <cgltf.h>
 #include <stb_image.h>
 #include <SDL3/SDL_log.h>
@@ -63,7 +64,7 @@ static bool is_srgb_texture(const cgltf_material *mat, const cgltf_texture *tex)
 // --- Mesh extraction ---
 
 static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
-                          std::vector<GltfMeshData> &out) {
+                          std::vector<GltfMeshData> &out, int skin_index = -1) {
     for (cgltf_size pi = 0; pi < mesh->primitives_count; ++pi) {
         const cgltf_primitive &prim = mesh->primitives[pi];
         if (prim.type != cgltf_primitive_type_triangles) continue;
@@ -72,20 +73,25 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
         md.name = mesh->name ? mesh->name : "mesh";
         if (prim.material)
             md.material_index = (int)(prim.material - data->materials);
+        md.skin_index = skin_index;
 
         // Find accessors
-        const cgltf_accessor *pos_acc    = nullptr;
-        const cgltf_accessor *norm_acc   = nullptr;
-        const cgltf_accessor *uv_acc     = nullptr;
-        const cgltf_accessor *tan_acc    = nullptr;
+        const cgltf_accessor *pos_acc     = nullptr;
+        const cgltf_accessor *norm_acc    = nullptr;
+        const cgltf_accessor *uv_acc      = nullptr;
+        const cgltf_accessor *tan_acc     = nullptr;
+        const cgltf_accessor *joints_acc  = nullptr;
+        const cgltf_accessor *weights_acc = nullptr;
 
         for (cgltf_size ai = 0; ai < prim.attributes_count; ++ai) {
             const cgltf_attribute &attr = prim.attributes[ai];
             switch (attr.type) {
-                case cgltf_attribute_type_position: pos_acc  = attr.data; break;
-                case cgltf_attribute_type_normal:   norm_acc = attr.data; break;
-                case cgltf_attribute_type_texcoord: uv_acc   = attr.data; break;
-                case cgltf_attribute_type_tangent:  tan_acc  = attr.data; break;
+                case cgltf_attribute_type_position: pos_acc     = attr.data; break;
+                case cgltf_attribute_type_normal:   norm_acc    = attr.data; break;
+                case cgltf_attribute_type_texcoord: uv_acc      = attr.data; break;
+                case cgltf_attribute_type_tangent:  tan_acc     = attr.data; break;
+                case cgltf_attribute_type_joints:   joints_acc  = attr.data; break;
+                case cgltf_attribute_type_weights:  weights_acc = attr.data; break;
                 default: break;
             }
         }
@@ -135,6 +141,34 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
         } else {
             for (cgltf_size vi = 0; vi < vert_count; ++vi)
                 md.vertices[vi].tangent = {1.0f, 0.0f, 0.0f, 1.0f};
+        }
+
+        // Extract JOINTS_0 / WEIGHTS_0
+        if (joints_acc && weights_acc) {
+            md.joint_indices.resize(vert_count, glm::u8vec4(0));
+            md.weights.resize(vert_count, glm::vec4(0.0f));
+
+            for (cgltf_size vi = 0; vi < vert_count; ++vi) {
+                cgltf_uint j[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_uint(joints_acc, vi, j, 4);
+                md.joint_indices[vi] = glm::u8vec4(
+                    (uint8_t)(j[0] > 255 ? 0 : j[0]),
+                    (uint8_t)(j[1] > 255 ? 0 : j[1]),
+                    (uint8_t)(j[2] > 255 ? 0 : j[2]),
+                    (uint8_t)(j[3] > 255 ? 0 : j[3]));
+
+                float w[4] = {0, 0, 0, 0};
+                cgltf_accessor_read_float(weights_acc, vi, w, 4);
+                float sum = w[0] + w[1] + w[2] + w[3];
+                if (sum > 1e-6f) {
+                    float inv = 1.0f / sum;
+                    w[0] *= inv; w[1] *= inv; w[2] *= inv; w[3] *= inv;
+                } else {
+                    w[0] = 1.0f; w[1] = 0.0f; w[2] = 0.0f; w[3] = 0.0f;
+                    md.joint_indices[vi] = glm::u8vec4(0);
+                }
+                md.weights[vi] = glm::vec4(w[0], w[1], w[2], w[3]);
+            }
         }
 
         // Extract indices
@@ -207,9 +241,25 @@ GltfAsset load_gltf(const std::string &path) {
             asset.textures.push_back(std::move(tex));
     }
 
-    // Extract meshes
-    for (cgltf_size i = 0; i < data->meshes_count; ++i)
-        extract_mesh(&data->meshes[i], data, asset.meshes);
+    // Extract meshes via node traversal (captures skin association)
+    std::vector<bool> mesh_extracted(data->meshes_count, false);
+    for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
+        const cgltf_node &node = data->nodes[ni];
+        if (!node.mesh) continue;
+        int mesh_idx = (int)(node.mesh - data->meshes);
+        if (mesh_idx < 0 || mesh_idx >= (int)data->meshes_count) continue;
+        if (mesh_extracted[mesh_idx]) continue;
+        mesh_extracted[mesh_idx] = true;
+
+        int skin_index = -1;
+        if (node.skin) skin_index = (int)(node.skin - data->skins);
+        extract_mesh(node.mesh, data, asset.meshes, skin_index);
+    }
+    // Fallback: extract any meshes not referenced by nodes
+    for (cgltf_size i = 0; i < data->meshes_count; ++i) {
+        if (!mesh_extracted[i])
+            extract_mesh(&data->meshes[i], data, asset.meshes, -1);
+    }
 
     // Extract skins (skeleton hierarchies + inverse bind matrices)
     for (cgltf_size si = 0; si < data->skins_count; ++si) {
@@ -274,7 +324,49 @@ GltfAsset load_gltf(const std::string &path) {
     cgltf_free(data);
     asset.ok = true;
 
-    SDL_Log("GltfLoader: Loaded '%s' (%zu meshes, %zu textures)",
-            path.c_str(), asset.meshes.size(), asset.textures.size());
+    SDL_Log("GltfLoader: Loaded '%s' (%zu meshes, %zu textures, %zu skins)",
+            path.c_str(), asset.meshes.size(), asset.textures.size(), asset.skins.size());
     return asset;
+}
+
+SkinnedMeshData build_skinned_mesh(const GltfMeshData &mesh, const GltfSkinData &skin) {
+    SkinnedMeshData out;
+    if (!mesh.has_skinning()) {
+        SDL_Log("build_skinned_mesh: mesh '%s' has no skinning data", mesh.name.c_str());
+        return out;
+    }
+
+    size_t vert_count = mesh.vertices.size();
+    out.vertices.resize(vert_count);
+    out.indices = mesh.indices;
+
+    glm::vec3 aabb_min(+1e30f), aabb_max(-1e30f);
+
+    for (size_t i = 0; i < vert_count; ++i) {
+        const GltfVertex &gv = mesh.vertices[i];
+        const glm::u8vec4 &ji = mesh.joint_indices[i];
+        const glm::vec4 &wt = mesh.weights[i];
+        SkinnedVertex &sv = out.vertices[i];
+
+        sv.pos_x = gv.position.x; sv.pos_y = gv.position.y; sv.pos_z = gv.position.z;
+        sv.nx = gv.normal.x; sv.ny = gv.normal.y; sv.nz = gv.normal.z;
+        sv.u = gv.texcoord.x; sv.v = gv.texcoord.y;
+        sv.color_r = 0.8f; sv.color_g = 0.8f; sv.color_b = 0.8f;
+        sv.roughness = 0.5f;
+        sv.metallic = 0.0f;
+        sv.joint_indices = pack_joint_indices(ji.x, ji.y, ji.z, ji.w);
+        sv.weight_x = wt.x; sv.weight_y = wt.y; sv.weight_z = wt.z; sv.weight_w = wt.w;
+
+        aabb_min = glm::min(aabb_min, gv.position);
+        aabb_max = glm::max(aabb_max, gv.position);
+    }
+
+    out.aabb_min = aabb_min;
+    out.aabb_max = aabb_max;
+    out.inverse_bind_matrices = skin.inverse_bind_matrices;
+    out.joint_count = (uint32_t)skin.joints.size();
+
+    SDL_Log("build_skinned_mesh: '%s' -> %zu verts, %zu tris, %u joints",
+            mesh.name.c_str(), vert_count, mesh.indices.size() / 3, out.joint_count);
+    return out;
 }

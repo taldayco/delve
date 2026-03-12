@@ -17,6 +17,15 @@ struct GltfMeshData {
     std::vector<GltfVertex> vertices;
     std::vector<uint32_t>   indices;
     int                     material_index = -1;
+
+    // Skinning data (populated when JOINTS_0/WEIGHTS_0 attributes exist)
+    std::vector<glm::u8vec4> joint_indices;  // per-vertex, 4 joints [0..255]
+    std::vector<glm::vec4>   weights;        // per-vertex, 4 weights (sum to 1.0)
+    int                      skin_index = -1; // index into GltfAsset::skins
+
+    bool has_skinning() const {
+        return !joint_indices.empty() && !weights.empty() && skin_index >= 0;
+    }
 };
 
 struct GltfTextureData {

@@ -1,4 +1,6 @@
 #include "core/animator.h"
+#include "core/gltf_loader.h"
+#include <SDL3/SDL_log.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 glm::mat4 joint_transform_to_mat4(const JointTransform &t) {
@@ -29,4 +31,27 @@ void compute_global_transforms(Animator &animator) {
     }
 
     animator.dirty = false;
+}
+
+SkeletonDef build_skeleton_def(const GltfSkinData &skin) {
+    SkeletonDef skel;
+    uint32_t n = (uint32_t)skin.joints.size();
+    skel.parent_indices.resize(n);
+    skel.bind_pose.resize(n);
+    skel.inverse_bind_matrices = skin.inverse_bind_matrices;
+    skel.joint_names.resize(n);
+
+    for (uint32_t i = 0; i < n; ++i) {
+        const GltfSkinJoint &sj = skin.joints[i];
+        skel.parent_indices[i] = sj.parent_index;
+        skel.joint_names[i]    = sj.name;
+        skel.bind_pose[i].translation = sj.translation;
+        skel.bind_pose[i].scale       = sj.scale;
+        // CRITICAL: glTF stores quaternions as (x,y,z,w); GLM expects (w,x,y,z)
+        const glm::vec4 &r = sj.rotation;
+        skel.bind_pose[i].rotation = glm::quat(r.w, r.x, r.y, r.z);
+    }
+
+    SDL_Log("build_skeleton_def: %u joints", n);
+    return skel;
 }

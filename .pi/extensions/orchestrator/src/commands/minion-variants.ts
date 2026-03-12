@@ -86,9 +86,9 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
         // ── PHASE: Implement (single agent, no planner) ──────────────
         setPhase("implement", state);
-        const subsystems = resolveSubsystems(prompt);
+        const subsystems = await resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt, wt);
+        const codebaseContext = await getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
 
         ctx.ui.notify(`Subsystem: ${targetSubsystem}`, "info");
@@ -215,9 +215,9 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
         // Implement
         setPhase("implement", state);
-        const subsystems = resolveSubsystems(prompt);
+        const subsystems = await resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt, wt);
+        const codebaseContext = await getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         const agent = getSubsystemAgent(targetSubsystem);
         const implementation = await agent({ task: prompt, files: contextFiles, cwd: wt });
@@ -332,9 +332,9 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
         // Implement with diagnosis context
         setPhase("implement", state);
-        const subsystems = resolveSubsystems(prompt);
+        const subsystems = await resolveSubsystems(prompt);
         const targetSubsystem = subsystems[0] || "engine";
-        const codebaseContext = getCodebaseContext(prompt, wt);
+        const codebaseContext = await getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         const agent = getSubsystemAgent(targetSubsystem);
         const implementation = await agent({
@@ -445,7 +445,7 @@ export function registerMinionVariantCommands(pi: ExtensionAPI) {
 
         // Implement (force shader subsystem)
         setPhase("implement", state);
-        const codebaseContext = getCodebaseContext("shader " + prompt, wt);
+        const codebaseContext = await getCodebaseContext("shader " + prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         const implementation = await askShaderAgent({ task: prompt, files: contextFiles, cwd: wt });
 

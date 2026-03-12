@@ -64,7 +64,7 @@ export function registerTools(pi: ExtensionAPI) {
       const subsystems = (params as any).subsystems as string[];
       const subsystemContexts: Record<string, string> = {};
       for (const sub of subsystems) {
-        subsystemContexts[sub] = getSubsystemCodebaseContext(sub);
+        subsystemContexts[sub] = await getSubsystemCodebaseContext(sub);
       }
       const result = await askParallelPlanner({
         task: (params as any).task,

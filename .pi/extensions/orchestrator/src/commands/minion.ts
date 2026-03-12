@@ -95,8 +95,8 @@ export function registerMinionCommand(pi: ExtensionAPI) {
 
         // ── DECISION 1: Route by subsystem count ─────────────────────
         setPhase("plan", state);
-        const subsystems = resolveSubsystems(prompt);
-        const codebaseContext = getCodebaseContext(prompt, wt);
+        const subsystems = await resolveSubsystems(prompt);
+        const codebaseContext = await getCodebaseContext(prompt, wt);
         const contextFiles = extractFilePaths(codebaseContext);
         let implementation: string;
 
@@ -114,7 +114,7 @@ export function registerMinionCommand(pi: ExtensionAPI) {
           // Build per-subsystem scoped contexts
           const subsystemContexts: Record<string, string> = {};
           for (const sub of subsystems) {
-            subsystemContexts[sub] = getSubsystemCodebaseContext(sub, wt);
+            subsystemContexts[sub] = await getSubsystemCodebaseContext(sub, wt);
           }
 
           const plan = await askParallelPlanner({ task: prompt, subsystemContexts, cwd: wt });

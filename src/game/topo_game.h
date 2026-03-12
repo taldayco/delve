@@ -58,5 +58,4 @@ private:
   // when sliders are dragged continuously.
   float regen_cooldown = 0.0f;
   bool  gltf_column_loaded = false;
-  bool  skinned_mesh_loaded = false;
 };

@@ -2,10 +2,6 @@
 #include "terrain/terrain_mesh.h"   // BasaltVertex, SceneUniforms
 #include "gpu/gpu.h"                // UploadManager
 #include "core/asset_manager.h"
-#include "core/skinned_mesh.h"
-#include "core/animator.h"
-#include "core/gltf_loader.h"
-#include "joint_mapping.h"
 #include <SDL3/SDL_gpu.h>
 #include <flecs.h>
 #include <glm/glm.hpp>
@@ -35,23 +31,6 @@ public:
     void cleanup(SDL_GPUDevice *device);
 
     bool is_initialized() const { return initialized; }
-
-    // Skinned mesh pipeline
-    bool use_skinned_mesh = false;
-
-    bool init_skinned(SDL_GPUDevice *device, SDL_Window *window,
-                      SDL_GPUTextureFormat depth_format,
-                      AssetManager *am, const std::string &glb_path);
-
-    bool prepare_skinned(SDL_GPUCommandBuffer *cmd, flecs::world &ecs);
-
-    void draw_skinned(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
-                      const SceneUniforms &uniforms,
-                      SDL_GPUBuffer *point_light_ssbo,
-                      SDL_GPUBuffer *light_grid_ssbo,
-                      SDL_GPUBuffer *global_index_ssbo);
-
-    bool is_skinned_ready() const { return skinned_initialized; }
 
 private:
     void emit_cylinder(const glm::vec3 &a, const glm::vec3 &b,
@@ -99,21 +78,4 @@ private:
 
     SDL_GPUBuffer         *rig_vbo       = nullptr; // owned, static-sized
     SDL_GPUTransferBuffer *transfer_buf  = nullptr; // owned, persistent mapped staging
-
-    // Skinned mesh GPU resources
-    bool                     skinned_initialized = false;
-    SDL_GPUGraphicsPipeline *skinned_pipeline    = nullptr; // owned
-    SDL_GPUBuffer           *skinned_vbo         = nullptr; // owned, static
-    SDL_GPUBuffer           *skinned_ibo         = nullptr; // owned, static
-    SDL_GPUBuffer           *joint_ssbo          = nullptr; // owned, per-frame palette
-    SDL_GPUTransferBuffer   *joint_transfer      = nullptr; // owned, upload staging
-    uint32_t                 skinned_index_count  = 0;
-    uint32_t                 skinned_joint_count  = 0;
-
-    SkeletonDef              skeleton_def;
-    JointMapping             joint_mapping;
-    std::vector<glm::mat4>   joint_palette_cache;
-
-    bool init_skinned_pipeline(SDL_GPUDevice *device, SDL_Window *window,
-                               SDL_GPUTextureFormat depth_fmt, AssetManager *am);
 };

@@ -340,17 +340,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                         terrain_renderer.get_dummy_ssbo(),
                         &asset_manager);
 
-    // Load skinned character mesh
-    if (!skinned_mesh_loaded) {
-      std::string char_path = std::string(ASSET_DIR) + "/meshes/character.glb";
-      if (rig_renderer.init_skinned(gpu.device, gpu.game_window,
-                                     terrain_renderer.get_depth_format(),
-                                     &asset_manager, char_path)) {
-        skinned_mesh_loaded = true;
-        rig_renderer.use_skinned_mesh = true;
-        SDL_Log("Loaded skinned character mesh");
-      }
-    }
   }
 
   terrain_renderer.rebuild_dirty_pipelines(gpu.game_window);
@@ -518,34 +507,17 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           gpu.upload_manager);
 
     if (rig_renderer.is_initialized()) {
-      if (rig_renderer.use_skinned_mesh && rig_renderer.is_skinned_ready()) {
-        bool ready = rig_renderer.prepare_skinned(frame.cmd, ecs);
-        if (ready) {
-          SDL_GPURenderPass *actor_pass =
-              terrain_renderer.begin_render_pass_load_preserve_depth(
-                  frame.cmd, frame.swapchain,
-                  frame.swapchain_w, frame.swapchain_h);
-          if (actor_pass) {
-            rig_renderer.draw_skinned(actor_pass, frame.cmd, uniforms,
-                terrain_renderer.get_point_light_ssbo(),
-                terrain_renderer.get_light_grid_ssbo(),
-                terrain_renderer.get_global_index_ssbo());
-            SDL_EndGPURenderPass(actor_pass);
-          }
-        }
-      } else {
-        uint32_t actor_vert_count = rig_renderer.prepare(frame.cmd, ecs);
-        if (actor_vert_count > 0) {
-          SDL_GPURenderPass *actor_pass =
-              terrain_renderer.begin_render_pass_load_preserve_depth(
-                  frame.cmd, frame.swapchain,
-                  frame.swapchain_w, frame.swapchain_h);
-          if (actor_pass) {
-            rig_renderer.draw(actor_pass, frame.cmd, uniforms,
-                                terrain_renderer.get_point_light_ssbo(),
-                                actor_vert_count);
-            SDL_EndGPURenderPass(actor_pass);
-          }
+      uint32_t actor_vert_count = rig_renderer.prepare(frame.cmd, ecs);
+      if (actor_vert_count > 0) {
+        SDL_GPURenderPass *actor_pass =
+            terrain_renderer.begin_render_pass_load_preserve_depth(
+                frame.cmd, frame.swapchain,
+                frame.swapchain_w, frame.swapchain_h);
+        if (actor_pass) {
+          rig_renderer.draw(actor_pass, frame.cmd, uniforms,
+                              terrain_renderer.get_point_light_ssbo(),
+                              actor_vert_count);
+          SDL_EndGPURenderPass(actor_pass);
         }
       }
     }
@@ -672,10 +644,6 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Text("Rendering Mode");
   ImGui::Checkbox("Use Instanced Terrain", &terrain_renderer.use_instanced);
   ImGui::Checkbox("Use PBR Shading", &terrain_renderer.use_pbr);
-  if (rig_renderer.is_skinned_ready()) {
-    ImGui::Checkbox("Use Skinned Mesh", &rig_renderer.use_skinned_mesh);
-  }
-
   ImGui::Separator();
   if (ImGui::Button("Regenerate", {-1, 40})) ts->need_regenerate = true;
   if (ImGui::Button("Reset", {-1, 40})) {

@@ -72,7 +72,6 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/instanced_terrain.frag.glsl
     ${SHADER_DIR}/pbr_static.vert.glsl
     ${SHADER_DIR}/pbr_static.frag.glsl
-    ${SHADER_DIR}/pbr_skinned.vert.glsl
 )
 
 set(COMPUTE_SHADER_SOURCES
@@ -143,7 +142,6 @@ add_library(topo_engine STATIC
     src/engine/core/cgltf_impl.cpp
     src/engine/core/stb_image_impl.cpp
     src/engine/core/gltf_loader.cpp
-    src/engine/core/animator.cpp
 )
 
 target_include_directories(topo_engine PUBLIC
@@ -180,7 +178,6 @@ add_executable(topogen
     src/game/render/rig_renderer.cpp
     src/game/render/rig_animation.cpp
     src/game/terrain/instanced_terrain.cpp
-    src/game/joint_mapping.cpp
 )
 
 target_include_directories(topogen PRIVATE

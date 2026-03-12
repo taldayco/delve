@@ -2,6 +2,7 @@ import {
   askBuildFixer,
   askTestFixer,
   askDecoupleAnalyst,
+  askMapUpdater,
   readRunMetrics,
   writeState,
   readState,
@@ -21,6 +22,7 @@ import {
   cleanupStaleState,
   cleanupMergedBranches,
   detectFileSizeViolations,
+  detectMapCoverage,
   cleanupStaleWorktrees,
   DOMAIN_COMPLEXITY_THRESHOLD,
 } from "../tools.js";
@@ -231,5 +233,180 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const result = cleanupStaleWorktrees();
     cleanupMergedBranches();
     return { ok: true, output: result.summary };
+  },
+
+  // ─── Pre-flight: maintenance checks before feature work ──────────────────
+
+  pre_flight: async (ctx) => {
+    const { existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+
+    // Bail if critical infrastructure is missing
+    if (!existsSync(join(process.cwd(), "src"))) {
+      return { ok: false, output: "Critical: src/ directory not found" };
+    }
+
+    const lines: string[] = ["# Pre-Flight Maintenance Report", ""];
+
+    // 1. File size violations
+    const sizeResult = detectFileSizeViolations();
+    const violations = sizeResult.violations;
+    if (violations.length > 0) {
+      lines.push("## File Size Violations", "");
+      for (const v of violations) {
+        lines.push(`- \`${v.path}\` — ${v.lineCount} lines`);
+      }
+      lines.push("");
+    }
+
+    // 2. Stale refs audit + auto-fix
+    const audit = runSystemAudit();
+    const refResult = fixStaleAgentRefs(audit.findings);
+    const globResult = fixBrokenRuleGlobs(audit.findings);
+    if (refResult.fixed > 0 || globResult.fixed > 0) {
+      lines.push("## Stale Refs Fixed", "");
+      if (refResult.fixed > 0) lines.push(`- Agent refs: ${refResult.fixed} fixed`);
+      if (globResult.fixed > 0) lines.push(`- Rule globs: ${globResult.fixed} fixed`);
+      lines.push("");
+    }
+
+    // 3. Domain complexity
+    const domainReports = measureDomainComplexity();
+    const overloaded = domainReports.filter((r) => r.exceedsThreshold);
+    lines.push("## Domain Complexity", "");
+    for (const d of domainReports) {
+      const flag = d.exceedsThreshold ? " **OVER THRESHOLD**" : "";
+      lines.push(`- **${d.domain}**: score=${d.complexityScore}, files=${d.fileCount}, lines=${d.totalLines}${flag}`);
+    }
+    lines.push("");
+
+    // 4. Map coverage
+    const coverage = detectMapCoverage();
+    if (coverage.unmappedDirs.length > 0) {
+      lines.push("## Unmapped Directories", "");
+      for (const dir of coverage.unmappedDirs) {
+        lines.push(`- \`${dir}\``);
+      }
+      lines.push("");
+    }
+
+    writeState("maintenance_backlog.md", lines.join("\n"));
+
+    // Store structured data for post_flight
+    ctx.data.maintenanceBacklog = {
+      violations,
+      overloadedDomains: overloaded,
+      unmappedDirs: coverage.unmappedDirs,
+    };
+
+    const parts: string[] = [];
+    if (violations.length > 0) parts.push(`${violations.length} size violation(s)`);
+    if (refResult.fixed + globResult.fixed > 0) parts.push(`${refResult.fixed + globResult.fixed} stale ref(s) fixed`);
+    if (overloaded.length > 0) parts.push(`${overloaded.length} overloaded domain(s)`);
+    if (coverage.unmappedDirs.length > 0) parts.push(`${coverage.unmappedDirs.length} unmapped dir(s)`);
+
+    return {
+      ok: true,
+      output: parts.length > 0 ? `Pre-flight: ${parts.join(", ")}` : "Pre-flight: all clear",
+    };
+  },
+
+  // ─── Post-flight: cleanup and conditional maintenance after commit ───────
+
+  post_flight: async (ctx) => {
+    const results: string[] = [];
+
+    // 1. Branch cleanup
+    cleanupMergedBranches();
+    cleanupStaleWorktrees();
+    results.push("Branch/worktree cleanup done");
+
+    // 2. State pruning
+    pruneStateHistory(5);
+    pruneMetricsLog(1000);
+    cleanupStaleState(7);
+    results.push("State pruned");
+
+    // 3. Conditional agentic work based on pre_flight backlog
+    const backlog = ctx.data.maintenanceBacklog as {
+      violations?: Array<{ path: string; lineCount: number }>;
+      overloadedDomains?: Array<{ domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; exceedsThreshold: boolean; files: string[] }>;
+      unmappedDirs?: string[];
+    } | undefined;
+
+    if (backlog) {
+      // 3a. Map updates
+      if (backlog.unmappedDirs && backlog.unmappedDirs.length > 0) {
+        try {
+          const { readFileSync } = await import("node:fs");
+          const { join } = await import("node:path");
+          const toolsPath = join(process.cwd(), ".pi/extensions/orchestrator/src/tools.ts");
+          let toolsContent = "";
+          try {
+            const full = readFileSync(toolsPath, "utf-8");
+            const start = full.indexOf("const KEYWORD_SYNONYMS");
+            const end = full.indexOf("};", full.indexOf("const SUBSYSTEM_CANONICAL")) + 2;
+            if (start >= 0 && end > start) toolsContent = full.slice(start, end);
+          } catch { /* ignore */ }
+
+          const coverage = detectMapCoverage();
+          const mapResult = await askMapUpdater({ coverageReport: coverage, currentToolsContent: toolsContent });
+          const appliedCount = applyFileBlocks(mapResult);
+          if (appliedCount > 0) {
+            rebuildExtension();
+            results.push(`Map updates: ${appliedCount} file(s) updated`);
+          }
+        } catch (e) {
+          results.push(`Map updates: skipped (${(e as Error).message})`);
+        }
+      }
+
+      // 3b. Decoupling proposal for highest-scoring overloaded domain
+      if (backlog.overloadedDomains && backlog.overloadedDomains.length > 0) {
+        try {
+          const sorted = [...backlog.overloadedDomains].sort((a, b) => b.complexityScore - a.complexityScore);
+          const target = sorted[0];
+          const recentMetrics = readRunMetrics(20);
+          const proposal = await askDecoupleAnalyst({
+            domainReport: target,
+            recentMetrics,
+            files: target.files,
+            cwd: ctx.data.worktreePath,
+          });
+          writeState("decouple_proposal.md", proposal);
+          results.push(`Decouple proposal written for ${target.domain}`);
+        } catch (e) {
+          results.push(`Decouple: skipped (${(e as Error).message})`);
+        }
+      }
+
+      // 3c. Modularization proposal for file size violations
+      if (backlog.violations && backlog.violations.length > 0) {
+        try {
+          const topViolation = backlog.violations[0];
+          const syntheticReport = {
+            domain: topViolation.path.split("/").slice(-2, -1)[0] || "unknown",
+            directory: topViolation.path.replace(/\/[^/]+$/, ""),
+            fileCount: backlog.violations.length,
+            totalLines: backlog.violations.reduce((s, v) => s + v.lineCount, 0),
+            complexityScore: backlog.violations.length + Math.floor(backlog.violations.reduce((s, v) => s + v.lineCount, 0) / 100),
+            exceedsThreshold: true,
+            files: backlog.violations.map((v) => v.path),
+          };
+          const proposal = await askDecoupleAnalyst({
+            domainReport: syntheticReport,
+            recentMetrics: readRunMetrics(10),
+            files: syntheticReport.files,
+            cwd: ctx.data.worktreePath,
+          });
+          writeState("modularize_proposal.md", proposal);
+          results.push(`Modularize proposal written for ${topViolation.path}`);
+        } catch (e) {
+          results.push(`Modularize: skipped (${(e as Error).message})`);
+        }
+      }
+    }
+
+    return { ok: true, output: `Post-flight: ${results.join("; ")}` };
   },
 };

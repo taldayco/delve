@@ -3,6 +3,11 @@
   "description": "Full pipeline with conditional branching: build failures trigger fix loops, test failures trigger diagnose → fix, review failures trigger fix → rebuild cycle.",
   "phases": [
     {
+      "name": "pre_flight",
+      "type": "deterministic",
+      "handler": "pre_flight"
+    },
+    {
       "name": "branch",
       "type": "deterministic",
       "handler": "branch"
@@ -84,7 +89,13 @@
     {
       "name": "commit_pr",
       "type": "deterministic",
-      "handler": "commit_pr"
+      "handler": "commit_pr",
+      "on_success": "post_flight"
+    },
+    {
+      "name": "post_flight",
+      "type": "deterministic",
+      "handler": "post_flight"
     }
   ]
 }

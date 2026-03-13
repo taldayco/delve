@@ -320,6 +320,11 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             }
         }
 
+        // Build flat inverse_bind_matrices array for GPU upload
+        asset.inverse_bind_matrices.resize(bone_count);
+        for (int i = 0; i < bone_count; ++i)
+            asset.inverse_bind_matrices[i] = asset.skeleton.bones[i].inverse_bind_matrix;
+
         // --- Parse skinned meshes ---
         for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
             const cgltf_node &node = data->nodes[ni];
@@ -452,6 +457,29 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             }
 
             asset.animations.push_back(std::move(clip));
+        }
+    }
+
+    // Parse root scene node transform (captures Blender Y→Z-up rotation, etc.)
+    if (data->scene && data->scene->nodes_count > 0) {
+        const cgltf_node *root_node = data->scene->nodes[0];
+        if (root_node->has_matrix) {
+            const float *lm = root_node->matrix;
+            asset.root_transform = glm::mat4(
+                lm[0], lm[1], lm[2],  lm[3],
+                lm[4], lm[5], lm[6],  lm[7],
+                lm[8], lm[9], lm[10], lm[11],
+                lm[12],lm[13],lm[14], lm[15]);
+        } else {
+            glm::vec3 t(0.0f), s(1.0f);
+            glm::quat r(1.0f, 0.0f, 0.0f, 0.0f);
+            if (root_node->has_translation)
+                t = {root_node->translation[0], root_node->translation[1], root_node->translation[2]};
+            if (root_node->has_rotation)
+                r = glm::quat(root_node->rotation[3], root_node->rotation[0], root_node->rotation[1], root_node->rotation[2]);
+            if (root_node->has_scale)
+                s = {root_node->scale[0], root_node->scale[1], root_node->scale[2]};
+            asset.root_transform = glm::translate(glm::mat4(1.0f), t) * glm::mat4_cast(r) * glm::scale(glm::mat4(1.0f), s);
         }
     }
 

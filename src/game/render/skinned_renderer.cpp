@@ -59,11 +59,12 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     pi.vertex_input_state.vertex_attributes          = attrs;
     pi.vertex_input_state.num_vertex_attributes      = 6;
     pi.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pi.rasterizer_state.cull_mode                    = SDL_GPU_CULLMODE_NONE;
     pi.target_info.color_target_descriptions         = &color_desc;
     pi.target_info.num_color_targets                 = 1;
     pi.target_info.has_depth_stencil_target          = true;
     pi.target_info.depth_stencil_format              = depth_format_;
-    pi.depth_stencil_state.compare_op                = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+    pi.depth_stencil_state.compare_op                = SDL_GPU_COMPAREOP_LESS;
     pi.depth_stencil_state.enable_depth_test         = true;
     pi.depth_stencil_state.enable_depth_write        = true;
 
@@ -235,12 +236,11 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
     std::vector<BoneLocalTransform> locals;
     player_.sample(locals);
 
-    // Root: translate * rotateZ(facing) * scale(1,1,ISO) * rotateX(-90deg)
-    const float ISO = Config::ISO_HEIGHT_SCALE;
+    // Root: translate * rotateZ(facing) * rotateX(-90deg, Y-up->Z-up) * scale(HEX_SIZE, Blender meters->terrain units)
     glm::mat4 root = glm::translate(glm::mat4(1.f), player_pos)
                    * glm::rotate(glm::mat4(1.f), facing, glm::vec3(0.f, 0.f, 1.f))
-                   * glm::scale(glm::mat4(1.f), glm::vec3(1.f, 1.f, ISO))
-                   * glm::rotate(glm::mat4(1.f), -glm::half_pi<float>(), glm::vec3(1.f, 0.f, 0.f));
+                   * glm::rotate(glm::mat4(1.f), glm::radians(-90.0f), glm::vec3(1.f, 0.f, 0.f))
+                   * glm::scale(glm::mat4(1.f), glm::vec3(Config::HEX_SIZE));
 
     palette_ = compute_bone_palette(skeleton_, locals, root);
 }
@@ -271,7 +271,8 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
                             SDL_GPUBuffer *lights_ssbo,
                             SDL_GPUBuffer *clusters_ssbo,
                             SDL_GPUBuffer *light_indices_ssbo) {
-    if (!initialized_ || !char_loaded_ || !pipeline_ || !vbo_ || !ibo_) return;
+    if (!initialized_ || !char_loaded_ || !vbo_ || !ibo_) return;
+    if (!pipeline_) { SDL_Log("SkinnedRenderer: pipeline null, skipping draw"); return; }
     (void)clusters_ssbo;
     (void)light_indices_ssbo;
 

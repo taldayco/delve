@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 try:
-    from openviking import SyncOpenViking
+    from openviking import SyncHTTPClient
 except ImportError:
     print("ERROR: openviking package not installed. Run: pip install -r requirements.txt", file=sys.stderr)
     sys.exit(1)
@@ -67,7 +67,7 @@ def should_index(path: Path) -> bool:
     return any(path.name.endswith(ext) for ext in EXTENSIONS)
 
 
-def ingest_directory(client: SyncOpenViking, src_dir: str, viking_base: str) -> int:
+def ingest_directory(client: SyncHTTPClient, src_dir: str, viking_base: str) -> int:
     """Recursively index files from src_dir into viking_base URI."""
     full_dir = PROJECT_ROOT / src_dir
     if not full_dir.is_dir():
@@ -82,14 +82,14 @@ def ingest_directory(client: SyncOpenViking, src_dir: str, viking_base: str) -> 
                 continue
             rel = fpath.relative_to(full_dir)
             target_uri = f"{viking_base}/{rel}"
-            client.add_resource(path=str(fpath), to=target_uri, wait=True)
+            client.add_resource(path=str(fpath), to=target_uri, wait=True, timeout=60.0)
             count += 1
             print(f"  + {target_uri}")
 
     return count
 
 
-def ingest_game_toplevel(client: SyncOpenViking) -> int:
+def ingest_game_toplevel(client: SyncHTTPClient) -> int:
     """Index top-level src/game/ files (not subdirectories)."""
     game_dir = PROJECT_ROOT / "src" / "game"
     if not game_dir.is_dir():
@@ -100,7 +100,7 @@ def ingest_game_toplevel(client: SyncOpenViking) -> int:
         if fpath.is_file() and should_index(fpath):
             rel = fpath.relative_to(game_dir)
             target_uri = f"viking://resources/delve/game/{rel}"
-            client.add_resource(path=str(fpath), to=target_uri, wait=True)
+            client.add_resource(path=str(fpath), to=target_uri, wait=True, timeout=60.0)
             count += 1
             print(f"  + {target_uri}")
 
@@ -125,7 +125,8 @@ def main() -> None:
     write_directory_map()
 
     print("Connecting to OpenViking...")
-    client = SyncOpenViking()
+    client = SyncHTTPClient(url="http://127.0.0.1:1933")
+    client.initialize()
     client.is_healthy()
     print("Connected.\n")
 

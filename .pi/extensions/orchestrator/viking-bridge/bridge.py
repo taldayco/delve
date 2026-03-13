@@ -20,7 +20,7 @@ import json
 import sys
 
 try:
-    from openviking import SyncOpenViking
+    from openviking import SyncHTTPClient
 except ImportError:
     # If openviking isn't installed, return error for every command
     resp = {"ok": False, "error": "openviking package not installed"}
@@ -44,14 +44,15 @@ def main() -> None:
     args = msg.get("args", {})
 
     try:
-        client = SyncOpenViking()
+        client = SyncHTTPClient(url="http://127.0.0.1:1933")
+        client.initialize()
         result = dispatch(client, command, args)
         json.dump({"ok": True, "result": result}, sys.stdout)
     except Exception as e:
         json.dump({"ok": False, "error": str(e)}, sys.stdout)
 
 
-def dispatch(client: "SyncOpenViking", command: str, args: dict) -> object:
+def dispatch(client: "SyncHTTPClient", command: str, args: dict) -> object:
     if command == "status":
         client.is_healthy()
         return {"status": "healthy"}

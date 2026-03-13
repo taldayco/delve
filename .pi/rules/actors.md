@@ -1,5 +1,5 @@
 ---
-globs: src/game/render/**,src/game/actor.h
+globs: src/game/render/**,src/game
 ---
 
 # Actor Module Rules

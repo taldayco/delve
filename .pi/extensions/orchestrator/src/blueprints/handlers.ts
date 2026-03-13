@@ -621,7 +621,10 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
   math_verify: async (ctx) => {
     const { spawnSubagent } = await import("../agents/spawn.js");
-    const diff = getDiff(ctx.data.worktreePath!);
+    let diff = getDiff(ctx.data.worktreePath!);
+    if (diff.length > 20000) {
+      diff = diff.slice(0, 20000) + "\n\n...[DIFF TRUNCATED — " + diff.length + " chars total]...";
+    }
     const result = await spawnSubagent({
       prompt: `Verify mathematical correctness of the following diff. Check for:\n- Off-by-one errors\n- Incorrect formulas\n- Numerical stability issues\n- Unit/coordinate system mismatches\n\nRespond with exactly PASS if correct, or FAIL: <details> if not.\n\n## Diff\n${diff}`,
       systemPrompt: "You are a mathematical verification agent for C++/GLSL game engine code. Analyze diffs for mathematical correctness. Be precise and concise.",

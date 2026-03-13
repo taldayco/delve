@@ -85,7 +85,11 @@ export async function executeBlueprint(
       }
 
       const normalizedHandler = phase.handler.replace(/-/g, "_");
-      const handler = PHASE_HANDLERS[normalizedHandler];
+      let handler = PHASE_HANDLERS[normalizedHandler];
+      if (!handler) {
+        const hyphenated = phase.handler.replace(/_/g, "-");
+        handler = PHASE_HANDLERS[hyphenated];
+      }
       if (!handler) {
         throw new Error(`Unknown phase handler: ${phase.handler}`);
       }

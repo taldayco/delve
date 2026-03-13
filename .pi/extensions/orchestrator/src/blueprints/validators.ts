@@ -57,8 +57,12 @@ export function validatePhaseOutput(handler: string, output: string, ctx: Bluepr
 export function validateBlueprint(blueprint: any): blueprint is Blueprint {
   if (!blueprint || !blueprint.name || !Array.isArray(blueprint.phases)) return false;
 
+  const phaseNames = new Set(blueprint.phases.map((p: any) => p.name));
+
   for (const phase of blueprint.phases) {
     if (!phase.handler || !PHASE_HANDLERS[phase.handler]) return false;
+    if (phase.on_failure && !phaseNames.has(phase.on_failure)) return false;
+    if (phase.on_success && !phaseNames.has(phase.on_success)) return false;
   }
 
   return true;

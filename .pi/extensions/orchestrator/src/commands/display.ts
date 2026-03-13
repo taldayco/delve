@@ -9,8 +9,8 @@ export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", 
 export const PHASE_ORDER: Phase[] = [
   "pre_flight", "branch", "resolve_subsystem", "plan", "diagnose",
   "research", "math_verify", "worker_fan_out",
-  "implement", "build", "fix-build", "write-tests", "test", "fix-tests", "review",
-  "shader-validate", "verify", "memory_iterate", "commit-pr", "commit_wip", "post_flight",
+  "implement", "build", "fix_build", "write_tests", "test", "fix_tests", "review",
+  "shader_validate", "verify", "memory_iterate", "commit_pr", "commit_wip", "post_flight",
 ];
 
 // Display labels: group fix-* phases with their parent
@@ -25,15 +25,15 @@ export const PHASE_LABELS: Record<string, string> = {
   "worker_fan_out": "worker fan-out",
   "implement": "implement",
   "build": "build",
-  "fix-build": "build",
-  "write-tests": "tests",
+  "fix_build": "build",
+  "write_tests": "tests",
   "test": "tests",
-  "fix-tests": "tests",
+  "fix_tests": "tests",
   "review": "review",
-  "shader-validate": "shaders",
+  "shader_validate": "shaders",
   "verify": "verify",
   "memory_iterate": "Memory iterate",
-  "commit-pr": "pr",
+  "commit_pr": "pr",
   "commit_wip": "Save WIP",
   "post_flight": "Post-flight",
 };

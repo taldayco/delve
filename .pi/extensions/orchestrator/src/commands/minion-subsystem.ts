@@ -76,7 +76,7 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
           const build = runBuild(wt);
           if (build.ok) { buildOk = true; break; }
           if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
-          setPhase("fix-build", state);
+          setPhase("fix_build", state);
           const fix = await askBuildFixer({ buildOutput: build.summary, round: round + 1, maxRounds: MAX_BUILD_FIX_ROUNDS, cwd: wt });
           applyFileBlocks(fix, wt);
         }
@@ -101,7 +101,7 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
         ctx.ui.notify(`Review: ${reviewDecision}`, reviewDecision === "APPROVE" ? "success" : "warning");
 
         // Commit + PR
-        setPhase("commit-pr", state);
+        setPhase("commit_pr", state);
         const prResult = gitCommitAndPr({ prompt: "Domain decoupling", branch, buildOk, testsOk: false, cwd: wt });
         ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
 

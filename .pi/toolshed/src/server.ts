@@ -49,6 +49,10 @@ import {
 } from "./tools-meta.js";
 
 import {
+  hexLintSchema, hexLint,
+} from "./tools-hex.js";
+
+import {
   vikingSearchSchema, vikingSearch,
   vikingReadSchema, vikingRead,
   vikingWriteMemorySchema, vikingWriteMemory,
@@ -110,6 +114,10 @@ server.tool("app_compare_frames", "Compare two PNG frame captures and return a s
 server.tool("suggest_tools", "Given a task description, suggest which tools are most relevant. Meta-tool: tools that select tools.", suggestToolsSchema, suggestTools);
 server.tool("compose_toolchain", "Given a workflow, return an ordered sequence of tools to call with dependency info.", composeToolchainSchema, composeToolchain);
 server.tool("tool_dependencies", "Get prerequisite and downstream tools for a specific tool.", toolDependenciesSchema, toolDependencies);
+
+// ─── Hex Lint Tools ──────────────────────────────────────────────────────
+
+server.tool("hex_lint", "Run hex coordinate geometry invariant tests", hexLintSchema, hexLint);
 
 // ─── Viking Tools ────────────────────────────────────────────────────────────
 

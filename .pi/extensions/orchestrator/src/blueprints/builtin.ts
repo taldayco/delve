@@ -94,6 +94,28 @@ export const BUILTIN_BLUEPRINTS: Record<string, Blueprint> = {
     ],
   },
 
+  // ── branching-full-replan (full pipeline with re-plan on architectural failure) ──
+  "branching-full-replan": {
+    name: "branching-full-replan",
+    description: "Full pipeline with architectural error re-planning: Build failures route to Re-plan instead of Save WIP",
+    phases: [
+      { name: "Create branch", type: "deterministic", handler: "branch" },
+      { name: "Pre-flight", type: "deterministic", handler: "pre_flight", optional: true },
+      { name: "Resolve subsystems", type: "deterministic", handler: "resolve_subsystem" },
+      { name: "Plan", type: "agentic", handler: "plan", on_failure: "Save WIP" },
+      { name: "Implement", type: "agentic", handler: "implement", on_failure: "Save WIP" },
+      { name: "Build", type: "deterministic", handler: "build", max_retries: 2, on_failure: "Re-plan" },
+      { name: "Re-plan", type: "agentic", handler: "replan", on_success: "Implement", on_failure: "Save WIP", optional: true, max_retries: 1 },
+      { name: "Write tests", type: "agentic", handler: "write_tests", on_failure: "Save WIP" },
+      { name: "Run tests", type: "deterministic", handler: "test", max_retries: 2, on_failure: "Save WIP" },
+      { name: "Review", type: "agentic", handler: "review", optional: true },
+      { name: "Commit & PR", type: "deterministic", handler: "commit_pr" },
+      { name: "Post-flight", type: "deterministic", handler: "post_flight", optional: true },
+      { name: "Learn from run", type: "deterministic", handler: "memory_iterate", optional: true },
+      { name: "Save WIP", type: "deterministic", handler: "commit_wip", optional: true },
+    ],
+  },
+
   // ── shader (shader validation instead of tests) ────────────────────────
   shader: {
     name: "shader",

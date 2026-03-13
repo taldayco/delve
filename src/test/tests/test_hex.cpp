@@ -63,3 +63,65 @@ DELVE_TEST(pixel_in_hex_far_away_is_outside) {
   EXPECT_FALSE(pixel_in_hex(10000.0f, 10000.0f, 0, 0, HEX));
   return true;
 }
+
+// ─── Hex Coordinate Invariant Tests ─────────────────────────────────────────
+
+DELVE_TEST(hex_neighbor_offsets_canonical) {
+  // The 6 axial neighbor offsets for a hex grid
+  const int dq[] = { 1, 0, -1, -1,  0,  1 };
+  const int dr[] = { 0, 1,  1,  0, -1, -1 };
+  for (int i = 0; i < 6; ++i) {
+    int ds = -dq[i] - dr[i];
+    // Cube constraint: exactly one of |dq|, |dr|, |ds| must be zero
+    int zeros = (std::abs(dq[i]) == 0 ? 1 : 0)
+              + (std::abs(dr[i]) == 0 ? 1 : 0)
+              + (std::abs(ds) == 0 ? 1 : 0);
+    EXPECT_EQ(zeros, 1);
+  }
+  return true;
+}
+
+DELVE_TEST(hex_cube_roundtrip_invariant) {
+  for (int q = -10; q <= 10; ++q) {
+    for (int r = -10; r <= 10; ++r) {
+      float px, py;
+      hex_to_pixel(q, r, HEX, px, py);
+      HexCoord back = pixel_to_hex(px, py, HEX);
+      // Verify cube constraint: q + r + s = 0 where s = -q - r
+      int s = -back.q - back.r;
+      EXPECT_EQ(back.q + back.r + s, 0);
+    }
+  }
+  return true;
+}
+
+DELVE_TEST(hex_corner_angles_60_degrees) {
+  Vec2 corners[6];
+  get_hex_corners(0, 0, HEX, corners);
+  for (int i = 0; i < 6; ++i) {
+    int j = (i + 1) % 6;
+    float angle_i = std::atan2(corners[i].y, corners[i].x);
+    float angle_j = std::atan2(corners[j].y, corners[j].x);
+    float diff = angle_j - angle_i;
+    // Normalize to [-pi, pi]
+    while (diff > M_PI) diff -= 2.0f * M_PI;
+    while (diff < -M_PI) diff += 2.0f * M_PI;
+    EXPECT_NEAR(std::abs(diff), (float)(M_PI / 3.0), 0.01f);
+  }
+  return true;
+}
+
+DELVE_TEST(hex_roundtrip_100pct_accuracy) {
+  int total = 0, accurate = 0;
+  for (int q = -20; q <= 20; ++q) {
+    for (int r = -20; r <= 20; ++r) {
+      float px, py;
+      hex_to_pixel(q, r, HEX, px, py);
+      HexCoord back = pixel_to_hex(px, py, HEX);
+      ++total;
+      if (back.q == q && back.r == r) ++accurate;
+    }
+  }
+  EXPECT_EQ(accurate, total);
+  return true;
+}

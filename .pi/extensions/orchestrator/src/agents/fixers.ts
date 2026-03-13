@@ -3,9 +3,55 @@
 import { spawnSubagent } from "./spawn.js";
 import { loadAgentConfig, loadAgentSystemPrompt, PROJECT_ROOT } from "./config.js";
 import { askWorker, delegateToWorkers } from "./workers.js";
-import { parseMetaDecomposition } from "./parsing.js";
+import { parseMetaDecomposition, sanitizeJsonOutput } from "./parsing.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import type { ErrorClassification, ErrorSeverity } from "./types.js";
+
+export async function classifyBuildError(opts: {
+  buildOutput: string;
+  cwd?: string;
+  signal?: AbortSignal;
+}): Promise<ErrorClassification> {
+  const systemPrompt = `You are a C++ build error classifier. Given compiler output, identify the ROOT CAUSE of the error graph (not individual errors — C++ cascading errors inflate counts).
+
+Classify the root cause as:
+- "syntactic": typos, missing semicolons, wrong includes, simple type mismatches — fixable in the affected file(s)
+- "structural": wrong function signatures, missing method implementations, interface mismatches across 2-3 files
+- "architectural": fundamental design problems — wrong abstractions, circular dependencies, missing modules, type system redesign needed
+
+Output ONLY valid JSON:
+\`\`\`json
+{
+  "severity": "syntactic" | "structural" | "architectural",
+  "summary": "One sentence describing the root cause",
+  "affected_files": ["file1.cpp", "file2.h"]
+}
+\`\`\``;
+
+  try {
+    const result = await spawnSubagent({
+      prompt: `Classify the root cause of this build failure:\n\n\`\`\`\n${opts.buildOutput.slice(-3000)}\n\`\`\``,
+      systemPrompt,
+      model: "anthropic/claude-haiku-4-5",
+      thinking: "off",
+      agentName: "error-classifier",
+      cwd: opts.cwd,
+      signal: opts.signal,
+    });
+    const json = JSON.parse(sanitizeJsonOutput(result));
+    const severity = ["syntactic", "structural", "architectural"].includes(json.severity)
+      ? (json.severity as ErrorSeverity)
+      : "syntactic";
+    return {
+      severity,
+      summary: json.summary || "Unknown error",
+      affected_files: Array.isArray(json.affected_files) ? json.affected_files : [],
+    };
+  } catch {
+    return { severity: "syntactic", summary: "Classification failed — defaulting to syntactic", affected_files: [] };
+  }
+}
 
 export async function askBuildFixer(opts: {
   buildOutput: string;
@@ -28,26 +74,26 @@ For each file with errors, produce a self-contained worker prompt that includes:
 - What needs to change (missing #include, wrong type, updated signature, etc.)
 - Enough context for the worker to produce the complete fixed file
 
-## Output Format (JSON only)
-\`\`\`json
-{
-  "subtasks": [
-    {
-      "file": "src/path/to/broken_file.cpp",
-      "action": "MODIFY",
-      "instructions": "Fix compilation errors in broken_file.cpp",
-      "context_files": ["src/path/to/related.h"],
-      "worker_prompt": "You are fixing compilation errors in broken_file.cpp (C++20). Errors: [exact errors]. Fix: [specific instructions: add #include X, change type Y to Z, etc.]. Output the COMPLETE fixed file."
-    }
-  ]
-}
+## Output Format (TOON only)
+\`\`\`toon
+subtasks
+  -
+    file: src/path/to/broken_file.cpp
+    action: MODIFY
+    instructions: Fix compilation errors in broken_file.cpp
+    context_files
+      - src/path/to/related.h
+    worker_prompt: |
+      You are fixing compilation errors in broken_file.cpp (C++20).
+      Errors: [exact errors]. Fix: [specific instructions: add #include X, change type Y to Z, etc.].
+      Output the COMPLETE fixed file.
 \`\`\`
 
 ## Constraints
 - One subtask per file with errors.
 - worker_prompt must include the EXACT error messages for that file.
 - Include specific fix instructions (the worker should not need to reason about the fix).
-- Output ONLY the JSON block. No preamble, no explanation.`;
+- Output ONLY the TOON block. No preamble, no explanation.`;
 
   const prompt = `BUILD FAILED (attempt ${opts.round}/${opts.maxRounds}).
 
@@ -120,26 +166,26 @@ that Haiku-tier workers can execute independently.
 
 Strategy: ${fixStrategy}
 
-## Output Format (JSON only)
-\`\`\`json
-{
-  "subtasks": [
-    {
-      "file": "src/path/to/file.cpp",
-      "action": "MODIFY",
-      "instructions": "Fix test failure in file.cpp",
-      "context_files": ["src/path/to/related.h"],
-      "worker_prompt": "You are fixing ${opts.isBuildFailure ? "compilation errors" : "test failures"} in file.cpp (C++20). Errors: [exact errors]. Fix: [specific instructions]. Output the COMPLETE fixed file."
-    }
-  ]
-}
+## Output Format (TOON only)
+\`\`\`toon
+subtasks
+  -
+    file: src/path/to/file.cpp
+    action: MODIFY
+    instructions: Fix test failure in file.cpp
+    context_files
+      - src/path/to/related.h
+    worker_prompt: |
+      You are fixing ${opts.isBuildFailure ? "compilation errors" : "test failures"} in file.cpp (C++20).
+      Errors: [exact errors]. Fix: [specific instructions].
+      Output the COMPLETE fixed file.
 \`\`\`
 
 ## Constraints
 - One subtask per file that needs fixing.
 - worker_prompt must include the EXACT error messages relevant to that file.
 - Include specific fix instructions.
-- Output ONLY the JSON block. No preamble, no explanation.`;
+- Output ONLY the TOON block. No preamble, no explanation.`;
 
   const prompt = `${what} FAILED (attempt ${opts.round}/${opts.maxRounds}).
 
@@ -214,26 +260,29 @@ For each distinct error or failure, produce a self-contained worker prompt that 
 - The file(s) likely involved
 - What to look for (wrong logic, missing initialization, type mismatch, etc.)
 
-## Output Format (JSON only)
-\`\`\`json
-{
-  "subtasks": [
-    {
-      "file": "src/path/to/suspected_file.cpp",
-      "action": "MODIFY",
-      "instructions": "Analyze assertion failure in test_terrain_noise",
-      "context_files": ["src/game/terrain/noise.h"],
-      "worker_prompt": "You are analyzing a test failure in a C++20 terrain generator. The error is: [exact error message]. The suspected file is [file]. Look at the function [name] and determine: (1) What is the root cause? (2) Which variable or expression is wrong? (3) What is the expected vs actual behavior? Output: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief quote from code or error]"
-    }
-  ]
-}
+## Output Format (TOON only)
+\`\`\`toon
+subtasks
+  -
+    file: src/path/to/suspected_file.cpp
+    action: MODIFY
+    instructions: Analyze assertion failure in test_terrain_noise
+    context_files
+      - src/game/terrain/noise.h
+    worker_prompt: |
+      You are analyzing a test failure in a C++20 terrain generator.
+      The error is: [exact error message]. The suspected file is [file].
+      Look at the function [name] and determine:
+      (1) What is the root cause? (2) Which variable or expression is wrong?
+      (3) What is the expected vs actual behavior?
+      Output: ROOT_CAUSE: [1 sentence] | AFFECTED: [file:function] | EVIDENCE: [brief quote from code or error]
 \`\`\`
 
 ## Constraints
 - One subtask per distinct error/failure.
 - Group related assertion failures into one subtask if they share a root cause.
 - worker_prompt must include the exact error text.
-- Output ONLY the JSON block. No preamble, no explanation.`;
+- Output ONLY the TOON block. No preamble, no explanation.`;
 
   const prompt = `## Task
 ${opts.task}

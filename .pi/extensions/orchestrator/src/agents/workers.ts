@@ -7,7 +7,7 @@ import { loadAgentConfig, PROJECT_ROOT } from "./config.js";
 import { writeState } from "./state.js";
 import { isVikingAvailable, vikingRead, pathToVikingUri } from "../tools/viking.js";
 import { sanitizeJsonOutput } from "./parsing.js";
-import type { MetaDecomposition } from "./types.js";
+import type { MetaDecomposition, WorkerSubtask } from "./types.js";
 
 export function loadFileContents(files: string[], budgetChars?: number, cwd?: string): string {
   const basePath = cwd || PROJECT_ROOT;
@@ -148,10 +148,191 @@ async function runWithConcurrency<T>(tasks: (() => Promise<T>)[], limit: number)
   return results;
 }
 
+// ─── Cross-Worker Synchronization ─────────────────────────────────────────────
+
+interface ConflictGroup {
+  safe: WorkerSubtask[];
+  contested: WorkerSubtask[];  // topologically sorted: if Y reads X's file, X comes first
+}
+
+/**
+ * Detect conflicts between worker subtasks and split into safe (parallel)
+ * and contested (serial, topologically sorted) groups.
+ */
+function detectWorkerConflicts(subtasks: WorkerSubtask[]): ConflictGroup {
+  const targetSet = new Set(subtasks.map((st) => st.file));
+  const contestedSet = new Set<number>();
+
+  // Build adjacency: edge X -> Y means Y's context_files includes X's file
+  const adj = new Map<number, number[]>();  // X -> [Y, ...]
+  const inDegree = new Map<number, number>();
+
+  for (let i = 0; i < subtasks.length; i++) {
+    adj.set(i, []);
+    inDegree.set(i, 0);
+  }
+
+  for (let j = 0; j < subtasks.length; j++) {
+    for (let i = 0; i < subtasks.length; i++) {
+      if (i === j) continue;
+      // If subtask j reads subtask i's output file
+      if (subtasks[j].context_files.includes(subtasks[i].file)) {
+        contestedSet.add(i);
+        contestedSet.add(j);
+        adj.get(i)!.push(j);
+        inDegree.set(j, (inDegree.get(j) || 0) + 1);
+      }
+    }
+  }
+
+  const safe = subtasks.filter((_, idx) => !contestedSet.has(idx));
+  const contestedIndices = Array.from(contestedSet);
+
+  // Topological sort (Kahn's algorithm) on contested indices only
+  const subInDegree = new Map<number, number>();
+  const subAdj = new Map<number, number[]>();
+  for (const idx of contestedIndices) {
+    subInDegree.set(idx, 0);
+    subAdj.set(idx, []);
+  }
+  for (const idx of contestedIndices) {
+    for (const dep of adj.get(idx) || []) {
+      if (contestedSet.has(dep)) {
+        subAdj.get(idx)!.push(dep);
+        subInDegree.set(dep, (subInDegree.get(dep) || 0) + 1);
+      }
+    }
+  }
+
+  const queue: number[] = [];
+  for (const idx of contestedIndices) {
+    if (subInDegree.get(idx) === 0) queue.push(idx);
+  }
+
+  const sorted: WorkerSubtask[] = [];
+  while (queue.length > 0) {
+    const curr = queue.shift()!;
+    sorted.push(subtasks[curr]);
+    for (const next of subAdj.get(curr) || []) {
+      const newDeg = subInDegree.get(next)! - 1;
+      subInDegree.set(next, newDeg);
+      if (newDeg === 0) queue.push(next);
+    }
+  }
+
+  // Cycle detection: if sorted is shorter than contested, there's a cycle
+  if (sorted.length < contestedIndices.length) {
+    console.error("[worker-sync] Cycle detected in worker dependencies — falling back to original order");
+    const remaining = contestedIndices
+      .filter((idx) => !sorted.some((st) => st === subtasks[idx]))
+      .map((idx) => subtasks[idx]);
+    sorted.push(...remaining);
+  }
+
+  return { safe, contested: sorted };
+}
+
+/**
+ * Re-invoke Sonnet to regenerate a worker prompt from current disk state.
+ * Used for contested workers whose upstream dependencies have already written.
+ */
+async function regenerateWorkerPrompt(
+  st: WorkerSubtask,
+  cwd?: string,
+): Promise<WorkerSubtask> {
+  const basePath = cwd || PROJECT_ROOT;
+
+  // Read current disk state of target + context files
+  const fileStates: string[] = [];
+  const allFiles = [st.file, ...st.context_files].slice(0, 5);
+  for (const f of allFiles) {
+    const fullPath = f.startsWith("/") ? f : join(basePath, f);
+    if (existsSync(fullPath) && statSync(fullPath).isFile()) {
+      const content = readFileSync(fullPath, "utf-8");
+      const truncated = content.length > 6000 ? content.slice(0, 6000) + "\n... [truncated]" : content;
+      fileStates.push(`### ${f}\n\`\`\`\n${truncated}\n\`\`\``);
+    }
+  }
+
+  try {
+    const result = await spawnSubagent({
+      prompt: `A previous worker has modified files that this worker depends on.
+Regenerate the worker_prompt to reflect the CURRENT state of the files on disk.
+
+## Original Instructions
+${st.instructions}
+
+## Original Worker Prompt
+${st.worker_prompt}
+
+## Current File Contents (after upstream changes)
+${fileStates.join("\n\n")}
+
+Output ONLY a JSON object with a single "worker_prompt" field containing the updated prompt:
+\`\`\`json
+{"worker_prompt": "..."}
+\`\`\``,
+      systemPrompt: `You are a prompt regeneration agent. Given original worker instructions and updated file contents,
+produce an updated worker_prompt that reflects the current state of the codebase.
+The updated prompt must be self-contained and include all context the worker needs.
+Output ONLY valid JSON with a "worker_prompt" field.`,
+      model: "anthropic/claude-sonnet-4-6",
+      thinking: "low",
+      agentName: "worker-reprompt",
+      cwd,
+    });
+
+    const json = JSON.parse(sanitizeJsonOutput(result));
+    if (json.worker_prompt && typeof json.worker_prompt === "string") {
+      return { ...st, worker_prompt: json.worker_prompt };
+    }
+    return st;
+  } catch {
+    console.error(`[worker-reprompt] Failed to regenerate prompt for ${st.file} — using original`);
+    return st;
+  }
+}
+
+/**
+ * Dispatch a batch of subtasks, handling cross-worker conflicts.
+ * Safe tasks run in parallel; contested tasks run serially in topological order
+ * with prompt regeneration between each.
+ */
+async function dispatchBatch(
+  batch: WorkerSubtask[],
+  makeWorkerFn: (st: WorkerSubtask) => () => Promise<string>,
+  cwd?: string,
+): Promise<string[]> {
+  if (batch.length === 0) return [];
+
+  const { safe, contested } = detectWorkerConflicts(batch);
+  const results: string[] = [];
+
+  // Safe group: parallel execution
+  if (safe.length > 0) {
+    const safeResults = await runWithConcurrency(safe.map(makeWorkerFn), MAX_WORKER_CONCURRENCY);
+    results.push(...safeResults);
+  }
+
+  // Contested group: serial execution in topological order
+  for (let i = 0; i < contested.length; i++) {
+    let st = contested[i];
+    // Regenerate prompt for all contested workers except the first (no upstream changes yet)
+    if (i > 0) {
+      st = await regenerateWorkerPrompt(st, cwd);
+    }
+    const result = await makeWorkerFn(st)();
+    results.push(result);
+  }
+
+  return results;
+}
+
 /**
  * Delegate a decomposed set of worker subtasks to Haiku workers with concurrency cap.
  * Headers (.h, .glsl) run first, then implementations (.cpp, .comp.glsl) — both
  * capped at MAX_WORKER_CONCURRENCY to avoid API rate limits.
+ * Cross-worker conflicts are detected and handled via serial execution with prompt regeneration.
  */
 export async function delegateToWorkers(
   decomposition: MetaDecomposition,
@@ -281,8 +462,9 @@ Integrate the isolated implementation into the target file, adapting types and i
   void workerModel;
   void subsystem;
 
-  // Run headers first (dependencies), then implementations — both concurrency-capped
-  const headerResults = await runWithConcurrency(headerTasks.map(makeWorkerFn), MAX_WORKER_CONCURRENCY);
-  const implResults = await runWithConcurrency(implTasks.map(makeWorkerFn), MAX_WORKER_CONCURRENCY);
+  // Run headers first (dependencies), then implementations
+  // Cross-worker conflicts are detected and handled within each batch
+  const headerResults = await dispatchBatch(headerTasks, makeWorkerFn, cwd);
+  const implResults = await dispatchBatch(implTasks, makeWorkerFn, cwd);
   return [...headerResults, ...implResults].join("\n\n");
 }

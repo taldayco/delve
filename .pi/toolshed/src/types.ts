@@ -245,6 +245,16 @@ export const TOOL_REGISTRY: ToolMeta[] = [
     description: "Read full content of a Viking-indexed resource by URI.",
     cost: "moderate",
   },
+  // Hex lint tools
+  {
+    name: "hex_lint",
+    category: "test",
+    keywords: ["hex", "coordinate", "geometry", "lint", "axial", "cube"],
+    prerequisites: ["build_compile"],
+    enables: [],
+    description: "Run hex coordinate invariant tests",
+    cost: "expensive",
+  },
   {
     name: "viking_write_memory",
     category: "viking",

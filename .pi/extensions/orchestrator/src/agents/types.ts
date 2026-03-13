@@ -70,6 +70,13 @@ export interface FailureSignal {
   category: "capability" | "tool" | "context" | "unknown";
 }
 
+export type ErrorSeverity = "syntactic" | "structural" | "architectural";
+export interface ErrorClassification {
+  severity: ErrorSeverity;
+  summary: string;
+  affected_files: string[];
+}
+
 export interface TruncateResult {
   text: string;
   droppedSections: number;

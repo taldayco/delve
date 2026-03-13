@@ -320,6 +320,41 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             }
         }
 
+        // Compute armature_transform: accumulated transform from non-joint
+        // ancestors of root bones (e.g. Blender's Armature object node which
+        // typically carries scale=0.01 for Mixamo and a Y-up rotation).
+        {
+            int ri = asset.skeleton.root_bone_index;
+            const cgltf_node *root_joint = skin.joints[ri];
+            std::vector<glm::mat4> chain;
+            for (const cgltf_node *p = root_joint->parent; p; p = p->parent) {
+                if (node_to_bone.find(p) != node_to_bone.end()) break; // stop at skin joints
+                glm::mat4 lm(1.0f);
+                if (p->has_matrix) {
+                    const float *pm = p->matrix;
+                    lm = glm::mat4(pm[0],pm[1],pm[2],pm[3],
+                                   pm[4],pm[5],pm[6],pm[7],
+                                   pm[8],pm[9],pm[10],pm[11],
+                                   pm[12],pm[13],pm[14],pm[15]);
+                } else {
+                    glm::vec3 t(0.f), s(1.f);
+                    glm::quat r(1.f, 0.f, 0.f, 0.f);
+                    if (p->has_translation) t = {p->translation[0], p->translation[1], p->translation[2]};
+                    if (p->has_rotation)    r = glm::quat(p->rotation[3], p->rotation[0], p->rotation[1], p->rotation[2]);
+                    if (p->has_scale)       s = {p->scale[0], p->scale[1], p->scale[2]};
+                    lm = glm::translate(glm::mat4(1.f), t) * glm::mat4_cast(r) * glm::scale(glm::mat4(1.f), s);
+                }
+                chain.push_back(lm);
+            }
+            // Apply from outermost ancestor down
+            glm::mat4 arm(1.f);
+            for (int j = (int)chain.size() - 1; j >= 0; --j)
+                arm = arm * chain[j];
+            asset.skeleton.armature_transform = arm;
+            SDL_Log("GltfSkinnedLoader: armature_transform scale ~%.4f",
+                    glm::length(glm::vec3(arm[0])));
+        }
+
         // Build flat inverse_bind_matrices array for GPU upload
         asset.inverse_bind_matrices.resize(bone_count);
         for (int i = 0; i < bone_count; ++i)

@@ -58,6 +58,9 @@ struct GltfBone {
 struct GltfSkeleton {
     std::vector<GltfBone> bones;
     int                   root_bone_index = 0;
+    // Transform from non-joint ancestor nodes (e.g. Armature object).
+    // Applied to root bones before hierarchy propagation.
+    glm::mat4             armature_transform{1.0f};
 };
 
 struct GltfAnimKeyframe {

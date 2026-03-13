@@ -31,6 +31,9 @@ public:
     bool is_initialized() const { return initialized_; }
     bool has_character()  const { return char_loaded_; }
 
+    float debug_uniform_scale = 1.0f;
+    bool  debug_raw_transform = false;
+
 private:
     bool build_pipeline(SDL_Window *window);
 
@@ -52,6 +55,7 @@ private:
     std::string current_clip_;
 
     SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
-    bool initialized_ = false;
-    bool char_loaded_ = false;
+    bool initialized_  = false;
+    bool char_loaded_  = false;
+    bool printed_root_ = false;
 };

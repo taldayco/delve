@@ -28,6 +28,6 @@ void main() {
     gl_Position    = projection * view * world_pos;
 
     frag_world_pos = world_pos.xyz;
-    frag_normal    = normalize(mat3(skin_mat) * in_normal);
+    frag_normal    = normalize(transpose(inverse(mat3(skin_mat))) * in_normal);
     frag_texcoord  = in_texcoord;
 }

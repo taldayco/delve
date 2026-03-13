@@ -249,11 +249,30 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
     }
     player_.sample(locals);
 
-    // Root: translate * rotateZ(facing) * rotateX(-90deg, Y-up->Z-up) * scale(HEX_SIZE, Blender meters->terrain units)
-    glm::mat4 root = glm::translate(glm::mat4(1.f), player_pos)
-                   * glm::rotate(glm::mat4(1.f), facing, glm::vec3(0.f, 0.f, 1.f))
-                   * glm::rotate(glm::mat4(1.f), glm::radians(-90.0f), glm::vec3(1.f, 0.f, 0.f))
-                   * glm::scale(glm::mat4(1.f), glm::vec3(Config::HEX_SIZE));
+    glm::mat4 root;
+    if (debug_raw_transform) {
+        // Debug: just translate + uniform scale, no facing or Y-up conversion
+        root = glm::translate(glm::mat4(1.f), player_pos)
+             * glm::scale(glm::mat4(1.f), glm::vec3(debug_uniform_scale));
+        if (!printed_root_) {
+            SDL_Log("SkinnedRenderer root (raw): [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]",
+                    root[0][0], root[1][0], root[2][0], root[3][0],
+                    root[0][1], root[1][1], root[2][1], root[3][1],
+                    root[0][2], root[1][2], root[2][2], root[3][2],
+                    root[0][3], root[1][3], root[2][3], root[3][3]);
+            printed_root_ = true;
+        }
+    } else {
+        // Mesh vertices are in glTF Y-up metres.  rotX(+90°) converts Y-up → engine Z-up.
+        // The mesh's default forward is +Z (Y-up), which maps to -Y in Z-up, so we add
+        // a +π/2 facing offset so that facing=0 (velocity along +X) points the mesh to +X.
+        constexpr float kFacingOffset = glm::half_pi<float>();
+        root = glm::translate(glm::mat4(1.f), player_pos)
+             * glm::rotate(glm::mat4(1.f), facing + kFacingOffset, glm::vec3(0.f, 0.f, 1.f))
+             * glm::rotate(glm::mat4(1.f), glm::radians(90.0f), glm::vec3(1.f, 0.f, 0.f))
+             * glm::scale(glm::mat4(1.f), glm::vec3(Config::HEX_SIZE * debug_uniform_scale));
+        printed_root_ = false;
+    }
 
     palette_ = compute_bone_palette(skeleton_, locals, root);
 }

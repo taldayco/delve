@@ -694,6 +694,8 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Checkbox("Use Instanced Terrain", &terrain_renderer.use_instanced);
   ImGui::Checkbox("Use PBR Shading", &terrain_renderer.use_pbr);
   ImGui::Checkbox("Use Skinned Character", &use_skinned);
+  ImGui::SliderFloat("Skinned Scale", &skinned_renderer.debug_uniform_scale, 0.01f, 100.0f);
+  ImGui::Checkbox("Raw Transform", &skinned_renderer.debug_raw_transform);
   ImGui::Separator();
   if (ImGui::Button("Regenerate", {-1, 40})) ts->need_regenerate = true;
   if (ImGui::Button("Reset", {-1, 40})) {

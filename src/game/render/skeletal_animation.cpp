@@ -102,7 +102,10 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
 
         int parent = skel.bones[i].parent_index;
         if (parent < 0 || parent >= num_bones) {
-            global[i] = local;
+            // Root bones: prepend the armature (non-joint ancestor) transform.
+            // This carries the Armature object's scale (e.g. 0.01 for Mixamo)
+            // and coordinate-system rotation (e.g. Blender Z-up → glTF Y-up).
+            global[i] = skel.armature_transform * local;
         } else {
             global[i] = global[parent] * local;
         }

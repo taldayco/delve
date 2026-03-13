@@ -35,9 +35,10 @@ DIRECTORY_MAP = {
     "src/test": "viking://resources/delve/test",
 }
 
-EXTENSIONS = {".h", ".cpp", ".glsl", ".comp.glsl"}
+EXTENSIONS = {".h", ".cpp", ".glsl"}
 
 # Subsystem taxonomy from context.ts KEYWORD_SYNONYMS (seeded as a SKILL)
+SUBSYSTEM_SKILL_PATH = SCRIPT_DIR / "_subsystem_skill.md"
 SUBSYSTEM_SKILL = """# Delve Subsystem Taxonomy
 
 Canonical subsystems: terrain, actor, shader, engine
@@ -80,16 +81,10 @@ def ingest_directory(client: SyncOpenViking, src_dir: str, viking_base: str) -> 
             if not should_index(fpath):
                 continue
             rel = fpath.relative_to(full_dir)
-            uri = f"{viking_base}/{rel}"
-            content = fpath.read_text(errors="replace")
-            metadata = {
-                "source_path": str(fpath.relative_to(PROJECT_ROOT)),
-                "language": fpath.suffix.lstrip("."),
-                "lines": content.count("\n") + 1,
-            }
-            client.add_resource(uri=uri, content=content, metadata=metadata)
+            target_uri = f"{viking_base}/{rel}"
+            client.add_resource(path=str(fpath), to=target_uri, wait=True)
             count += 1
-            print(f"  + {uri}")
+            print(f"  + {target_uri}")
 
     return count
 
@@ -104,16 +99,10 @@ def ingest_game_toplevel(client: SyncOpenViking) -> int:
     for fpath in sorted(game_dir.iterdir()):
         if fpath.is_file() and should_index(fpath):
             rel = fpath.relative_to(game_dir)
-            uri = f"viking://resources/delve/game/{rel}"
-            content = fpath.read_text(errors="replace")
-            metadata = {
-                "source_path": str(fpath.relative_to(PROJECT_ROOT)),
-                "language": fpath.suffix.lstrip("."),
-                "lines": content.count("\n") + 1,
-            }
-            client.add_resource(uri=uri, content=content, metadata=metadata)
+            target_uri = f"viking://resources/delve/game/{rel}"
+            client.add_resource(path=str(fpath), to=target_uri, wait=True)
             count += 1
-            print(f"  + {uri}")
+            print(f"  + {target_uri}")
 
     return count
 
@@ -137,7 +126,7 @@ def main() -> None:
 
     print("Connecting to OpenViking...")
     client = SyncOpenViking()
-    client.ping()
+    client.is_healthy()
     print("Connected.\n")
 
     total = 0
@@ -157,11 +146,13 @@ def main() -> None:
 
     # Seed subsystem taxonomy as a SKILL
     print("Seeding subsystem taxonomy SKILL...")
+    SUBSYSTEM_SKILL_PATH.write_text(SUBSYSTEM_SKILL)
     client.add_resource(
-        uri="viking://agent/skills/delve-subsystems",
-        content=SUBSYSTEM_SKILL,
-        metadata={"type": "skill", "domain": "delve"},
+        path=str(SUBSYSTEM_SKILL_PATH),
+        to="viking://agent/skills/delve-subsystems",
+        wait=True,
     )
+    SUBSYSTEM_SKILL_PATH.unlink(missing_ok=True)
     print("  + viking://agent/skills/delve-subsystems\n")
 
     print(f"Done. Indexed {total} files + 1 skill.")

@@ -53,7 +53,7 @@ def main() -> None:
 
 def dispatch(client: "SyncOpenViking", command: str, args: dict) -> object:
     if command == "status":
-        client.ping()
+        client.is_healthy()
         return {"status": "healthy"}
 
     if command == "search":

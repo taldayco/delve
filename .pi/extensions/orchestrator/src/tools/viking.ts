@@ -5,9 +5,11 @@
 // Every public function handles failures gracefully — returns undefined/empty
 // on error so callers can fall through to keyword-based fallback.
 
-import { exec } from "node:child_process";
+import { exec, execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
+
+const START_BRAIN_SCRIPT = join("/home", process.env.USER || "neto", "start_brain.sh");
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -83,12 +85,23 @@ export async function isVikingAvailable(): Promise<boolean> {
     return false;
   }
 
-  const resp = await callBridge({ command: "status", args: {} });
+  let resp = await callBridge({ command: "status", args: {} });
   if (!resp.ok) {
-    vikingDebug(`status check failed: ${resp.error}`);
-    console.error("[viking] OpenViking unavailable — using keyword fallback");
-    _vikingAvailable = false;
-    return false;
+    vikingDebug(`status check failed: ${resp.error} — attempting auto-start`);
+    if (existsSync(START_BRAIN_SCRIPT)) {
+      console.error("[viking] OpenViking unavailable — running start_brain.sh...");
+      try {
+        execSync(START_BRAIN_SCRIPT, { timeout: 60_000, stdio: "pipe" });
+        resp = await callBridge({ command: "status", args: {} });
+      } catch (e: any) {
+        vikingDebug(`start_brain.sh failed: ${e.message}`);
+      }
+    }
+    if (!resp.ok) {
+      console.error("[viking] OpenViking unavailable after auto-start — using keyword fallback");
+      _vikingAvailable = false;
+      return false;
+    }
   }
 
   vikingDebug("OpenViking available");

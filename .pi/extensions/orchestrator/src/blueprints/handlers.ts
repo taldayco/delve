@@ -611,7 +611,8 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     await requireViking();
     const results = await vikingSearch(ctx.prompt, "L2", "viking://resources/delve", 10);
     if (results.length === 0) {
-      return { ok: false, output: "No research findings from Viking" };
+      ctx.data.researchFindings = "";
+      return { ok: true, output: "Viking returned 0 results — proceeding without research context" };
     }
     const findings = results.map((r) => `### ${r.uri}\n${r.snippet}`).join("\n\n");
     ctx.data.researchFindings = findings;

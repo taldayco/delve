@@ -84,7 +84,8 @@ export async function executeBlueprint(
         continue;
       }
 
-      const handler = PHASE_HANDLERS[phase.handler];
+      const normalizedHandler = phase.handler.replace(/-/g, "_");
+      const handler = PHASE_HANDLERS[normalizedHandler];
       if (!handler) {
         throw new Error(`Unknown phase handler: ${phase.handler}`);
       }
@@ -95,14 +96,14 @@ export async function executeBlueprint(
         "commit_pr", "commit_wip", "shader_validate", "verify",
         "visual_test", "diagnose", "replan", "math_verify",
       ]);
-      if (WRITE_PHASES.has(phase.handler) && !context.data.worktreePath) {
+      if (WRITE_PHASES.has(normalizedHandler) && !context.data.worktreePath) {
         const msg = `Phase "${phase.name}" (handler: ${phase.handler}) requires worktreePath but it is not set`;
         context.ctx.ui.notify(msg, "error");
         return { ok: false, failedPhase: phase.name, errorMessage: msg, completedPhases, worktreePath: context.data.worktreePath };
       }
 
       context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
-      if (WRITE_PHASES.has(phase.handler) && context.data.worktreePath) {
+      if (WRITE_PHASES.has(normalizedHandler) && context.data.worktreePath) {
         context.ctx.ui.notify(`Sandbox: ${resolve(context.data.worktreePath)}`, "info");
       }
       options?.onPhaseChange?.(phase.name as Phase);
@@ -111,7 +112,7 @@ export async function executeBlueprint(
 
       // Validate agentic phase output quality
       if (result.ok && phase.type === "agentic") {
-        const validation = validatePhaseOutput(phase.handler, result.output, context);
+        const validation = validatePhaseOutput(normalizedHandler, result.output, context);
         if (validation.warnings.length > 0) {
           for (const w of validation.warnings) {
             context.ctx.ui.notify(`[validation] ${phase.name}: ${w}`, "warning");

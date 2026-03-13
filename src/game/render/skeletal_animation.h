@@ -22,6 +22,7 @@ public:
 
     float get_time() const { return time_; }
     bool  has_clip() const { return clip_ != nullptr; }
+    const GltfAnimationClip* get_clip() const { return clip_; }
 
 private:
     const GltfAnimationClip *clip_ = nullptr;
@@ -30,6 +31,8 @@ private:
 
 // Walk the bone hierarchy top-down and compute GPU-ready skin matrices.
 // local_transforms[i] is the local transform for bone i.
-// Result: BonePalette where bones[i] = GlobalTransform[i] * InverseBind[i]
+// root_transform is pre-multiplied into every bone (use for player position/facing/scale).
+// Result: BonePalette where bones[i] = root_transform * GlobalTransform[i] * InverseBind[i]
 BonePalette compute_bone_palette(const GltfSkeleton &skel,
-                                  const std::vector<BoneLocalTransform> &local_transforms);
+                                  const std::vector<BoneLocalTransform> &local_transforms,
+                                  const glm::mat4 &root_transform = glm::mat4(1.f));

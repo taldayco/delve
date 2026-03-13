@@ -13,20 +13,21 @@ const WORKTREE_DIR = ".pi/worktrees";
  */
 export function gitBranch(branchName: string): { ok: boolean; summary: string; worktreePath?: string } {
   // Ensure we're on main and up to date
-  shell("git checkout main 2>&1 && git pull --ff-only 2>&1");
+  shell("git checkout main 2>&1 && git pull --ff-only 2>&1", PROJECT_ROOT);
 
   // Create worktree directory
   const safeName = branchName.replace(/[^a-zA-Z0-9._-]/g, "-");
   const worktreePath = `${WORKTREE_DIR}/${safeName}`;
 
   // Clean up existing worktree at this path if it exists
-  shell(`git worktree remove --force "${worktreePath}" 2>&1`);
+  shell(`git worktree remove --force "${worktreePath}" 2>&1`, PROJECT_ROOT);
 
   // Delete stale branch from previous runs if it exists
-  shell(`git branch -D "${branchName}" 2>&1`);
+  shell(`git branch -D "${branchName}" 2>&1`, PROJECT_ROOT);
 
   const result = shell(
-    `git worktree add -b "${branchName}" "${worktreePath}" main 2>&1`
+    `git worktree add -b "${branchName}" "${worktreePath}" main 2>&1`,
+    PROJECT_ROOT
   );
   if (!result.ok) {
     return { ok: false, summary: `Failed to create worktree: ${result.stderr}` };
@@ -44,7 +45,7 @@ export function gitBranch(branchName: string): { ok: boolean; summary: string; w
  */
 export function cleanupWorktree(worktreePath: string): void {
   try {
-    shell(`git worktree remove --force "${worktreePath}" 2>&1`);
+    shell(`git worktree remove --force "${worktreePath}" 2>&1`, PROJECT_ROOT);
   } catch { /* ignore */ }
 }
 
@@ -59,7 +60,7 @@ export function cleanupStaleWorktrees(): { removed: string[]; summary: string } 
   const removed: string[] = [];
 
   // Get list of registered git worktrees
-  const worktreeList = shell("git worktree list --porcelain 2>/dev/null");
+  const worktreeList = shell("git worktree list --porcelain 2>/dev/null", PROJECT_ROOT);
   const registeredPaths = new Set<string>();
   if (worktreeList.ok) {
     for (const line of worktreeList.stdout.split("\n")) {
@@ -101,7 +102,7 @@ export function gitCommitAndPr(opts: {
   branch: string;
   buildOk: boolean;
   testsOk: boolean;
-  cwd?: string;
+  cwd: string;
 }): { ok: boolean; prUrl: string; summary: string } {
   const cwd = opts.cwd;
 
@@ -162,7 +163,7 @@ export function gitCommitAndPr(opts: {
   };
 }
 
-export function getChangedFiles(cwd?: string): string[] {
+export function getChangedFiles(cwd: string): string[] {
   const result = shell("git diff --name-only main 2>/dev/null", cwd);
   return result.stdout
     .trim()
@@ -170,7 +171,7 @@ export function getChangedFiles(cwd?: string): string[] {
     .filter((f) => f.length > 0);
 }
 
-export function getDiff(cwd?: string): string {
+export function getDiff(cwd: string): string {
   const result = shell("git diff main 2>/dev/null", cwd);
   // Truncate diff to keep token count manageable
   const full = result.stdout;
@@ -182,11 +183,12 @@ export function getDiff(cwd?: string): string {
 
 export function cleanupMergedBranches(): { deleted: string[]; summary: string } {
   // Fetch with prune to remove stale remote tracking refs
-  shell("git fetch --prune 2>&1");
+  shell("git fetch --prune 2>&1", PROJECT_ROOT);
 
   // List remote minion/* branches that are merged into main
   const result = shell(
-    "git branch -r --merged main 2>/dev/null | grep 'origin/minion' | sed 's|origin/||' | tr -d ' '"
+    "git branch -r --merged main 2>/dev/null | grep 'origin/minion' | sed 's|origin/||' | tr -d ' '",
+    PROJECT_ROOT
   );
 
   if (!result.ok || !result.stdout.trim()) {
@@ -198,9 +200,9 @@ export function cleanupMergedBranches(): { deleted: string[]; summary: string } 
 
   for (const branch of branches) {
     // Delete remote branch
-    const delRemote = shell(`git push origin --delete "${branch}" 2>&1`);
+    const delRemote = shell(`git push origin --delete "${branch}" 2>&1`, PROJECT_ROOT);
     // Delete local branch if it exists
-    shell(`git branch -d "${branch}" 2>&1`);
+    shell(`git branch -d "${branch}" 2>&1`, PROJECT_ROOT);
     if (delRemote.ok) {
       deleted.push(branch);
     }

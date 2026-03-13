@@ -2,7 +2,7 @@
 
 import { silentShell, writeState } from "../agents.js";
 
-export function runBuild(cwd?: string): { ok: boolean; summary: string; full: string } {
+export function runBuild(cwd: string): { ok: boolean; summary: string; full: string } {
   const result = silentShell(
     "cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1 && cmake --build build -j$(nproc) 2>&1",
     50,
@@ -12,7 +12,7 @@ export function runBuild(cwd?: string): { ok: boolean; summary: string; full: st
   return result;
 }
 
-export function runTests(cwd?: string): {
+export function runTests(cwd: string): {
   buildOk: boolean;
   testsOk: boolean;
   summary: string;
@@ -21,7 +21,7 @@ export function runTests(cwd?: string): {
   // A1 fix: ensure cmake is configured before building tests
   const { existsSync } = require("node:fs");
   const { join } = require("node:path");
-  const baseCwd = cwd || process.cwd();
+  const baseCwd = cwd;
   if (!existsSync(join(baseCwd, "build/compile_commands.json"))) {
     silentShell("cmake -B build -DCMAKE_BUILD_TYPE=Release 2>&1", 30, cwd);
   }
@@ -56,7 +56,7 @@ export function runTests(cwd?: string): {
   };
 }
 
-export function runMetrics(cwd?: string): {
+export function runMetrics(cwd: string): {
   ok: boolean;
   outputDir: string;
   domains: string[];
@@ -64,7 +64,7 @@ export function runMetrics(cwd?: string): {
 } {
   const { mkdirSync, readFileSync, existsSync } = require("node:fs");
   const { join } = require("node:path");
-  const baseCwd = cwd || process.cwd();
+  const baseCwd = cwd;
   const outputDir = join(baseCwd, ".pi/state/metrics");
 
   // Build metrics binary first
@@ -101,7 +101,7 @@ export function runMetrics(cwd?: string): {
   return { ok: true, outputDir, domains, summary: `Metrics: ${domains.length} domains emitted` };
 }
 
-export function runShaderValidation(cwd?: string): { ok: boolean; summary: string } {
+export function runShaderValidation(cwd: string): { ok: boolean; summary: string } {
   return silentShell(
     "find src/shaders -name '*.glsl' ! -name '*.inc.glsl' " +
       "-exec glslc --target-env=vulkan1.2 -o /dev/null {} \\; 2>&1",

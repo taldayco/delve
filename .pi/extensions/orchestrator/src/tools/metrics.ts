@@ -1,6 +1,7 @@
 // ─── Domain Complexity Metrics ───────────────────────────────────────────────
 
 import { shell } from "./shell.js";
+import { PROJECT_ROOT } from "../agents/config.js";
 import { DOMAIN_COMPLEXITY_THRESHOLD } from "./types.js";
 import type { DomainReport } from "./types.js";
 
@@ -21,7 +22,8 @@ export function measureDomainComplexity(): DomainReport[] {
 
     // Count files
     const findResult = shell(
-      `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) 2>/dev/null`
+      `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) 2>/dev/null`,
+      PROJECT_ROOT
     );
     const files = findResult.ok
       ? findResult.stdout.trim().split("\n").filter((f) => f.length > 0)
@@ -32,7 +34,8 @@ export function measureDomainComplexity(): DomainReport[] {
     let totalLines = 0;
     if (fileCount > 0) {
       const wcResult = shell(
-        `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) -exec wc -l {} + 2>/dev/null | tail -1`
+        `find ${fullDir} -type f \\( -name '*.h' -o -name '*.cpp' -o -name '*.glsl' \\) -exec wc -l {} + 2>/dev/null | tail -1`,
+        PROJECT_ROOT
       );
       if (wcResult.ok) {
         const match = wcResult.stdout.trim().match(/^\s*(\d+)/);

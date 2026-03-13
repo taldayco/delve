@@ -1,5 +1,3 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 import type { Blueprint, BlueprintContext, BlueprintResult } from "./types.js";
 import type { Phase } from "../commands/types.js";
 
@@ -19,17 +17,6 @@ export function getAvailablePhases(): string[] {
 // ─── Blueprint Loader ────────────────────────────────────────────────────────
 
 export function loadBlueprint(name: string): Blueprint | null {
-  // Check for custom blueprint file first
-  const customPath = join(process.cwd(), `.pi/blueprints/${name}.json`);
-  if (existsSync(customPath)) {
-    try {
-      const content = readFileSync(customPath, "utf-8");
-      return JSON.parse(content) as Blueprint;
-    } catch {
-      // Fall through to builtins
-    }
-  }
-
   return BUILTIN_BLUEPRINTS[name] || null;
 }
 

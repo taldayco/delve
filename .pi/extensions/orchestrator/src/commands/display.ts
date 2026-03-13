@@ -7,8 +7,9 @@ import type { Phase, MinionState } from "./types.js";
 export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export const PHASE_ORDER: Phase[] = [
-  "pre_flight", "branch", "resolve_subsystem", "plan", "diagnose", "implement",
-  "build", "fix-build", "write-tests", "test", "fix-tests", "review",
+  "pre_flight", "branch", "resolve_subsystem", "plan", "diagnose",
+  "research", "math_verify", "worker_fan_out",
+  "implement", "build", "fix-build", "write-tests", "test", "fix-tests", "review",
   "shader-validate", "verify", "memory_iterate", "commit-pr", "commit_wip", "post_flight",
 ];
 
@@ -19,6 +20,9 @@ export const PHASE_LABELS: Record<string, string> = {
   "resolve_subsystem": "Resolve subsystem",
   "plan": "plan",
   "diagnose": "diagnose",
+  "research": "research",
+  "math_verify": "math verify",
+  "worker_fan_out": "worker fan-out",
   "implement": "implement",
   "build": "build",
   "fix-build": "build",
@@ -39,7 +43,7 @@ export function getDisplayPhases(pipelinePhases: Phase[]): string[] {
   const seen = new Set<string>();
   const result: string[] = [];
   for (const p of pipelinePhases) {
-    const label = PHASE_LABELS[p] || p;
+    const label = PHASE_LABELS[p] || p.replace(/^dynamic:/, "");
     if (!seen.has(label)) {
       seen.add(label);
       result.push(label);

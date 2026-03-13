@@ -72,4 +72,6 @@ imgui/
 *.bak
 *.tmp
 
+.pi/
+
 Blender_Assets/

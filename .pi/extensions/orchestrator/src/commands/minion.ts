@@ -8,7 +8,7 @@ export function registerMinionCommand(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const g = guardArgs("minion", args, ctx);
       if (!g) return;
-      await runBlueprint("Minion", "minion", "branching-full", g.prompt, ctx);
+      await runBlueprint("Minion", "minion", "branching-full", g.prompt, ctx, true);
     },
   });
 }

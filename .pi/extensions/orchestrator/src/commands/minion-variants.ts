@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
   executeBlueprint,
   loadBlueprint,
+  generateDynamicBlueprint,
   type BlueprintContext,
   type BlueprintResult,
 } from "../blueprints.js";
@@ -10,6 +11,7 @@ import {
   elapsed,
   cleanupWorktree,
   cleanupMergedBranches,
+  requireViking,
 } from "../tools.js";
 import type { Phase } from "./types.js";
 import { state, getState, setState, attachAgentListeners, detachAgentListeners, setPhase, recordFailure } from "./display.js";
@@ -22,6 +24,7 @@ export async function runBlueprint(
   blueprintName: string,
   prompt: string,
   ctx: any,
+  useMeta: boolean = false,
 ): Promise<void> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   const branch = `${branchPrefix}/${timestamp}-${slugify(prompt)}`;
@@ -37,7 +40,15 @@ export async function runBlueprint(
 
   ctx.ui.notify(`${commandName} started: ${prompt}`, "info");
 
-  const blueprint = loadBlueprint(blueprintName)!;
+  let blueprint;
+  if (useMeta) {
+    await requireViking();
+    ctx.ui.notify("Meta agent generating dynamic blueprint...", "info");
+    blueprint = await generateDynamicBlueprint(prompt, "");
+    ctx.ui.notify(`Using blueprint: ${blueprint.name} (${blueprint.phases.length} phases)`, "info");
+  } else {
+    blueprint = loadBlueprint(blueprintName)!;
+  }
   // Extract phase names from blueprint for dynamic status bar
   const blueprintPhases = blueprint.phases.map((p) => p.name as Phase);
   attachAgentListeners(ctx, state!, blueprintPhases);

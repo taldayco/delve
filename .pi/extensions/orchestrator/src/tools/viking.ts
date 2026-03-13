@@ -67,6 +67,25 @@ function getPythonBin(): string {
   return "python3";
 }
 
+// ─── Fatal Brain Error ──────────────────────────────────────────────────────
+
+export class FatalBrainError extends Error {
+  constructor(message = "Viking/LiteLLM brain is offline — cannot proceed without semantic backend") {
+    super(message);
+    this.name = "FatalBrainError";
+  }
+}
+
+/**
+ * Hard gate: throws FatalBrainError if Viking is not available.
+ * Use this in code paths that MUST have the semantic backend.
+ */
+export async function requireViking(): Promise<void> {
+  if (!(await isVikingAvailable())) {
+    throw new FatalBrainError();
+  }
+}
+
 // ─── Availability Cache ─────────────────────────────────────────────────────
 
 let _vikingAvailable: boolean | null = null;

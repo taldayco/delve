@@ -7,6 +7,9 @@ export type Phase =
   | "resolve_subsystem"
   | "plan"
   | "diagnose"
+  | "research"
+  | "math_verify"
+  | "worker_fan_out"
   | "implement"
   | "build"
   | "fix-build"
@@ -21,7 +24,8 @@ export type Phase =
   | "commit_wip"
   | "post_flight"
   | "done"
-  | "failed";
+  | "failed"
+  | `dynamic:${string}`;
 
 export interface MinionState {
   prompt: string;

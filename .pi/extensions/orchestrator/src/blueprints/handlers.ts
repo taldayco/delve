@@ -7,7 +7,6 @@ import {
   askBuildFixer,
   askTestFixer,
   askDiagnoser,
-  askVerifier,
   spawnDomainAnalyzer,
   getSubsystemAgent,
   parseSubtasks,
@@ -30,6 +29,8 @@ import {
   applyFileBlocks,
   getSubsystemCodebaseContext,
   isVikingAvailable,
+  requireViking,
+  vikingSearch,
   vikingCreateSession,
   vikingAddMessage,
   vikingCommitSession,
@@ -582,6 +583,64 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
         ? "WIP committed and pushed"
         : `WIP committed locally (push failed: ${push.stderr})`,
     };
+  },
+
+  research: async (ctx) => {
+    await requireViking();
+    const results = await vikingSearch(ctx.prompt, "L2", "viking://resources/delve", 10);
+    if (results.length === 0) {
+      return { ok: false, output: "No research findings from Viking" };
+    }
+    const findings = results.map((r) => `### ${r.uri}\n${r.snippet}`).join("\n\n");
+    ctx.data.researchFindings = findings;
+    return { ok: true, output: `Found ${results.length} relevant sources` };
+  },
+
+  math_verify: async (ctx) => {
+    const { spawnSubagent } = await import("../agents/spawn.js");
+    const diff = getDiff(ctx.data.worktreePath);
+    const result = await spawnSubagent({
+      prompt: `Verify mathematical correctness of the following diff. Check for:\n- Off-by-one errors\n- Incorrect formulas\n- Numerical stability issues\n- Unit/coordinate system mismatches\n\nRespond with exactly PASS if correct, or FAIL: <details> if not.\n\n## Diff\n${diff}`,
+      systemPrompt: "You are a mathematical verification agent for C++/GLSL game engine code. Analyze diffs for mathematical correctness. Be precise and concise.",
+      model: "anthropic/claude-sonnet-4-6",
+      agentName: "math-verifier",
+      cwd: ctx.data.worktreePath,
+      signal: ctx.signal,
+    });
+    const passed = /\bPASS\b/i.test(result);
+    return { ok: passed, output: passed ? "Math verification PASSED" : `Math verification FAILED: ${result}` };
+  },
+
+  worker_fan_out: async (ctx) => {
+    const plan = ctx.data.plan;
+    if (!plan) return { ok: false, output: "No plan available for worker fan-out" };
+
+    const subtasks = parseSubtasks(plan);
+    if (subtasks.length === 0) return { ok: false, output: "No subtasks parsed from plan" };
+
+    // Group: headers first, then implementations
+    const isHeader = (task: string) => /\.(h|hpp|glsl)\b/.test(task);
+    const headerTasks = subtasks.filter((st) => isHeader(st.task));
+    const implTasks = subtasks.filter((st) => !isHeader(st.task));
+    const ordered = [...headerTasks, ...implTasks];
+
+    const implementations: string[] = [];
+    for (const sub of ordered) {
+      const agent = getSubsystemAgent(sub.subsystem);
+      const enrichedTask = `## Original Request\n${ctx.prompt}\n\n## Plan Subtask\n${sub.task}`;
+      const contextFiles = extractFilePaths(sub.task).concat(ctx.data.contextFiles || []);
+      implementations.push(await agent({ task: enrichedTask, files: contextFiles, cwd: ctx.data.worktreePath, signal: ctx.signal }));
+    }
+
+    const combined = implementations.join("\n\n");
+    const fileBlockCount = (combined.match(/###\s*FILE:/g) || []).length;
+    if (fileBlockCount === 0) {
+      return { ok: false, output: "No FILE blocks produced by workers" };
+    }
+
+    applyFileBlocks(combined, ctx.data.worktreePath);
+    ctx.data.implementation = combined;
+    return { ok: true, output: `Workers produced ${fileBlockCount} files from ${ordered.length} subtasks` };
   },
 
   // ─── B4+: Self-management handlers (merged from handlers-self.ts) ──────────

@@ -33,7 +33,7 @@ type PhaseHandler = (ctx: BlueprintContext) => Promise<PhaseResult>;
 
 export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
   fix_build: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const buildLog = readState("build_log.txt");
     const fix = await askBuildFixer({
       buildOutput: buildLog.slice(-3000),
@@ -49,7 +49,7 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   fix_tests: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const testResults = readState("test_results.json");
     const fix = await askTestFixer({
       testOutput: testResults.slice(-3000),
@@ -66,7 +66,7 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   fix_review: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const review = readState("review.md");
     const _changedFiles = getChangedFiles(wt);
     const fix = await askBuildFixer({
@@ -198,7 +198,7 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
       cwd: ctx.data.worktreePath,
     });
 
-    applyFileBlocks(proposal, ctx.data.worktreePath);
+    applyFileBlocks(proposal, ctx.data.worktreePath!);
     return { ok: true, output: `Modularization applied for ${topViolation.path}` };
   },
 

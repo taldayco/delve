@@ -24,6 +24,7 @@ import {
   getSubsystemCodebaseContext,
   measureDomainComplexity,
 } from "../tools.js";
+import { PROJECT_ROOT } from "../agents/config.js";
 
 export function registerTools(pi: ExtensionAPI) {
   // ── Register Agent Tools ────────────────────────────────────────────────
@@ -233,7 +234,7 @@ export function registerTools(pi: ExtensionAPI) {
       "Run cmake configure + build. Returns exit status and last 50 lines of output. Full log written to .pi/state/build_log.txt.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-      const result = runBuild();
+      const result = runBuild(PROJECT_ROOT);
       return {
         content: [{ type: "text", text: JSON.stringify({ ok: result.ok, summary: result.summary }) }],
       };
@@ -247,7 +248,7 @@ export function registerTools(pi: ExtensionAPI) {
       "Build and run delve_tests. Returns build/test status and output summary. Full results written to .pi/state/test_results.json.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-      const result = runTests();
+      const result = runTests(PROJECT_ROOT);
       return {
         content: [{
           type: "text",
@@ -268,7 +269,7 @@ export function registerTools(pi: ExtensionAPI) {
       "Build and run delve_metrics with per-domain JSON output. Emits terrain.json, mesh.json, performance.json into .pi/state/metrics/.",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, _ctx) {
-      const result = runMetrics();
+      const result = runMetrics(PROJECT_ROOT);
       return {
         content: [{
           type: "text",
@@ -292,7 +293,7 @@ export function registerTools(pi: ExtensionAPI) {
       task: Type.String({ description: "Task description for context" }),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      const metrics = runMetrics();
+      const metrics = runMetrics(PROJECT_ROOT);
       if (!metrics.ok) {
         return { content: [{ type: "text", text: JSON.stringify({ ok: false, error: metrics.summary }) }] };
       }
@@ -363,6 +364,7 @@ export function registerTools(pi: ExtensionAPI) {
         branch: (params as any).branch,
         buildOk: (params as any).build_ok,
         testsOk: (params as any).tests_ok,
+        cwd: PROJECT_ROOT,
       });
       return { content: [{ type: "text", text: JSON.stringify(result) }] };
     },

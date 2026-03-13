@@ -59,7 +59,7 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
         setPhase("branch", state);
         const branchResult = gitBranch(branch);
         if (!branchResult.ok) { state!.phase = "failed"; recordFailure("branch", branchResult.summary); ctx.ui.notify(branchResult.summary, "error"); return; }
-        const wt = branchResult.worktreePath;
+        const wt = branchResult.worktreePath!;
         worktreePath = wt;
         state!.worktreePath = wt;
 

@@ -104,7 +104,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   resolve_subsystem: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
 
     // Start a Viking memory session if available
     if (await isVikingAvailable()) {
@@ -124,7 +124,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   plan: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const subsystems = ctx.data.subsystems || await resolveSubsystems(ctx.prompt);
     let plan: string;
 
@@ -174,7 +174,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   implement: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const subsystems = ctx.data.subsystems || await resolveSubsystems(ctx.prompt);
     const contextFiles = ctx.data.contextFiles || [];
     const taskWithDiagnosis = ctx.data.diagnosis
@@ -234,7 +234,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   build: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     let buildOk = false;
     for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
       const build = runBuild(wt);
@@ -276,7 +276,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   write_tests: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const changedFiles = getChangedFiles(wt);
     const testCode = await askMetaTester({
       task: ctx.prompt,
@@ -290,7 +290,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   test: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     let testsOk = false;
     for (let round = 0; round < MAX_TEST_FIX_ROUNDS; round++) {
       const testResult = runTests(wt);
@@ -311,7 +311,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   review: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const diff = getDiff(wt);
     const testResults = readState("test_results.json");
     const review = await askReviewer({
@@ -329,7 +329,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   commit_pr: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     // Pre-flight gate: verify build+tests pass before shipping
     const preflight_build = runBuild(wt);
     if (!preflight_build.ok) {
@@ -360,7 +360,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     if (!ctx.data.worktreePath) {
       return { ok: false, output: "Visual test skipped — no worktree path provided" };
     }
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const binaryPath = join(wt, "build/topogen");
     const baselinePath = join(wt, VISUAL_TEST_BASELINE);
 
@@ -451,11 +451,11 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   diagnose: async (ctx) => {
-    const testResult = runTests(ctx.data.worktreePath);
+    const testResult = runTests(ctx.data.worktreePath!);
     const { execSync } = require("node:child_process");
     let recentCommits = "";
     try {
-      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: ctx.data.worktreePath });
+      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: ctx.data.worktreePath! });
     } catch { /* ignore */ }
 
     const diagnosis = await askDiagnoser({
@@ -463,7 +463,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       testOutput: testResult.summary,
       recentCommits,
       tools: ["test_run", "test_list", "app_launch", "app_send_input", "app_capture_frame", "app_compare_frames", "app_get_state", "app_stop", "viking_write_memory", "viking_search", "viking_read"],
-      cwd: ctx.data.worktreePath,
+      cwd: ctx.data.worktreePath!,
       signal: ctx.signal,
     });
     ctx.data.diagnosis = diagnosis;
@@ -486,12 +486,12 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   shader_validate: async (ctx) => {
-    const result = runShaderValidation(ctx.data.worktreePath);
+    const result = runShaderValidation(ctx.data.worktreePath!);
     return { ok: result.ok, output: result.ok ? "Shader validation PASSED" : result.summary };
   },
 
   verify: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
 
     // Run headless metrics pipeline
     const metrics = runMetrics(wt);
@@ -575,7 +575,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
   },
 
   commit_wip: async (ctx) => {
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     if (!wt) return { ok: false, output: "No worktree path — cannot save WIP" };
 
     const add = shell("git add -A 2>&1", wt);
@@ -620,13 +620,13 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
   math_verify: async (ctx) => {
     const { spawnSubagent } = await import("../agents/spawn.js");
-    const diff = getDiff(ctx.data.worktreePath);
+    const diff = getDiff(ctx.data.worktreePath!);
     const result = await spawnSubagent({
       prompt: `Verify mathematical correctness of the following diff. Check for:\n- Off-by-one errors\n- Incorrect formulas\n- Numerical stability issues\n- Unit/coordinate system mismatches\n\nRespond with exactly PASS if correct, or FAIL: <details> if not.\n\n## Diff\n${diff}`,
       systemPrompt: "You are a mathematical verification agent for C++/GLSL game engine code. Analyze diffs for mathematical correctness. Be precise and concise.",
       model: "anthropic/claude-sonnet-4-6",
       agentName: "math-verifier",
-      cwd: ctx.data.worktreePath,
+      cwd: ctx.data.worktreePath!,
       signal: ctx.signal,
     });
     const passed = /\bPASS\b/i.test(result);
@@ -640,7 +640,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const subtasks = parseSubtasks(plan);
     if (subtasks.length === 0) return { ok: false, output: "No subtasks parsed from plan" };
 
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const sharedContextFiles = ctx.data.contextFiles || [];
 
     // ── Classify into two batches ────────────────────────────────────────
@@ -723,7 +723,7 @@ ${ctx.prompt}
 
 Generate a NEW plan that addresses the architectural issue. Do NOT repeat the previous approach.`;
 
-    const wt = ctx.data.worktreePath;
+    const wt = ctx.data.worktreePath!;
     const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
     const plan = await askMetaPlanner({
       task: replanTask,

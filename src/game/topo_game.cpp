@@ -145,10 +145,12 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
         if (in.held[(int)Action::ZoomOut])
           camera_system.set_zoom(camera, camera.target_zoom - dt * 2.0f);
 
-        if (!cam_moved && player_entity.is_alive()) {
+        if (player_entity.is_alive()) {
           const auto *t = player_entity.get<Transform>();
           if (t) {
-            camera_system.follow(camera, t->x, t->y);
+            if (!cam_moved) {
+              camera_system.follow(camera, t->x, t->y);
+            }
             const auto *pose = player_entity.get<RigPose>();
             float chest_z = pose ? pose->joints[(int)Joint::CHEST].z : t->z;
             camera.follow_z = chest_z;
@@ -284,8 +286,9 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
           player_entity.set<LegState>(ls);
         }
 
-        camera.world_x = camera.follow_x = wx;
-        camera.world_y = camera.follow_y = wy;
+        camera.world_x  = camera.follow_x = wx;
+        camera.world_y  = camera.follow_y = wy;
+        camera.follow_z = wz;
         player_spawned = true;
       }
     }

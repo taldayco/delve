@@ -234,7 +234,9 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_coordinate_system.cpp
     src/test/tests/test_skeletal_animation.cpp
     src/test/tests/test_skinned_character.cpp
+    src/test/tests/test_actor_scale.cpp
     src/game/render/skeletal_animation.cpp
+    src/engine/camera/camera.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 

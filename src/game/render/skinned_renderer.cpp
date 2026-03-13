@@ -121,8 +121,12 @@ void SkinnedRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
         return;
     }
 
+    // Default scale: HEX_SIZE * 0.2 makes a ~1.8 m glTF model render as
+    // ~2.9 world-units — roughly one hex column in height.
+    model_scale = Config::HEX_SIZE * 0.2f;
+
     initialized_ = true;
-    SDL_Log("SkinnedRenderer: initialized");
+    SDL_Log("SkinnedRenderer: initialized (model_scale=%.3f)", model_scale);
 }
 
 void SkinnedRenderer::cleanup() {
@@ -249,11 +253,15 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
     }
     player_.sample(locals);
 
-    // Root: translate * rotateZ(facing) * rotateX(-90deg, Y-up->Z-up) * scale(HEX_SIZE, Blender meters->terrain units)
+    // Root transform:
+    //   1. Translate to player world position
+    //   2. Rotate around Z by facing angle
+    //   3. Rotate -90° around X to convert glTF Y-up → engine Z-up
+    //   4. Scale by model_scale (converts glTF metres → world units)
     glm::mat4 root = glm::translate(glm::mat4(1.f), player_pos)
                    * glm::rotate(glm::mat4(1.f), facing, glm::vec3(0.f, 0.f, 1.f))
                    * glm::rotate(glm::mat4(1.f), glm::radians(-90.0f), glm::vec3(1.f, 0.f, 0.f))
-                   * glm::scale(glm::mat4(1.f), glm::vec3(Config::HEX_SIZE));
+                   * glm::scale(glm::mat4(1.f), glm::vec3(model_scale));
 
     palette_ = compute_bone_palette(skeleton_, locals, root);
 }

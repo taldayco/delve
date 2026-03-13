@@ -31,6 +31,11 @@ public:
     bool is_initialized() const { return initialized_; }
     bool has_character()  const { return char_loaded_; }
 
+    // Scale applied to the root transform so the glTF model (in metres)
+    // maps to world units.  HEX_SIZE * 0.2 ≈ 1.6 makes a 1.8 m figure
+    // render as ~2.9 world-units — roughly one hex column in height.
+    float model_scale = 1.6f;  // set after init() if you need to tune it
+
 private:
     bool build_pipeline(SDL_Window *window);
 

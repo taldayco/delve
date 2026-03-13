@@ -618,29 +618,66 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const subtasks = parseSubtasks(plan);
     if (subtasks.length === 0) return { ok: false, output: "No subtasks parsed from plan" };
 
-    // Group: headers first, then implementations
-    const isHeader = (task: string) => /\.(h|hpp|glsl)\b/.test(task);
-    const headerTasks = subtasks.filter((st) => isHeader(st.task));
-    const implTasks = subtasks.filter((st) => !isHeader(st.task));
-    const ordered = [...headerTasks, ...implTasks];
+    const wt = ctx.data.worktreePath;
+    const sharedContextFiles = ctx.data.contextFiles || [];
 
-    const implementations: string[] = [];
-    for (const sub of ordered) {
+    // ── Classify into two batches ────────────────────────────────────────
+    const isGroundTruth = (task: string) => /\.(h|hpp|glsl|vert|frag)\b/.test(task);
+    const batchA = subtasks.filter((st) => isGroundTruth(st.task));  // headers + shaders
+    const batchB = subtasks.filter((st) => !isGroundTruth(st.task)); // implementations
+
+    const dispatchWorker = (sub: typeof subtasks[0]) => {
       const agent = getSubsystemAgent(sub.subsystem);
       const enrichedTask = `## Original Request\n${ctx.prompt}\n\n## Plan Subtask\n${sub.task}`;
-      const contextFiles = extractFilePaths(sub.task).concat(ctx.data.contextFiles || []);
-      implementations.push(await agent({ task: enrichedTask, files: contextFiles, cwd: ctx.data.worktreePath, signal: ctx.signal }));
+      const contextFiles = extractFilePaths(sub.task).concat(sharedContextFiles);
+      const filename = sub.task.match(/\b[\w/.-]+\.\w+\b/)?.[0] || "unknown";
+      ctx.ctx.ui.notify(`Worker starting: ${sub.subsystem} -> ${filename}`, "info");
+      return agent({ task: enrichedTask, files: contextFiles, cwd: wt, signal: ctx.signal });
+    };
+
+    const allOutputs: string[] = [];
+
+    // ── Batch A: Ground truth (headers/shaders) — parallel, then flush ──
+    if (batchA.length > 0) {
+      ctx.ctx.ui.notify(`Batch A: ${batchA.length} header/shader worker(s) launching`, "info");
+      const batchAResults = await Promise.all(batchA.map(dispatchWorker));
+      const emptyIdx = batchAResults.findIndex((r) => !r || r.trim().length === 0);
+      if (emptyIdx >= 0) {
+        return { ok: false, output: `Batch A worker ${emptyIdx} returned empty output (${batchA[emptyIdx].task.slice(0, 60)})` };
+      }
+      const batchAOutput = batchAResults.join("\n\n");
+      const batchAFiles = (batchAOutput.match(/###\s*FILE:/g) || []).length;
+      if (batchAFiles > 0) {
+        applyFileBlocks(batchAOutput, wt);
+        ctx.ctx.ui.notify(`Batch A flushed: ${batchAFiles} file(s) written to disk`, "info");
+      }
+      allOutputs.push(batchAOutput);
     }
 
-    const combined = implementations.join("\n\n");
-    const fileBlockCount = (combined.match(/###\s*FILE:/g) || []).length;
-    if (fileBlockCount === 0) {
+    // ── Batch B: Implementations — parallel, after Batch A is on disk ───
+    if (batchB.length > 0) {
+      ctx.ctx.ui.notify(`Batch B: ${batchB.length} implementation worker(s) launching`, "info");
+      const batchBResults = await Promise.all(batchB.map(dispatchWorker));
+      const emptyIdx = batchBResults.findIndex((r) => !r || r.trim().length === 0);
+      if (emptyIdx >= 0) {
+        return { ok: false, output: `Batch B worker ${emptyIdx} returned empty output (${batchB[emptyIdx].task.slice(0, 60)})` };
+      }
+      const batchBOutput = batchBResults.join("\n\n");
+      const batchBFiles = (batchBOutput.match(/###\s*FILE:/g) || []).length;
+      if (batchBFiles > 0) {
+        applyFileBlocks(batchBOutput, wt);
+      }
+      allOutputs.push(batchBOutput);
+    }
+
+    const combined = allOutputs.join("\n\n");
+    const totalFiles = (combined.match(/###\s*FILE:/g) || []).length;
+    if (totalFiles === 0) {
       return { ok: false, output: "No FILE blocks produced by workers" };
     }
 
-    applyFileBlocks(combined, ctx.data.worktreePath);
     ctx.data.implementation = combined;
-    return { ok: true, output: `Workers produced ${fileBlockCount} files from ${ordered.length} subtasks` };
+    return { ok: true, output: `Workers produced ${totalFiles} files (A:${batchA.length} B:${batchB.length} subtasks)` };
   },
 
   // ─── B4+: Self-management handlers (merged from handlers-self.ts) ──────────

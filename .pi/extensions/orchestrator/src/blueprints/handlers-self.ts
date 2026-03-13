@@ -2,7 +2,6 @@ import {
   askBuildFixer,
   askTestFixer,
   askDecoupleAnalyst,
-  askMapUpdater,
   readRunMetrics,
   writeState,
   readState,
@@ -22,7 +21,6 @@ import {
   cleanupStaleState,
   cleanupMergedBranches,
   detectFileSizeViolations,
-  detectMapCoverage,
   cleanupStaleWorktrees,
   DOMAIN_COMPLEXITY_THRESHOLD,
 } from "../tools.js";
@@ -280,30 +278,18 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
     }
     lines.push("");
 
-    // 4. Map coverage
-    const coverage = detectMapCoverage();
-    if (coverage.unmappedDirs.length > 0) {
-      lines.push("## Unmapped Directories", "");
-      for (const dir of coverage.unmappedDirs) {
-        lines.push(`- \`${dir}\``);
-      }
-      lines.push("");
-    }
-
     writeState("maintenance_backlog.md", lines.join("\n"));
 
     // Store structured data for post_flight
     ctx.data.maintenanceBacklog = {
       violations,
       overloadedDomains: overloaded,
-      unmappedDirs: coverage.unmappedDirs,
     };
 
     const parts: string[] = [];
     if (violations.length > 0) parts.push(`${violations.length} size violation(s)`);
     if (refResult.fixed + globResult.fixed > 0) parts.push(`${refResult.fixed + globResult.fixed} stale ref(s) fixed`);
     if (overloaded.length > 0) parts.push(`${overloaded.length} overloaded domain(s)`);
-    if (coverage.unmappedDirs.length > 0) parts.push(`${coverage.unmappedDirs.length} unmapped dir(s)`);
 
     return {
       ok: true,
@@ -331,37 +317,10 @@ export const SELF_PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const backlog = ctx.data.maintenanceBacklog as {
       violations?: Array<{ path: string; lineCount: number }>;
       overloadedDomains?: Array<{ domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; exceedsThreshold: boolean; files: string[] }>;
-      unmappedDirs?: string[];
     } | undefined;
 
     if (backlog) {
-      // 3a. Map updates
-      if (backlog.unmappedDirs && backlog.unmappedDirs.length > 0) {
-        try {
-          const { readFileSync } = await import("node:fs");
-          const { join } = await import("node:path");
-          const toolsPath = join(process.cwd(), ".pi/extensions/orchestrator/src/tools.ts");
-          let toolsContent = "";
-          try {
-            const full = readFileSync(toolsPath, "utf-8");
-            const start = full.indexOf("const KEYWORD_SYNONYMS");
-            const end = full.indexOf("};", full.indexOf("const SUBSYSTEM_CANONICAL")) + 2;
-            if (start >= 0 && end > start) toolsContent = full.slice(start, end);
-          } catch { /* ignore */ }
-
-          const coverage = detectMapCoverage();
-          const mapResult = await askMapUpdater({ coverageReport: coverage, currentToolsContent: toolsContent });
-          const appliedCount = applyFileBlocks(mapResult);
-          if (appliedCount > 0) {
-            rebuildExtension();
-            results.push(`Map updates: ${appliedCount} file(s) updated`);
-          }
-        } catch (e) {
-          results.push(`Map updates: skipped (${(e as Error).message})`);
-        }
-      }
-
-      // 3b. Decoupling proposal for highest-scoring overloaded domain
+      // 3a. Decoupling proposal for highest-scoring overloaded domain
       if (backlog.overloadedDomains && backlog.overloadedDomains.length > 0) {
         try {
           const sorted = [...backlog.overloadedDomains].sort((a, b) => b.complexityScore - a.complexityScore);

@@ -26,13 +26,6 @@ export interface AuditReport {
   summary: string;
 }
 
-export interface MapCoverageReport {
-  unmappedDirs: string[];
-  unmappedKeywords: string[];
-  currentKeywordCount: number;
-  suggestion: string;
-}
-
 export interface FileSizeViolation {
   path: string;
   lineCount: number;

@@ -19,6 +19,8 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     std::string shader_dir = s_shader_dir;
     SDL_GPUTextureFormat sc_fmt = SDL_GetGPUSwapchainTextureFormat(device_, window);
 
+    // vert: 1 uniform (SceneUniforms), 1 storage (BoneBuffer)
+    // frag: 1 uniform (SceneUniforms), 1 storage (lights)
     SDL_GPUShader *vert = assets_->load_shader(
         "skinned_char.vert",
         shader_dir + "/skinned_character.vert.glsl.spv",
@@ -39,12 +41,12 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     vbuf.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
     SDL_GPUVertexAttribute attrs[6] = {};
-    attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,  (Uint32)offsetof(SkinnedVertex, position)  };
-    attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3,  (Uint32)offsetof(SkinnedVertex, normal)    };
-    attrs[2] = { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2,  (Uint32)offsetof(SkinnedVertex, texcoord)  };
-    attrs[3] = { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,  (Uint32)offsetof(SkinnedVertex, tangent)   };
-    attrs[4] = { 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4,  (Uint32)offsetof(SkinnedVertex, joints)    };
-    attrs[5] = { 5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4,  (Uint32)offsetof(SkinnedVertex, weights)   };
+    attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(SkinnedVertex, position)  };
+    attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(SkinnedVertex, normal)    };
+    attrs[2] = { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2, (Uint32)offsetof(SkinnedVertex, texcoord)  };
+    attrs[3] = { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, (Uint32)offsetof(SkinnedVertex, tangent)   };
+    attrs[4] = { 4, 0, SDL_GPU_VERTEXELEMENTFORMAT_UBYTE4, (Uint32)offsetof(SkinnedVertex, joints)    };
+    attrs[5] = { 5, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT4, (Uint32)offsetof(SkinnedVertex, weights)   };
 
     SDL_GPUColorTargetDescription color_desc = {};
     color_desc.format = sc_fmt;
@@ -97,7 +99,6 @@ void SkinnedRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
 
     if (!build_pipeline(window)) return;
 
-    // bone SSBO (GPU-side)
     SDL_GPUBufferCreateInfo bi = {};
     bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
     bi.size  = (Uint32)sizeof(BonePalette);
@@ -107,7 +108,6 @@ void SkinnedRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
         return;
     }
 
-    // persistent staging transfer buffer
     SDL_GPUTransferBufferCreateInfo tbi = {};
     tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbi.size  = (Uint32)sizeof(BonePalette);
@@ -145,13 +145,13 @@ void SkinnedRenderer::load_character(const std::string &path) {
         return;
     }
     if (asset.meshes.empty()) {
-        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SkinnedRenderer: no meshes in '%s'", path.c_str());
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "SkinnedRenderer: no meshes in '%s'", path.c_str());
         return;
     }
 
     skeleton_ = asset.skeleton;
 
-    // Concatenate all mesh primitives
     std::vector<SkinnedVertex> all_verts;
     std::vector<uint32_t>      all_idx;
     for (auto &mesh : asset.meshes) {
@@ -177,9 +177,18 @@ void SkinnedRenderer::load_character(const std::string &path) {
         return;
     }
 
-    // Store clips bundled with the character
     for (auto &clip : asset.animations)
         clips_[clip.name] = std::move(clip);
+
+    // Start with idle if available
+    if (clips_.count("idle")) {
+        player_.set_clip(&clips_["idle"]);
+        current_clip_ = "idle";
+    } else if (!clips_.empty()) {
+        auto it = clips_.begin();
+        player_.set_clip(&it->second);
+        current_clip_ = it->first;
+    }
 
     char_loaded_ = true;
     SDL_Log("SkinnedRenderer: loaded '%s' (%u verts, %u indices, %zu bones)",
@@ -207,28 +216,43 @@ void SkinnedRenderer::set_animation(const std::string &name) {
                      "SkinnedRenderer: animation '%s' not found", name.c_str());
         return;
     }
-    player_.set_clip(&it->second);
+    if (current_clip_ != name) {
+        player_.set_clip(&it->second);
+        current_clip_ = name;
+    }
 }
 
-void SkinnedRenderer::update(float dt) {
+void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing, float speed) {
     if (!initialized_ || !char_loaded_) return;
+
+    // Select clip by speed
+    if (speed < 0.1f)      set_animation("idle");
+    else if (speed < 5.0f) set_animation("walk");
+    else                    set_animation("run");
+
     player_.update(dt);
 
     std::vector<BoneLocalTransform> locals;
     player_.sample(locals);
-    palette_ = compute_bone_palette(skeleton_, locals);
+
+    // Root: translate * rotateZ(facing) * scale(1,1,ISO) * rotateX(-90deg)
+    const float ISO = Config::ISO_HEIGHT_SCALE;
+    glm::mat4 root = glm::translate(glm::mat4(1.f), player_pos)
+                   * glm::rotate(glm::mat4(1.f), facing, glm::vec3(0.f, 0.f, 1.f))
+                   * glm::scale(glm::mat4(1.f), glm::vec3(1.f, 1.f, ISO))
+                   * glm::rotate(glm::mat4(1.f), -glm::half_pi<float>(), glm::vec3(1.f, 0.f, 0.f));
+
+    palette_ = compute_bone_palette(skeleton_, locals, root);
 }
 
 void SkinnedRenderer::prepare(SDL_GPUCommandBuffer *cmd) {
     if (!initialized_ || !char_loaded_ || !bone_transfer_ || !bone_ssbo_) return;
 
-    // Map, write, unmap
     void *mapped = SDL_MapGPUTransferBuffer(device_, bone_transfer_, true);
     if (!mapped) return;
     std::memcpy(mapped, &palette_, sizeof(BonePalette));
     SDL_UnmapGPUTransferBuffer(device_, bone_transfer_);
 
-    // Copy transfer → SSBO
     SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTransferBufferLocation src = {};
     src.transfer_buffer = bone_transfer_;
@@ -246,37 +270,10 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
                             const SceneUniforms &uniforms,
                             SDL_GPUBuffer *lights_ssbo,
                             SDL_GPUBuffer *clusters_ssbo,
-                            SDL_GPUBuffer *light_indices_ssbo,
-                            glm::vec3 player_pos,
-                            float facing_angle) {
+                            SDL_GPUBuffer *light_indices_ssbo) {
     if (!initialized_ || !char_loaded_ || !pipeline_ || !vbo_ || !ibo_) return;
-    (void)clusters_ssbo; (void)light_indices_ssbo; // reserved for future clustered lighting
-
-    // Build root transform — baked into a separate push constant isn't available in SDL3-GPU
-    // simple approach: pass as part of the scene uniforms model or use a separate UBO.
-    // For now we encode the model matrix as the last 64 bytes of a dedicated uniform.
-    // The vertex shader expects: set=1 SceneUniforms, set=0 BoneBuffer.
-
-    // Root: translate * rotateZ(facing) * scale(1,1,ISO) * rotateX(-90deg)
-    const float ISO = Config::ISO_HEIGHT_SCALE;
-    glm::mat4 root = glm::translate(glm::mat4(1.f), player_pos)
-                   * glm::rotate(glm::mat4(1.f), facing_angle, glm::vec3(0.f, 0.f, 1.f))
-                   * glm::scale(glm::mat4(1.f), glm::vec3(1.f, 1.f, ISO))
-                   * glm::rotate(glm::mat4(1.f), -glm::half_pi<float>(), glm::vec3(1.f, 0.f, 0.f));
-
-    // Pre-multiply root into every bone in the palette for this draw
-    BonePalette root_palette = palette_;
-    for (int i = 0; i < 65; ++i)
-        root_palette.bones[i] = root * root_palette.bones[i];
-
-    // Upload the root-premultiplied palette via another transfer (cheap, persistent buf reuse)
-    {
-        void *mapped = SDL_MapGPUTransferBuffer(device_, bone_transfer_, true);
-        if (mapped) {
-            std::memcpy(mapped, &root_palette, sizeof(BonePalette));
-            SDL_UnmapGPUTransferBuffer(device_, bone_transfer_);
-        }
-    }
+    (void)clusters_ssbo;
+    (void)light_indices_ssbo;
 
     SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
@@ -286,11 +283,10 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
     // Fragment storage slot 0: lights
     SDL_BindGPUFragmentStorageBuffers(pass, 0, &lights_ssbo, 1);
 
-    // Scene uniforms at set=1 (fragment UBO slot 0 and vertex UBO slot 0)
+    // Uniform slot 0: SceneUniforms (vertex + fragment)
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
 
-    // VBO + IBO
     SDL_GPUBufferBinding vb = { vbo_, 0 };
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
     SDL_GPUBufferBinding ib = { ibo_, 0 };

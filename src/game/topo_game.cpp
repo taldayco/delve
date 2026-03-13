@@ -522,13 +522,15 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     // Animate skinned renderer and select clip based on player speed.
     if (skinned_renderer.is_initialized() && skinned_renderer.has_character()) {
       float speed = 0.0f;
+      glm::vec3 player_pos(0.f);
+      float player_facing = 0.f;
       if (player_entity.is_alive()) {
         const auto *vel = player_entity.get<Velocity>();
         if (vel) speed = glm::length(glm::vec2(vel->x, vel->y));
+        const auto *t = player_entity.get<Transform>();
+        if (t) { player_pos = glm::vec3(t->x, t->y, t->z); player_facing = t->facing; }
       }
-      const char *clip = speed < 0.5f ? "idle" : speed < 3.0f ? "walk" : "run";
-      skinned_renderer.set_animation(clip);
-      skinned_renderer.update(1.0f / 60.0f);
+      skinned_renderer.update(1.0f / 60.0f, player_pos, player_facing, speed);
       skinned_renderer.prepare(frame.cmd);
     }
 
@@ -545,9 +547,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
             skinned_renderer.draw(actor_pass, frame.cmd, uniforms,
                                   terrain_renderer.get_point_light_ssbo(),
                                   terrain_renderer.get_light_grid_ssbo(),
-                                  terrain_renderer.get_global_index_ssbo(),
-                                  glm::vec3(t->x, t->y, t->z),
-                                  t->facing);
+                                  terrain_renderer.get_global_index_ssbo());
             SDL_EndGPURenderPass(actor_pass);
           }
         }

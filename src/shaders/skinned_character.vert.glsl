@@ -15,9 +15,9 @@ layout(push_constant) uniform PushConstants {
     mat4 model;
 };
 
-layout(location = 0) out vec3 out_world_pos;
-layout(location = 1) out vec3 out_normal;
-layout(location = 2) out vec2 out_texcoord;
+layout(location = 0) out vec3 frag_world_pos;
+layout(location = 1) out vec3 frag_normal;
+layout(location = 2) out vec2 frag_texcoord;
 
 void main() {
     mat4 skin_mat =
@@ -29,7 +29,7 @@ void main() {
     vec4 world_pos = model * skin_mat * vec4(in_pos, 1.0);
     gl_Position    = projection * view * world_pos;
 
-    out_world_pos = world_pos.xyz;
-    out_normal    = normalize(mat3(model * skin_mat) * in_normal);
-    out_texcoord  = in_texcoord;
+    frag_world_pos = world_pos.xyz;
+    frag_normal    = normalize(mat3(model * skin_mat) * in_normal);
+    frag_texcoord  = in_texcoord;
 }

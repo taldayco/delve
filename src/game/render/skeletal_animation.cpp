@@ -81,7 +81,8 @@ static glm::mat4 local_to_mat4(const BoneLocalTransform &xf) {
 }
 
 BonePalette compute_bone_palette(const GltfSkeleton &skel,
-                                  const std::vector<BoneLocalTransform> &local_transforms) {
+                                  const std::vector<BoneLocalTransform> &local_transforms,
+                                  const glm::mat4 &root_transform) {
     BonePalette palette{};
     int num_bones = (int)skel.bones.size();
     if (num_bones == 0) return palette;
@@ -105,7 +106,7 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
             global[i] = global[parent] * local;
         }
 
-        palette.bones[i] = global[i] * skel.bones[i].inverse_bind_matrix;
+        palette.bones[i] = root_transform * global[i] * skel.bones[i].inverse_bind_matrix;
     }
 
     return palette;

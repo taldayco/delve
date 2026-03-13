@@ -18,16 +18,15 @@ public:
     void load_animation(const std::string &name, const std::string &path);
     void set_animation(const std::string &name);
 
-    void update(float dt);
+    // player_pos/facing/speed drive clip selection and root transform
+    void update(float dt, const glm::vec3 &player_pos, float facing, float speed);
     void prepare(SDL_GPUCommandBuffer *cmd);
     void draw(SDL_GPURenderPass *pass,
               SDL_GPUCommandBuffer *cmd,
               const SceneUniforms &uniforms,
               SDL_GPUBuffer *lights_ssbo,
               SDL_GPUBuffer *clusters_ssbo,
-              SDL_GPUBuffer *light_indices_ssbo,
-              glm::vec3 player_pos,
-              float facing_angle);
+              SDL_GPUBuffer *light_indices_ssbo);
 
     bool is_initialized() const { return initialized_; }
     bool has_character()  const { return char_loaded_; }
@@ -44,10 +43,13 @@ private:
     SDL_GPUTransferBuffer   *bone_transfer_ = nullptr;
     uint32_t                 index_count_   = 0;
 
-    GltfSkeleton                                    skeleton_;
+    GltfSkeleton                                       skeleton_;
     std::unordered_map<std::string, GltfAnimationClip> clips_;
-    AnimationPlayer                                  player_;
-    BonePalette                                      palette_{};
+    AnimationPlayer                                    player_;
+    BonePalette                                        palette_{};
+
+    // current clip name for hysteresis
+    std::string current_clip_;
 
     SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
     bool initialized_ = false;

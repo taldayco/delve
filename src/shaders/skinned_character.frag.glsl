@@ -5,6 +5,7 @@
 
 layout(location = 0) in vec3 frag_world_pos;
 layout(location = 1) in vec3 frag_normal;
+layout(location = 2) in vec2 frag_texcoord;
 
 layout(location = 0) out vec4 out_color;
 

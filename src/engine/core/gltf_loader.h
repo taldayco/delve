@@ -94,6 +94,10 @@ struct GltfSkinnedAsset {
     std::vector<GltfTextureData>     textures;
     GltfSkeleton                     skeleton;
     std::vector<GltfAnimationClip>   animations;
+    // Flat inverse bind matrix array (one per bone, same order as skeleton.bones)
+    std::vector<glm::mat4>           inverse_bind_matrices;
+    // Root scene node transform (captures Blender Y→Z-up +90° X rotation, etc.)
+    glm::mat4                        root_transform{1.0f};
     bool        ok = false;
     std::string error;
 };

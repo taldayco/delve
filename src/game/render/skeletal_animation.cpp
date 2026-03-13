@@ -3,6 +3,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 // ---- AnimationPlayer ----
 
@@ -110,4 +111,64 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
     }
 
     return palette;
+}
+
+// ---- SkeletalAnimation ----
+
+void SkeletalAnimation::init(const GltfSkinnedAsset &asset) {
+    skeleton_              = asset.skeleton;
+    inverse_bind_matrices_ = asset.inverse_bind_matrices;
+    clips_                 = asset.animations;
+
+    // Bake inverse_bind_matrices_ into skeleton bones so compute_bone_palette
+    // (which reads skel.bones[i].inverse_bind_matrix) gets the correct data.
+    int n = std::min((int)skeleton_.bones.size(), (int)inverse_bind_matrices_.size());
+    for (int i = 0; i < n; ++i) {
+        skeleton_.bones[i].inverse_bind_matrix = inverse_bind_matrices_[i];
+    }
+
+    // Start with identity palette
+    std::memset(&bone_palette_, 0, sizeof(bone_palette_));
+    int num_bones = std::min((int)skeleton_.bones.size(), 65);
+    for (int i = 0; i < num_bones; ++i)
+        bone_palette_.bones[i] = glm::mat4(1.f);
+
+    // Activate first clip if available
+    if (!clips_.empty()) {
+        player_.set_clip(&clips_[0]);
+    }
+}
+
+bool SkeletalAnimation::play(const std::string &clip_name) {
+    for (auto &clip : clips_) {
+        if (clip.name == clip_name) {
+            player_.set_clip(&clip);
+            return true;
+        }
+    }
+    return false;
+}
+
+void SkeletalAnimation::update(float dt, const glm::mat4 &root_transform) {
+    if (skeleton_.bones.empty()) return;
+
+    player_.update(dt);
+
+    // Build rest-pose local transforms as baseline
+    int num_bones = std::min((int)skeleton_.bones.size(), 65);
+    std::vector<BoneLocalTransform> locals(num_bones);
+    for (int i = 0; i < num_bones; ++i) {
+        // Decompose local_rest_transform into TRS (approximate via mat4 columns)
+        const glm::mat4 &m = skeleton_.bones[i].local_rest_transform;
+        locals[i].translation = glm::vec3(m[3]);
+        glm::vec3 sx(m[0]), sy(m[1]), sz(m[2]);
+        locals[i].scale = glm::vec3(glm::length(sx), glm::length(sy), glm::length(sz));
+        glm::mat3 rot(sx / locals[i].scale.x, sy / locals[i].scale.y, sz / locals[i].scale.z);
+        locals[i].rotation = glm::quat_cast(rot);
+    }
+
+    // Overlay animation samples
+    player_.sample(locals);
+
+    bone_palette_ = compute_bone_palette(skeleton_, locals, root_transform);
 }

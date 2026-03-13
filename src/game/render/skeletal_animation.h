@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <vector>
+#include <string>
 
 struct BoneLocalTransform {
     glm::vec3 translation = glm::vec3(0.f);
@@ -36,3 +37,32 @@ private:
 BonePalette compute_bone_palette(const GltfSkeleton &skel,
                                   const std::vector<BoneLocalTransform> &local_transforms,
                                   const glm::mat4 &root_transform = glm::mat4(1.f));
+
+// High-level wrapper: owns the skeleton reference, inverse bind matrices, and
+// the active animation player. Callers call init() once, then update() each
+// frame, then pass get_bone_palette() to the GPU uniform.
+class SkeletalAnimation {
+public:
+    // Initialize from a loaded skinned asset. Copies the skeleton and inverse
+    // bind matrices. Sets the first animation clip as the active clip (if any).
+    void init(const GltfSkinnedAsset &asset);
+
+    // Play a named animation clip. Resets playback time to 0.
+    // Returns false if no clip with that name exists.
+    bool play(const std::string &clip_name);
+
+    // Advance time and recompute the bone palette.
+    // root_transform is applied to all bones (encodes world position/facing/scale).
+    void update(float dt, const glm::mat4 &root_transform = glm::mat4(1.f));
+
+    const BonePalette &get_bone_palette() const { return bone_palette_; }
+    bool               has_skeleton()     const { return !skeleton_.bones.empty(); }
+    int                bone_count()       const { return (int)skeleton_.bones.size(); }
+
+private:
+    GltfSkeleton                     skeleton_;
+    std::vector<glm::mat4>           inverse_bind_matrices_;
+    std::vector<GltfAnimationClip>   clips_;
+    AnimationPlayer                  player_;
+    BonePalette                      bone_palette_{};
+};

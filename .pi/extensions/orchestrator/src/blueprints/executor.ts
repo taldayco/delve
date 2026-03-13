@@ -132,6 +132,7 @@ export async function executeBlueprint(
           }
         } else {
           context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
+          context.data.lastFailedPhase = phase.name;
           if (phase.on_failure) {
             currentPhaseName = phase.on_failure;
           } else {

@@ -35,6 +35,7 @@ import {
   vikingCommitSession,
   MAX_BUILD_FIX_ROUNDS,
   MAX_TEST_FIX_ROUNDS,
+  shell,
 } from "../tools.js";
 import type { BlueprintContext } from "./types.js";
 import { SELF_PHASE_HANDLERS } from "./handlers-self.js";
@@ -529,6 +530,39 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     return {
       ok: true,
       output: committed ? "Memory committed" : "Memory commit failed (non-fatal)",
+    };
+  },
+
+  commit_wip: async (ctx) => {
+    const wt = ctx.data.worktreePath;
+    if (!wt) return { ok: false, output: "No worktree path — cannot save WIP" };
+
+    const add = shell("git add -A 2>&1", wt);
+    if (!add.ok) return { ok: false, output: `git add failed: ${add.stderr}` };
+
+    const status = shell("git status --porcelain 2>&1", wt);
+    if (status.stdout.trim().length === 0) {
+      return { ok: true, output: "No changes to commit (clean worktree)" };
+    }
+
+    const failedPhase = ctx.data.lastFailedPhase || "unknown";
+    const msg = `wip: checkpoint before ${failedPhase} failure\n\nPartial progress saved by commit_wip handler.`;
+    const { writeFileSync, unlinkSync } = require("node:fs");
+    const { join } = require("node:path");
+    const { tmpdir } = require("node:os");
+    const tmpFile = join(tmpdir(), `delve-wip-${Date.now()}.txt`);
+    writeFileSync(tmpFile, msg, "utf-8");
+    const commit = shell(`git commit -F "${tmpFile}" 2>&1`, wt);
+    try { unlinkSync(tmpFile); } catch { /* ignore */ }
+
+    if (!commit.ok) return { ok: false, output: `WIP commit failed: ${commit.stderr}` };
+
+    const push = shell(`git push -u origin HEAD 2>&1`, wt);
+    return {
+      ok: true,
+      output: push.ok
+        ? "WIP committed and pushed"
+        : `WIP committed locally (push failed: ${push.stderr})`,
     };
   },
 

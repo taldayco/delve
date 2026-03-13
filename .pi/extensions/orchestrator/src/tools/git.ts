@@ -34,7 +34,12 @@ export function gitBranch(branchName: string): { ok: boolean; summary: string; w
 }
 
 /**
- * Clean up a git worktree after pipeline completion.
+ * Force-remove a git worktree directory and its associated branch tracking.
+ *
+ * Called in `finally` blocks after pipeline completion (success or failure).
+ * Uses `--force` to handle dirty worktrees — any uncommitted work is lost.
+ * Callers that want to preserve partial progress should run `commit_wip`
+ * before reaching this point (e.g. via an `on_failure` blueprint route).
  */
 export function cleanupWorktree(worktreePath: string): void {
   try {

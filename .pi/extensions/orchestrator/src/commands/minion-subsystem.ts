@@ -1,17 +1,7 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import {
-  executeBlueprint,
-  loadBlueprint,
-  validateBlueprint,
-  getAvailablePhases,
-  type BlueprintContext,
-  type BlueprintResult,
-} from "../blueprints.js";
-import {
   askBuildFixer,
   askReviewer,
-  askBlueprintGenerator,
-  writeState,
   readState,
 } from "../agents.js";
 import {
@@ -31,119 +21,6 @@ import { parseReviewDecision } from "./helpers.js";
 import { acquireRunLock, releaseRunLock } from "../tools/state.js";
 
 export function registerSubsystemCommands(pi: ExtensionAPI) {
-  // ── /minion-meta command ─────────────────────────────────────────────
-  // Adaptive pipeline: AI generates the blueprint from the task description.
-
-  pi.registerCommand("minion-meta", {
-    description:
-      "Adaptive pipeline: AI generates an optimal pipeline blueprint for the task, then executes it",
-    handler: async (args, ctx) => {
-      if (!args || args.trim().length === 0) {
-        ctx.ui.notify("Usage: /minion-meta <task description>", "error");
-        return;
-      }
-
-      if (state) {
-        ctx.ui.notify(`A minion is already running (phase: ${state.phase}). Wait or restart.`, "error");
-        return;
-      }
-
-      const lock = acquireRunLock();
-      if (!lock.acquired) {
-        ctx.ui.notify(lock.reason, "error");
-        return;
-      }
-
-      const prompt = args.trim();
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-      const branch = `minion-meta/${timestamp}-${slugify(prompt)}`;
-
-      setState({ prompt, branch, phase: "plan", startTime: Date.now(), buildFixRound: 0, testFixRound: 0 });
-      attachAgentListeners(ctx, state!);
-      ctx.ui.notify(`Minion-meta started: ${prompt}`, "info");
-
-      let worktreePath: string | undefined;
-      let blueprintResult: BlueprintResult | undefined;
-      const context: BlueprintContext = {
-        prompt,
-        branch,
-        startTime: Date.now(),
-        ctx,
-        data: {},
-      };
-
-      try {
-        // Silently clean up merged minion branches
-        cleanupMergedBranches();
-
-        // Generate blueprint via AI
-        setPhase("plan", state);
-        ctx.ui.notify("Generating pipeline blueprint...", "info");
-
-        const availablePhases = getAvailablePhases();
-        const blueprintOutput = await askBlueprintGenerator({
-          task: prompt,
-          availablePhases,
-        });
-
-        // Parse generated blueprint
-        let blueprint: any = null;
-        try {
-          const jsonMatch = blueprintOutput.match(/```json\s*([\s\S]*?)```/);
-          blueprint = JSON.parse(jsonMatch ? jsonMatch[1].trim() : blueprintOutput);
-        } catch {
-          ctx.ui.notify("Failed to parse generated blueprint — falling back to 'full'", "warning");
-        }
-
-        // Validate or fall back
-        if (!blueprint || !validateBlueprint(blueprint)) {
-          ctx.ui.notify("Blueprint validation failed — falling back to 'full'", "warning");
-          blueprint = loadBlueprint("full");
-        }
-
-        ctx.ui.notify(
-          `Blueprint: ${blueprint.name} (${blueprint.phases.length} phases)`,
-          "success"
-        );
-        writeState("blueprint.json", JSON.stringify(blueprint, null, 2));
-
-        // Execute the blueprint
-        blueprintResult = await executeBlueprint(blueprint, context);
-        worktreePath = blueprintResult.worktreePath;
-
-        if (!blueprintResult.ok) {
-          recordFailure("blueprint", `Failed at phase: ${blueprintResult.failedPhase}`);
-          const sMeta = getState(); if (sMeta) sMeta.phase = "failed";
-        } else {
-          const sMetaDone = getState();
-          if (sMetaDone) sMetaDone.phase = "done";
-          ctx.ui.notify(
-            `Minion-meta complete in ${elapsed(getState()!.startTime)}. Blueprint: ${blueprint.name}`,
-            "success"
-          );
-        }
-        detachAgentListeners();
-        setState(null);
-      } catch (error: any) {
-        worktreePath = worktreePath || context.data.worktreePath;
-        const sErr = getState(); if (sErr) sErr.phase = "failed";
-        recordFailure("blueprint", error.message);
-        ctx.ui.notify(`Minion-meta error: ${error.message}`, "error");
-        detachAgentListeners();
-        setState(null);
-      } finally {
-        releaseRunLock();
-        if (worktreePath) {
-          if (blueprintResult?.ok) {
-            cleanupWorktree(worktreePath);
-          } else {
-            console.error(`[minion-meta] Worktree preserved for debugging: ${worktreePath}`);
-          }
-        }
-      }
-    },
-  });
-
   // ── /minion-decouple-execute command ────────────────────────────────────
 
   pi.registerCommand("minion-decouple-execute", {
@@ -175,6 +52,7 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
       ctx.ui.notify("Executing decouple proposal...", "info");
 
       let worktreePath: string | undefined;
+      let success = false;
       try {
         cleanupMergedBranches();
 
@@ -228,6 +106,7 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
         const prResult = gitCommitAndPr({ prompt: "Domain decoupling", branch, buildOk, testsOk: false, cwd: wt });
         ctx.ui.notify(prResult.ok ? prResult.summary : prResult.summary, prResult.ok ? "success" : "warning");
 
+        success = prResult.ok;
         state!.phase = "done";
         ctx.ui.notify(`Decouple-execute complete in ${elapsed(state!.startTime)}`, "success");
         detachAgentListeners();
@@ -240,7 +119,13 @@ export function registerSubsystemCommands(pi: ExtensionAPI) {
         setState(null);
       } finally {
         releaseRunLock();
-        if (worktreePath) cleanupWorktree(worktreePath);
+        if (worktreePath) {
+          if (success) {
+            cleanupWorktree(worktreePath);
+          } else {
+            console.error(`[decouple-execute] Worktree preserved for debugging: ${worktreePath}`);
+          }
+        }
       }
     },
   });

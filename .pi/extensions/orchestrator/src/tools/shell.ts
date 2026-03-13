@@ -3,10 +3,10 @@
 import { execSync } from "node:child_process";
 export { silentShell } from "../agents.js";
 
-export function shell(cmd: string, cwd?: string): { ok: boolean; stdout: string; stderr: string } {
+export function shell(cmd: string, cwd: string): { ok: boolean; stdout: string; stderr: string } {
   try {
     const stdout = execSync(cmd, {
-      cwd: cwd || process.cwd(),
+      cwd,
       encoding: "utf-8",
       timeout: 3_600_000,
       maxBuffer: 10 * 1024 * 1024,

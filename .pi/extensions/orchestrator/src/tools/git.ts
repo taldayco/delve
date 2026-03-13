@@ -2,6 +2,7 @@
 
 import { tmpdir } from "node:os";
 import { silentShell, writeState } from "../agents.js";
+import { PROJECT_ROOT } from "../agents/config.js";
 import { shell } from "./shell.js";
 
 const WORKTREE_DIR = ".pi/worktrees";

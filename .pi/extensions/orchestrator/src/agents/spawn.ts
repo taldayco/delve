@@ -134,13 +134,13 @@ export function enforceContextBudget(
 
 export function silentShell(
   cmd: string,
-  tailLines = 20,
-  cwd?: string,
+  tailLines: number,
+  cwd: string,
 ): { ok: boolean; summary: string; full: string } {
   const { execSync } = require("node:child_process");
   try {
     const stdout: string = execSync(cmd, {
-      cwd: cwd || process.cwd(),
+      cwd,
       encoding: "utf-8",
       timeout: 3_600_000,
       maxBuffer: 10 * 1024 * 1024,

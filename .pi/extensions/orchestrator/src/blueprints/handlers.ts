@@ -455,7 +455,7 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     const { execSync } = require("node:child_process");
     let recentCommits = "";
     try {
-      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: ctx.data.worktreePath || process.cwd() });
+      recentCommits = execSync("git log --oneline -10 2>/dev/null", { encoding: "utf-8", cwd: ctx.data.worktreePath });
     } catch { /* ignore */ }
 
     const diagnosis = await askDiagnoser({

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { Blueprint, BlueprintContext, BlueprintResult } from "./types.js";
 import type { Phase } from "../commands/types.js";
 
@@ -88,7 +89,22 @@ export async function executeBlueprint(
         throw new Error(`Unknown phase handler: ${phase.handler}`);
       }
 
+      // Guard: write-capable phases require a valid worktreePath
+      const WRITE_PHASES = new Set([
+        "implement", "build", "test", "write_tests", "worker_fan_out",
+        "commit_pr", "commit_wip", "shader_validate", "verify",
+        "visual_test", "diagnose", "replan", "math_verify",
+      ]);
+      if (WRITE_PHASES.has(phase.handler) && !context.data.worktreePath) {
+        const msg = `Phase "${phase.name}" (handler: ${phase.handler}) requires worktreePath but it is not set`;
+        context.ctx.ui.notify(msg, "error");
+        return { ok: false, failedPhase: phase.name, errorMessage: msg, completedPhases, worktreePath: context.data.worktreePath };
+      }
+
       context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
+      if (WRITE_PHASES.has(phase.handler) && context.data.worktreePath) {
+        context.ctx.ui.notify(`Sandbox: ${resolve(context.data.worktreePath)}`, "info");
+      }
       options?.onPhaseChange?.(phase.name as Phase);
 
       const result = await handler(context);

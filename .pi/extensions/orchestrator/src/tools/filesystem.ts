@@ -9,10 +9,10 @@ import { shell } from "./shell.js";
  * inner triple-backtick code blocks within file content.
  * Returns the number of files written.
  */
-export function applyFileBlocks(text: string, cwd?: string): number {
+export function applyFileBlocks(text: string, targetDir: string): number {
   const { writeFileSync, mkdirSync } = require("node:fs");
   const { dirname, join } = require("node:path");
-  const baseCwd = cwd || process.cwd();
+  const baseCwd = targetDir;
 
   const lines = text.split("\n");
   let count = 0;
@@ -98,8 +98,7 @@ function writeFileBlock(
   const fullPath = resolve(rawPath);
   const resolvedCwd = resolve(cwd);
   if (!fullPath.startsWith(resolvedCwd + "/") && fullPath !== resolvedCwd) {
-    console.error(`Path traversal blocked: ${filePath} resolved to ${fullPath} (outside ${resolvedCwd})`);
-    return;
+    throw new Error(`Path traversal blocked: ${filePath} resolved to ${fullPath} (outside ${resolvedCwd})`);
   }
   try {
     mkdirSync(dirname(fullPath), { recursive: true });

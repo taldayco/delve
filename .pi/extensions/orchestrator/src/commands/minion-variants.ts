@@ -15,7 +15,7 @@ import { state, getState, setState, attachAgentListeners, detachAgentListeners, 
 import { acquireRunLock, releaseRunLock } from "../tools/state.js";
 
 /** Shared runner for all blueprint-backed minion variants. */
-async function runBlueprint(
+export async function runBlueprint(
   commandName: string,
   branchPrefix: string,
   blueprintName: string,
@@ -83,7 +83,7 @@ async function runBlueprint(
 }
 
 /** Guard: validate args and acquire run lock. Returns prompt or null on failure. */
-function guardArgs(
+export function guardArgs(
   commandName: string,
   args: string | undefined,
   ctx: any,

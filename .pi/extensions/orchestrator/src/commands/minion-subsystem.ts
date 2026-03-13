@@ -5,7 +5,6 @@ import {
   readState,
 } from "../agents.js";
 import {
-  slugify,
   elapsed,
   gitBranch,
   cleanupWorktree,

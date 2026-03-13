@@ -9,7 +9,9 @@ layout(location = 3) in vec4  in_tangent;
 layout(location = 4) in uvec4 in_joints;
 layout(location = 5) in vec4  in_weights;
 
-layout(set = 0, binding = 0) readonly buffer BoneBuffer { mat4 bones[64]; };
+// Bone palette: each mat4 already encodes root_transform * global[i] * inverse_bind[i].
+// No separate model matrix push constant needed.
+layout(set = 0, binding = 0) readonly buffer BoneBuffer { mat4 bones[65]; };
 
 layout(location = 0) out vec3 frag_world_pos;
 layout(location = 1) out vec3 frag_normal;

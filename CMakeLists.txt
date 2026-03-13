@@ -233,6 +233,7 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_mesh_integrity.cpp
     src/test/tests/test_coordinate_system.cpp
     src/test/tests/test_skeletal_animation.cpp
+    src/test/tests/test_skinned_character.cpp
     src/game/render/skeletal_animation.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )

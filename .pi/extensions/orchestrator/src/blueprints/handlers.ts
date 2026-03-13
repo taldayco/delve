@@ -7,6 +7,7 @@ import {
   askBuildFixer,
   askTestFixer,
   askDiagnoser,
+  classifyBuildError,
   spawnDomainAnalyzer,
   getSubsystemAgent,
   parseSubtasks,
@@ -238,6 +239,27 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
     for (let round = 0; round < MAX_BUILD_FIX_ROUNDS; round++) {
       const build = runBuild(wt);
       if (build.ok) { buildOk = true; break; }
+
+      // Classify error before attempting fix
+      const classification = await classifyBuildError({
+        buildOutput: build.summary,
+        cwd: wt,
+        signal: ctx.signal,
+      });
+      ctx.data.errorClassification = classification;
+
+      // Architectural errors need re-planning, not fix loops
+      if (classification.severity === "architectural") {
+        ctx.data.buildFailureReason = `Architectural: ${classification.summary}`;
+        return { ok: false, output: `Build FAILED (architectural): ${classification.summary}` };
+      }
+
+      // Structural errors get at most 1 fix round
+      if (classification.severity === "structural" && round >= 1) {
+        ctx.data.buildFailureReason = `Structural (exceeded fix budget): ${classification.summary}`;
+        return { ok: false, output: `Build FAILED (structural): ${classification.summary}` };
+      }
+
       if (round + 1 >= MAX_BUILD_FIX_ROUNDS) break;
       const fix = await askBuildFixer({
         buildOutput: build.summary,
@@ -678,6 +700,42 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
 
     ctx.data.implementation = combined;
     return { ok: true, output: `Workers produced ${totalFiles} files (A:${batchA.length} B:${batchB.length} subtasks)` };
+  },
+
+  replan: async (ctx) => {
+    const classification = ctx.data.errorClassification;
+    if (!classification) {
+      return { ok: false, output: "No error classification available for re-planning" };
+    }
+
+    const replanTask = `REPLAN REQUIRED: Previous implementation failed at build phase.
+
+## Error Classification
+Severity: ${classification.severity}
+Summary: ${classification.summary}
+Affected files: ${classification.affected_files.join(", ")}
+
+## Previous Plan (FAILED)
+${(ctx.data.plan || "").slice(0, 2000)}
+
+## Original Task
+${ctx.prompt}
+
+Generate a NEW plan that addresses the architectural issue. Do NOT repeat the previous approach.`;
+
+    const wt = ctx.data.worktreePath;
+    const codebaseContext = await getCodebaseContext(ctx.prompt, wt);
+    const plan = await askMetaPlanner({
+      task: replanTask,
+      codebaseContext,
+      cwd: wt,
+      signal: ctx.signal,
+      tools: ["code_list_subsystem", "code_find_definition", "code_find_usages", "git_status", "git_diff_from_main", "project_overview", "viking_search", "viking_read"],
+    });
+
+    ctx.data.plan = plan;
+    ctx.data.errorClassification = undefined;
+    return { ok: plan.length > 0, output: plan.length > 0 ? "Re-plan generated" : "Re-plan failed" };
   },
 
   // ─── B4+: Self-management handlers (merged from handlers-self.ts) ──────────

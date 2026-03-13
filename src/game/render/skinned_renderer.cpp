@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <cstring>
 #include <vector>
 
@@ -233,7 +234,19 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
 
     player_.update(dt);
 
-    std::vector<BoneLocalTransform> locals;
+    int num_bones = std::min((int)skeleton_.bones.size(), 65);
+    std::vector<BoneLocalTransform> locals(num_bones);
+    // Seed with rest-pose transforms
+    for (int i = 0; i < num_bones; ++i) {
+        const glm::mat4 &m = skeleton_.bones[i].local_rest_transform;
+        locals[i].translation = glm::vec3(m[3]);
+        glm::vec3 sx(m[0]), sy(m[1]), sz(m[2]);
+        locals[i].scale = glm::vec3(glm::length(sx), glm::length(sy), glm::length(sz));
+        if (locals[i].scale.x > 1e-6f && locals[i].scale.y > 1e-6f && locals[i].scale.z > 1e-6f) {
+            glm::mat3 rot(sx / locals[i].scale.x, sy / locals[i].scale.y, sz / locals[i].scale.z);
+            locals[i].rotation = glm::quat_cast(rot);
+        }
+    }
     player_.sample(locals);
 
     // Root: translate * rotateZ(facing) * rotateX(-90deg, Y-up->Z-up) * scale(HEX_SIZE, Blender meters->terrain units)

@@ -5,6 +5,7 @@ import {
   loadSkill,
   loadRule,
 } from "./config.js";
+import { decode } from "@toon-format/toon";
 import type { Subtask, WorkerSubtask, MetaDecomposition } from "./types.js";
 
 export { Subtask };
@@ -77,24 +78,37 @@ export function parseSubtasks(plan: string): Subtask[] {
   return subtasks;
 }
 
+/** Extract a TOON block from LLM output, skipping non-TOON fenced blocks. */
+export function extractToonBlock(raw: string): string {
+  // Strategy 1: explicit ```toon block
+  const tagged = raw.match(/```toon\s*([\s\S]*?)```/);
+  if (tagged) return tagged[1].trim();
+  // Strategy 2: untagged block whose content starts with "subtasks" (TOON structural signature)
+  const untagged = raw.match(/```\s*(subtasks[\s\S]*?)```/);
+  if (untagged) return untagged[1].trim();
+  // Strategy 3: no fenced block — try raw text (agent omitted fences)
+  return raw.trim();
+}
+
 /**
- * Parse a Sonnet meta-agent's JSON decomposition output.
- * Tolerates markdown fences around JSON.
+ * Parse a Sonnet meta-agent's TOON decomposition output.
+ * Uses TOON format for agent-to-agent cognitive payloads.
  */
 export function parseMetaDecomposition(output: string): MetaDecomposition {
   try {
-    const raw = sanitizeJsonOutput(output);
-    const parsed = JSON.parse(raw);
-    const subtasks: WorkerSubtask[] = (parsed.subtasks || []).map((st: any) => ({
+    const block = extractToonBlock(output);
+    const parsed = decode(block) as any;
+    const rawSubtasks = parsed.subtasks || parsed;
+    const subtasks: WorkerSubtask[] = (Array.isArray(rawSubtasks) ? rawSubtasks : []).map((st: any) => ({
       file: st.file || "",
       action: (st.action || "MODIFY").toUpperCase(),
       instructions: st.instructions || "",
-      context_files: st.context_files || st.dependencies || [],
+      context_files: Array.isArray(st.context_files) ? st.context_files : [],
       worker_prompt: st.worker_prompt || st.instructions || "",
     }));
     return { subtasks };
   } catch {
-    // Fallback: couldn't parse decomposition — return empty
+    // Fallback: couldn't parse TOON decomposition — return empty
     return { subtasks: [] };
   }
 }
@@ -166,7 +180,7 @@ For each file change, output:
 
 /**
  * Build a meta-decomposer system prompt for a subsystem agent.
- * The decomposer's job is to analyze the task and produce a JSON
+ * The decomposer's job is to analyze the task and produce a TOON
  * decomposition of per-file worker subtasks.
  */
 export function buildMetaDecomposerPrompt(subsystem: string): string {
@@ -189,19 +203,18 @@ You are a META-${config.description}
 You do NOT implement changes yourself. Instead, you DECOMPOSE the task into focused per-file
 worker subtasks that Haiku-tier workers can execute independently.
 
-## Output Format (JSON only)
-\`\`\`json
-{
-  "subtasks": [
-    {
-      "file": "src/path/to/file.cpp",
-      "action": "MODIFY",
-      "instructions": "Detailed description of what to change in this file",
-      "context_files": ["src/path/to/dependency.h"],
-      "worker_prompt": "You are editing file.cpp in a C++20 terrain generator. [Focused instructions for the Haiku worker including exact function signatures, includes needed, and expected output]"
-    }
-  ]
-}
+## Output Format (TOON only)
+\`\`\`toon
+subtasks
+  -
+    file: src/path/to/file.cpp
+    action: MODIFY
+    instructions: Detailed description of what to change in this file
+    context_files
+      - src/path/to/dependency.h
+    worker_prompt: |
+      You are editing file.cpp in a C++20 terrain generator.
+      [Focused instructions for the Haiku worker including exact function signatures, includes needed, and expected output]
 \`\`\`
 
 ## Constraints
@@ -212,7 +225,7 @@ worker subtasks that Haiku-tier workers can execute independently.
 - worker_prompt MUST include EXACT code to write — not descriptions of code. Include literal function bodies, struct definitions, and #include directives. The Haiku worker is a code typist, not an architect.
 - Order subtasks by dependency (headers before implementations).
 - Only decompose changes the task requires — no unnecessary refactoring.
-- Output ONLY the JSON block. No preamble, no explanation.`);
+- Output ONLY the TOON block. No preamble, no explanation.`);
 
   return parts.join("\n\n");
 }

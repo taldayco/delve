@@ -13,6 +13,7 @@
 #include "camera/camera.h"
 #include "render/background.h"
 #include "render/rig_renderer.h"
+#include "render/skinned_renderer.h"
 #include "animation_log.h"
 #include <glm/glm.hpp>
 #include <vector>
@@ -32,6 +33,9 @@ public:
   flecs::entity       player_entity;
   bool                player_spawned = false;
   AnimationLogger     anim_log;
+  SkinnedRenderer     skinned_renderer;
+  bool                skinned_char_loaded = false;
+  bool                use_skinned = false;
 
   void on_init(GpuContext &gpu, flecs::world &ecs) override;
   void on_event(const SDL_Event &event, flecs::world &ecs) override;

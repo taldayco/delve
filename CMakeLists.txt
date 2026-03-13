@@ -72,6 +72,8 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/instanced_terrain.frag.glsl
     ${SHADER_DIR}/pbr_static.vert.glsl
     ${SHADER_DIR}/pbr_static.frag.glsl
+    ${SHADER_DIR}/skinned_character.vert.glsl
+    ${SHADER_DIR}/skinned_character.frag.glsl
 )
 
 set(COMPUTE_SHADER_SOURCES
@@ -177,6 +179,8 @@ add_executable(topogen
     src/game/terrain/map_util.cpp
     src/game/render/rig_renderer.cpp
     src/game/render/rig_animation.cpp
+    src/game/render/skeletal_animation.cpp
+    src/game/render/skinned_renderer.cpp
     src/game/terrain/instanced_terrain.cpp
 )
 
@@ -228,6 +232,8 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_terrain_pipeline.cpp
     src/test/tests/test_mesh_integrity.cpp
     src/test/tests/test_coordinate_system.cpp
+    src/test/tests/test_skeletal_animation.cpp
+    src/game/render/skeletal_animation.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 

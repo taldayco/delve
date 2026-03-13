@@ -7,13 +7,16 @@ import type { Phase, MinionState } from "./types.js";
 export const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export const PHASE_ORDER: Phase[] = [
-  "branch", "plan", "diagnose", "implement", "build", "fix-build",
-  "write-tests", "test", "fix-tests", "review", "shader-validate", "commit-pr",
+  "pre_flight", "branch", "resolve_subsystem", "plan", "diagnose", "implement",
+  "build", "fix-build", "write-tests", "test", "fix-tests", "review",
+  "shader-validate", "verify", "memory_iterate", "commit-pr", "commit_wip", "post_flight",
 ];
 
 // Display labels: group fix-* phases with their parent
 export const PHASE_LABELS: Record<string, string> = {
+  "pre_flight": "Pre-flight",
   "branch": "branch",
+  "resolve_subsystem": "Resolve subsystem",
   "plan": "plan",
   "diagnose": "diagnose",
   "implement": "implement",
@@ -24,7 +27,11 @@ export const PHASE_LABELS: Record<string, string> = {
   "fix-tests": "tests",
   "review": "review",
   "shader-validate": "shaders",
+  "verify": "verify",
+  "memory_iterate": "Memory iterate",
   "commit-pr": "pr",
+  "commit_wip": "Save WIP",
+  "post_flight": "Post-flight",
 };
 
 // Deduplicated display phases in order
@@ -184,8 +191,8 @@ export class MinionDisplay {
 
 export const display = new MinionDisplay();
 
-export function attachAgentListeners(ctx: any, state: MinionState) {
-  display.start(ctx, state);
+export function attachAgentListeners(ctx: any, state: MinionState, pipelinePhases?: Phase[]) {
+  display.start(ctx, state, pipelinePhases);
 }
 
 export function detachAgentListeners() {

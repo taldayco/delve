@@ -5,6 +5,7 @@ import {
   isVikingAvailable,
   vikingSearch,
   vikingOverview,
+  vikingRead,
   vikingAbstract,
   SUBSYSTEM_VIKING_URI,
 } from "./viking.js";
@@ -234,7 +235,7 @@ export async function getSubsystemCodebaseContext(subsystem: string, baseCwd?: s
     const vikingUri = SUBSYSTEM_VIKING_URI[subsystem];
     if (vikingUri) {
       const overview = await vikingOverview(vikingUri);
-      if (overview) {
+      if (overview && overview.trim().length > 0) {
         const sections: string[] = [];
         const { readFileSync, existsSync } = require("node:fs");
         const { join } = require("node:path");
@@ -246,12 +247,55 @@ export async function getSubsystemCodebaseContext(subsystem: string, baseCwd?: s
         }
 
         sections.push(`### ${vikingUri} (L1 Overview)\n${overview}`);
+
+        // If L1 overview is shallow (lacks function signatures), supplement with
+        // L2 full reads of primary header files for this subsystem
+        const hasSignatures = /\b\w+\s+\w+\s*\(/.test(overview);
+        if (!hasSignatures) {
+          console.error(`[context] L1 overview for ${subsystem} lacks function signatures — supplementing with L2 headers`);
+          const headerSections = await readSubsystemHeaders(subsystem, vikingUri);
+          if (headerSections.length > 0) {
+            sections.push(...headerSections);
+          }
+        }
+
         return sections.join("\n\n");
       }
+      console.error(`[context] L1 overview empty for ${vikingUri} — falling back to keyword`);
     }
   }
 
   return getSubsystemCodebaseContextKeyword(subsystem, baseCwd);
+}
+
+/**
+ * Read primary header files for a subsystem via Viking L2.
+ * Searches for .h files under the subsystem's Viking URI and reads up to 3.
+ */
+async function readSubsystemHeaders(subsystem: string, vikingUri: string): Promise<string[]> {
+  const sections: string[] = [];
+  // Search for header files within this subsystem
+  const results = await vikingSearch(`${subsystem} header declarations`, "L2", vikingUri, 3);
+  for (const r of results) {
+    if (r.uri.endsWith(".h") || r.uri.includes(".h/")) {
+      const content = await vikingRead(r.uri);
+      if (content && content.trim().length > 0) {
+        sections.push(`### ${r.uri} (L2 Full)\n${content.slice(0, 8000)}`);
+      }
+    }
+  }
+  // If search didn't find headers, try direct L2 read of known dirs
+  if (sections.length === 0) {
+    const dirs = SUBSYSTEM_DIRS[subsystem] || [];
+    for (const dir of dirs) {
+      const headerUri = vikingUri + "/" + dir.split("/").pop();
+      const content = await vikingRead(headerUri);
+      if (content && content.trim().length > 0) {
+        sections.push(`### ${headerUri} (L2 Full)\n${content.slice(0, 8000)}`);
+      }
+    }
+  }
+  return sections;
 }
 
 // ─── Model Context Limits (mirrors spawn.ts) ────────────────────────────────

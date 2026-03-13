@@ -130,7 +130,25 @@ export const PHASE_HANDLERS: Record<string, PhaseHandler> = {
       // Parallel planning for multi-subsystem tasks
       const subsystemContexts: Record<string, string> = {};
       for (const sub of subsystems) {
-        subsystemContexts[sub] = await getSubsystemCodebaseContext(sub, wt);
+        let subCtx = await getSubsystemCodebaseContext(sub, wt);
+        // If context lacks function-level detail, supplement with L2 header reads
+        const hasSignatures = /\b\w+\s+\w+\s*\(/.test(subCtx);
+        if (!hasSignatures && await isVikingAvailable()) {
+          const { vikingSearch: vs, vikingRead: vr, SUBSYSTEM_VIKING_URI: uris } = await import("../tools/viking.js");
+          const uri = uris[sub];
+          if (uri) {
+            const headers = await vs(`${sub} header declarations`, "L2", uri, 3);
+            for (const h of headers) {
+              if (h.uri.endsWith(".h") || h.uri.includes(".h/")) {
+                const content = await vr(h.uri);
+                if (content && content.trim().length > 0) {
+                  subCtx += `\n\n### ${h.uri} (L2 Full)\n${content.slice(0, 8000)}`;
+                }
+              }
+            }
+          }
+        }
+        subsystemContexts[sub] = subCtx;
       }
       plan = await askParallelPlanner({
         task: ctx.prompt, subsystemContexts, cwd: wt, signal: ctx.signal,

@@ -1,6 +1,11 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Blueprint, BlueprintContext, BlueprintResult } from "./types.js";
+import type { Phase } from "../commands/types.js";
+
+export interface ExecuteBlueprintOptions {
+  onPhaseChange?: (phase: Phase) => void;
+}
 import { BUILTIN_BLUEPRINTS } from "./builtin.js";
 import { PHASE_HANDLERS } from "./handlers.js";
 import { validatePhaseOutput } from "./validators.js";
@@ -33,8 +38,10 @@ export function loadBlueprint(name: string): Blueprint | null {
 export async function executeBlueprint(
   blueprint: Blueprint,
   context: BlueprintContext,
+  options?: ExecuteBlueprintOptions,
 ): Promise<BlueprintResult> {
   const completedPhases: string[] = [];
+  let failureRouted = false;
 
   // B2: Build named-phase map for graph traversal
   const phaseMap = new Map<string, import("./types.js").BlueprintPhase>();
@@ -71,6 +78,7 @@ export async function executeBlueprint(
         // Exceeded retry limit — treat as failure, follow on_failure
         context.ctx.ui.notify(`Phase ${phase.name} exceeded max_retries (${maxRetries})`, "error");
         if (phase.on_failure) {
+          failureRouted = true;
           currentPhaseName = phase.on_failure;
         } else {
           return { ok: false, failedPhase: phase.name, completedPhases, worktreePath: context.data.worktreePath };
@@ -94,6 +102,7 @@ export async function executeBlueprint(
       }
 
       context.ctx.ui.notify(`Phase: ${phase.name}`, "info");
+      options?.onPhaseChange?.(phase.name as Phase);
 
       const result = await handler(context);
 
@@ -134,6 +143,7 @@ export async function executeBlueprint(
           context.ctx.ui.notify(`Phase ${phase.name} FAILED: ${result.output}`, "error");
           context.data.lastFailedPhase = phase.name;
           if (phase.on_failure) {
+            failureRouted = true;
             currentPhaseName = phase.on_failure;
           } else {
             return { ok: false, failedPhase: phase.name, completedPhases, worktreePath: context.data.worktreePath };
@@ -155,5 +165,5 @@ export async function executeBlueprint(
     };
   }
 
-  return { ok: true, completedPhases, worktreePath: context.data.worktreePath };
+  return { ok: !failureRouted, completedPhases, worktreePath: context.data.worktreePath };
 }

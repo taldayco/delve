@@ -11,7 +11,8 @@ import {
   cleanupWorktree,
   cleanupMergedBranches,
 } from "../tools.js";
-import { state, getState, setState, attachAgentListeners, detachAgentListeners, recordFailure } from "./display.js";
+import type { Phase } from "./types.js";
+import { state, getState, setState, attachAgentListeners, detachAgentListeners, setPhase, recordFailure } from "./display.js";
 import { acquireRunLock, releaseRunLock } from "../tools/state.js";
 
 /** Shared runner for all blueprint-backed minion variants. */
@@ -33,11 +34,14 @@ export async function runBlueprint(
     buildFixRound: 0,
     testFixRound: 0,
   });
-  attachAgentListeners(ctx, state!);
 
   ctx.ui.notify(`${commandName} started: ${prompt}`, "info");
 
   const blueprint = loadBlueprint(blueprintName)!;
+  // Extract phase names from blueprint for dynamic status bar
+  const blueprintPhases = blueprint.phases.map((p) => p.name as Phase);
+  attachAgentListeners(ctx, state!, blueprintPhases);
+
   const context: BlueprintContext = {
     prompt,
     branch,
@@ -49,7 +53,9 @@ export async function runBlueprint(
   let blueprintResult: BlueprintResult | undefined;
   try {
     cleanupMergedBranches();
-    blueprintResult = await executeBlueprint(blueprint, context);
+    blueprintResult = await executeBlueprint(blueprint, context, {
+      onPhaseChange: (phase) => setPhase(phase, getState()),
+    });
 
     if (!blueprintResult.ok) {
       recordFailure("blueprint", `Failed at phase: ${blueprintResult.failedPhase}`);

@@ -2,7 +2,9 @@
 
 export type Phase =
   | "idle"
+  | "pre_flight"
   | "branch"
+  | "resolve_subsystem"
   | "plan"
   | "diagnose"
   | "implement"
@@ -14,7 +16,10 @@ export type Phase =
   | "review"
   | "shader-validate"
   | "verify"
+  | "memory_iterate"
   | "commit-pr"
+  | "commit_wip"
+  | "post_flight"
   | "done"
   | "failed";
 

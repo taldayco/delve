@@ -1,134 +1,13 @@
 // ─── Generator / Analyst Agents ───────────────────────────────────────────────
 
 import { spawnSubagent } from "./spawn.js";
-import { loadAgentConfig, loadAgentSystemPrompt, loadFile, AGENTS_DIR, PROJECT_ROOT } from "./config.js";
+import { loadAgentConfig, loadAgentSystemPrompt, PROJECT_ROOT } from "./config.js";
 import { writeState } from "./state.js";
 import { askWorker } from "./workers.js";
 import { parseMetaDecomposition } from "./parsing.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { RunMetricsRecord } from "./types.js";
-
-export async function askBlueprintGenerator(opts: {
-  task: string;
-  availablePhases: string[];
-  cwd?: string;
-}): Promise<string> {
-  const bpGenConfig = loadAgentConfig("blueprint-gen");
-  const model = bpGenConfig.model || "anthropic/claude-sonnet-4-6";
-
-  // Step 1: Sonnet decomposes the task into analysis questions for workers
-  const decomposerPrompt = `You are a META-PIPELINE-ARCHITECT. You do NOT design pipelines yourself.
-Instead, you DECOMPOSE the task analysis into focused questions that Haiku workers can answer.
-
-For each aspect of the task, produce a worker task that classifies one dimension:
-- Task complexity (simple/moderate/complex)
-- Subsystems affected (terrain/actor/shader/engine)
-- Whether tests are needed
-- Whether review is needed
-- Whether shader validation is needed
-- Whether verification is needed
-
-## Output Format (JSON only)
-\`\`\`json
-{
-  "subtasks": [
-    {
-      "file": "analysis",
-      "action": "MODIFY",
-      "instructions": "Classify task complexity",
-      "context_files": [],
-      "worker_prompt": "Classify this development task's complexity as SIMPLE (single file, obvious change), MODERATE (2-4 files, clear approach), or COMPLEX (5+ files, architectural changes). Task: [description]. Output EXACTLY: COMPLEXITY: [SIMPLE|MODERATE|COMPLEX] | REASON: [1 sentence]"
-    }
-  ]
-}
-\`\`\`
-
-## Constraints
-- 3-6 subtasks covering different analysis dimensions.
-- Each worker answers ONE classification question.
-- Output ONLY the JSON block.`;
-
-  const prompt = `## Task
-${opts.task}
-
-## Available Phase Handlers
-${opts.availablePhases.map((p) => `- ${p}`).join("\n")}
-
-Decompose this into classification questions.`;
-
-  const decomposition = await spawnSubagent({
-    prompt,
-    systemPrompt: decomposerPrompt,
-    model,
-    thinking: bpGenConfig.thinking || "off",
-    agentName: "blueprint-gen-meta",
-    cwd: opts.cwd,
-  });
-
-  const parsed = parseMetaDecomposition(decomposition);
-
-  // Fallback: direct pipeline design
-  if (parsed.subtasks.length === 0) {
-    console.error("[meta-blueprint-gen] Decomposition failed — falling back to direct design");
-    const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
-    const bodyStart = agentBody.indexOf("---", 3);
-    const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
-
-    return spawnSubagent({
-      prompt,
-      systemPrompt: agentInstructions.length > 100 ? agentInstructions : decomposerPrompt,
-      model,
-      thinking: bpGenConfig.thinking || "off",
-      agentName: "blueprint-gen",
-      cwd: opts.cwd,
-    });
-  }
-
-  // Step 2: Delegate classification questions to Haiku workers
-  console.error(`[meta-blueprint-gen] Decomposed into ${parsed.subtasks.length} classification tasks`);
-  const workerResults = await Promise.all(
-    parsed.subtasks.map(async (st) => {
-      const result = await askWorker({
-        systemPrompt: `You are a task classifier for a C++20 game engine development pipeline. Answer the classification question concisely in the requested format.`,
-        task: st.worker_prompt,
-        cwd: opts.cwd,
-      });
-      return `- ${st.instructions}: ${result}`;
-    }),
-  );
-
-  // Step 3: Sonnet synthesizes pipeline from worker classifications
-  const agentBody = loadFile(join(AGENTS_DIR, "blueprint-gen.md"));
-  const bodyStart = agentBody.indexOf("---", 3);
-  const agentInstructions = bodyStart >= 0 ? agentBody.slice(bodyStart + 3).trim() : "";
-
-  const synthesisPrompt = agentInstructions.length > 100
-    ? agentInstructions
-    : `You are a PIPELINE ARCHITECT. Design an optimal pipeline as JSON.
-Every pipeline MUST start with "branch" and end with "commit_pr".
-Use ONLY handlers from the available list. Output ONLY valid JSON.`;
-
-  const synthesisInput = `## Task
-${opts.task}
-
-## Worker Analysis Results
-${workerResults.join("\n")}
-
-## Available Phase Handlers
-${opts.availablePhases.map((p) => `- ${p}`).join("\n")}
-
-Based on the worker analysis, design the optimal pipeline. Output ONLY the JSON blueprint.`;
-
-  return spawnSubagent({
-    prompt: synthesisInput,
-    systemPrompt: synthesisPrompt,
-    model,
-    thinking: bpGenConfig.thinking || "off",
-    agentName: "blueprint-gen-synthesizer",
-    cwd: opts.cwd,
-  });
-}
 
 export async function askDecoupleAnalyst(opts: {
   domainReport: { domain: string; directory: string; fileCount: number; totalLines: number; complexityScore: number; files: string[] };

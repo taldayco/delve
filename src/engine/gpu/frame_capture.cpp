@@ -1,17 +1,20 @@
 #include "frame_capture.h"
 #include <SDL3/SDL.h>
-#include <vector>
 #include <cstring>
+#include <vector>
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window, const std::string &output_path) {
-  if (!device || !window) return false;
+bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window,
+                          const std::string &output_path) {
+  if (!device || !window)
+    return false;
 
   int w = 0, h = 0;
   SDL_GetWindowSizeInPixels(window, &w, &h);
-  if (w <= 0 || h <= 0) return false;
+  if (w <= 0 || h <= 0)
+    return false;
 
   // Create a texture to copy the swapchain into
   SDL_GPUTextureCreateInfo tex_info{};
@@ -25,7 +28,8 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window, const std::
 
   SDL_GPUTexture *readback_tex = SDL_CreateGPUTexture(device, &tex_info);
   if (!readback_tex) {
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "frame_capture: failed to create readback texture");
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "frame_capture: failed to create readback texture");
     return false;
   }
 
@@ -37,10 +41,12 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window, const std::
   buf_info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
   buf_info.size = buffer_size;
 
-  SDL_GPUTransferBuffer *transfer_buf = SDL_CreateGPUTransferBuffer(device, &buf_info);
+  SDL_GPUTransferBuffer *transfer_buf =
+      SDL_CreateGPUTransferBuffer(device, &buf_info);
   if (!transfer_buf) {
     SDL_ReleaseGPUTexture(device, readback_tex);
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "frame_capture: failed to create transfer buffer");
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "frame_capture: failed to create transfer buffer");
     return false;
   }
 
@@ -77,7 +83,8 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window, const std::
   void *mapped = SDL_MapGPUTransferBuffer(device, transfer_buf, false);
   bool success = false;
   if (mapped) {
-    success = stbi_write_png(output_path.c_str(), w, h, 4, mapped, (int)row_pitch) != 0;
+    success = stbi_write_png(output_path.c_str(), w, h, 4, mapped,
+                             (int)row_pitch) != 0;
     SDL_UnmapGPUTransferBuffer(device, transfer_buf);
   }
 
@@ -85,9 +92,11 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window, const std::
   SDL_ReleaseGPUTexture(device, readback_tex);
 
   if (success) {
-    SDL_Log("frame_capture: saved %dx%d frame to %s", w, h, output_path.c_str());
+    SDL_Log("frame_capture: saved %dx%d frame to %s", w, h,
+            output_path.c_str());
   } else {
-    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "frame_capture: failed to write PNG");
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "frame_capture: failed to write PNG");
   }
 
   return success;

@@ -3,6 +3,14 @@
     "blender": {
       "command": "/home/neto/.local/bin/blender-mcp",
       "args": []
+    },
+    "openviking": {
+      "type": "stdio",
+      "command": "/home/neto/Projects/delve/.pi/extensions/orchestrator/viking-bridge/.venv/bin/python",
+      "args": [
+        "/home/neto/.claude/hooks/openviking-mcp.py"
+      ],
+      "env": {}
     }
   }
 }

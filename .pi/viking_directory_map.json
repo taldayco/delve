@@ -1,8 +1,0 @@
-{
-  "src/game/terrain": "viking://resources/delve/terrain",
-  "src/game/render": "viking://resources/delve/actor",
-  "src/shaders": "viking://resources/delve/shader",
-  "src/engine": "viking://resources/delve/engine",
-  "src/test": "viking://resources/delve/test",
-  "src/game": "viking://resources/delve/game"
-}

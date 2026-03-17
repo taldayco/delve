@@ -60,6 +60,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     pi.vertex_input_state.vertex_attributes          = attrs;
     pi.vertex_input_state.num_vertex_attributes      = 6;
     pi.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pi.rasterizer_state.fill_mode                    = SDL_GPU_FILLMODE_LINE;
     pi.rasterizer_state.cull_mode                    = SDL_GPU_CULLMODE_NONE;
     pi.target_info.color_target_descriptions         = &color_desc;
     pi.target_info.num_color_targets                 = 1;

@@ -1,6 +1,5 @@
 #include "skinned_renderer.h"
 #include "../../engine/gpu/gpu.h"
-#include "../config.h"
 #include <SDL3/SDL.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -60,8 +59,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     pi.vertex_input_state.vertex_attributes          = attrs;
     pi.vertex_input_state.num_vertex_attributes      = 6;
     pi.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pi.rasterizer_state.fill_mode                    = SDL_GPU_FILLMODE_LINE;
-    pi.rasterizer_state.cull_mode                    = SDL_GPU_CULLMODE_NONE;
+    pi.rasterizer_state.cull_mode                    = SDL_GPU_CULLMODE_BACK;
     pi.target_info.color_target_descriptions         = &color_desc;
     pi.target_info.num_color_targets                 = 1;
     pi.target_info.has_depth_stencil_target          = true;
@@ -207,9 +205,33 @@ void SkinnedRenderer::load_animation(const std::string &name, const std::string 
                      path.c_str(), asset.error.c_str());
         return;
     }
-    for (auto &clip : asset.animations)
+    // Build name→index map for the CHARACTER skeleton (our target).
+    std::unordered_map<std::string, int> char_bone_map;
+    for (int i = 0; i < (int)skeleton_.bones.size(); ++i)
+        char_bone_map[skeleton_.bones[i].name] = i;
+
+    const auto &anim_bones = asset.skeleton.bones;
+
+    for (auto &clip : asset.animations) {
+        // Remap each channel's bone_index from the animation file's skeleton
+        // ordering to the character skeleton's ordering (matched by bone name).
+        std::vector<GltfAnimChannel> remapped;
+        remapped.reserve(clip.channels.size());
+        for (auto &ch : clip.channels) {
+            if (ch.bone_index < 0 || ch.bone_index >= (int)anim_bones.size())
+                continue;
+            const std::string &bone_name = anim_bones[ch.bone_index].name;
+            auto it = char_bone_map.find(bone_name);
+            if (it == char_bone_map.end())
+                continue;
+            ch.bone_index = it->second;
+            remapped.push_back(std::move(ch));
+        }
+        clip.channels = std::move(remapped);
         clips_[name] = std::move(clip);
-    SDL_Log("SkinnedRenderer: loaded animation '%s'", name.c_str());
+    }
+    SDL_Log("SkinnedRenderer: loaded animation '%s' (%zu channels remapped)",
+            name.c_str(), clips_.count(name) ? clips_[name].channels.size() : 0);
 }
 
 void SkinnedRenderer::set_animation(const std::string &name) {
@@ -264,14 +286,17 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
             printed_root_ = true;
         }
     } else {
-        // Mesh vertices are in glTF Y-up metres.  rotX(+90°) converts Y-up → engine Z-up.
+        // Mesh vertices are in glTF Y-up metres (~1.77m tall).
+        // Scale to match the rig character height (~1.4 game units).
+        // rotX(+90°) converts Y-up → engine Z-up.
         // The mesh's default forward is +Z (Y-up), which maps to -Y in Z-up, so we add
         // a +π/2 facing offset so that facing=0 (velocity along +X) points the mesh to +X.
+        constexpr float kCharacterScale = 0.8f; // ~1.4 game units for 1.77m mesh
         constexpr float kFacingOffset = glm::half_pi<float>();
         root = glm::translate(glm::mat4(1.f), player_pos)
              * glm::rotate(glm::mat4(1.f), facing + kFacingOffset, glm::vec3(0.f, 0.f, 1.f))
              * glm::rotate(glm::mat4(1.f), glm::radians(90.0f), glm::vec3(1.f, 0.f, 0.f))
-             * glm::scale(glm::mat4(1.f), glm::vec3(Config::HEX_SIZE * debug_uniform_scale));
+             * glm::scale(glm::mat4(1.f), glm::vec3(kCharacterScale * debug_uniform_scale));
         printed_root_ = false;
     }
 

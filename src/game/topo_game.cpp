@@ -519,25 +519,20 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           uniforms, point_lights,
                           gpu.upload_manager);
 
-    // Animate skinned renderer and select clip based on player speed.
-    if (skinned_renderer.is_initialized() && skinned_renderer.has_character()) {
-      float speed = 0.0f;
-      glm::vec3 player_pos(0.f);
-      float player_facing = 0.f;
-      if (player_entity.is_alive()) {
+    if (use_skinned) {
+      // Animate and draw skinned character renderer.
+      if (skinned_renderer.is_initialized() && skinned_renderer.has_character() && player_entity.is_alive()) {
+        float speed = 0.0f;
+        glm::vec3 player_pos(0.f);
+        float player_facing = 0.f;
         const auto *vel = player_entity.get<Velocity>();
         if (vel) speed = glm::length(glm::vec2(vel->x, vel->y));
         const auto *t = player_entity.get<Transform>();
         if (t) { player_pos = glm::vec3(t->x, t->y, t->z); player_facing = t->facing; }
-      }
-      skinned_renderer.update(1.0f / 60.0f, player_pos, player_facing, speed);
-      skinned_renderer.prepare(frame.cmd);
-    }
 
-    if (use_skinned) {
-      // Draw skinned character renderer.
-      if (skinned_renderer.is_initialized() && skinned_renderer.has_character() && player_entity.is_alive()) {
-        const auto *t = player_entity.get<Transform>();
+        skinned_renderer.update(ecs.delta_time(), player_pos, player_facing, speed);
+        skinned_renderer.prepare(frame.cmd);
+
         if (t) {
           SDL_GPURenderPass *actor_pass =
               terrain_renderer.begin_render_pass_load_preserve_depth(

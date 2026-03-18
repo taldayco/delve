@@ -75,3 +75,7 @@ imgui/
 .pi/
 
 Blender_Assets/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db

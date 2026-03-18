@@ -258,6 +258,12 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
     }
     player_.sample(locals);
 
+    // Strip root motion: keep root bone at rest-pose translation
+    // to prevent animation displacement from stacking on top of game-driven position.
+    if (num_bones > 0) {
+        locals[0].translation = glm::vec3(skeleton_.bones[0].local_rest_transform[3]);
+    }
+
     glm::mat4 root;
     if (debug_raw_transform) {
         root = glm::translate(glm::mat4(1.f), player_pos)

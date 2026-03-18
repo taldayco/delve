@@ -9,7 +9,6 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
                       std::vector<int> &out_band_map) {
   out_lines.clear();
 
-  // Hard cap to prevent OOM from pathological terracing patterns.
   constexpr size_t MAX_CONTOUR_LINES = 500'000;
 
   int total = width * height;

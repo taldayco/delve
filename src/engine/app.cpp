@@ -17,7 +17,6 @@ int Application::run(const AgentModeConfig &agent_config) {
     setup_agent_commands();
     if (!agent_server->start()) {
       SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Failed to start agent server");
-      // Continue without agent mode
       agent_server.reset();
     }
   }
@@ -35,21 +34,17 @@ int Application::run(const AgentModeConfig &agent_config) {
 void Application::setup_agent_commands() {
   if (!agent_server) return;
 
-  // get_state: return current frame count and camera/terrain info
   agent_server->register_command("get_state", [this](const std::string &) -> std::string {
     return "{\"ok\":true,\"data\":{\"running\":" +
            std::string(running ? "true" : "false") + "}}\n";
   });
 
-  // quit: request application shutdown
   agent_server->register_command("quit", [this](const std::string &) -> std::string {
     running = false;
     return "{\"ok\":true,\"data\":{\"message\":\"shutdown requested\"}}\n";
   });
 
-  // capture_frame: save current frame to PNG
   agent_server->register_command("capture_frame", [this](const std::string &params) -> std::string {
-    // Extract path from params JSON: {"path":"/tmp/test.png"}
     std::string path = "/tmp/delve-capture.png";
     auto path_pos = params.find("\"path\"");
     if (path_pos != std::string::npos) {
@@ -70,9 +65,7 @@ void Application::setup_agent_commands() {
     }
   });
 
-  // send_input: inject synthetic keyboard event
   agent_server->register_command("send_input", [this](const std::string &params) -> std::string {
-    // Extract key from params: {"key":"space"} or {"key":"w"}
     auto key_pos = params.find("\"key\"");
     if (key_pos == std::string::npos) {
       return "{\"ok\":false,\"error\":\"missing key param\"}\n";
@@ -86,13 +79,11 @@ void Application::setup_agent_commands() {
     }
     std::string key_name = params.substr(q1 + 1, q2 - q1 - 1);
 
-    // Map key name to SDL scancode
     SDL_Scancode scancode = SDL_GetScancodeFromName(key_name.c_str());
     if (scancode == SDL_SCANCODE_UNKNOWN) {
       return "{\"ok\":false,\"error\":\"unknown key: " + key_name + "\"}\n";
     }
 
-    // Push synthetic key down + key up events
     SDL_Event down{};
     down.type = SDL_EVENT_KEY_DOWN;
     down.key.scancode = scancode;
@@ -138,7 +129,6 @@ int Application::run_internal() {
       break;
     }
 
-    // Poll agent server for IPC commands
     if (agent_server) {
       agent_server->poll();
     }

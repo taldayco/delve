@@ -5,15 +5,11 @@
 #include <vector>
 #include <cstdio>
 
-// ---- mtime ---------------------------------------------------------------
-
 uint64_t AssetManager::get_mtime(const std::string &path) {
     struct stat st;
     if (::stat(path.c_str(), &st) != 0) return 0;
     return (uint64_t)st.st_mtime;
 }
-
-// ---- Internal shader creation --------------------------------------------
 
 SDL_GPUShader *AssetManager::create_shader_internal(const ShaderAsset &meta) {
     SDL_IOStream *io = SDL_IOFromFile(meta.path.c_str(), "rb");
@@ -45,8 +41,6 @@ SDL_GPUShader *AssetManager::create_shader_internal(const ShaderAsset &meta) {
                      meta.path.c_str(), SDL_GetError());
     return shader;
 }
-
-// ---- Public API ----------------------------------------------------------
 
 void AssetManager::init(SDL_GPUDevice *dev) {
     device = dev;
@@ -85,25 +79,19 @@ SDL_GPUShader *AssetManager::load_compute_shader(const std::string &key,
     if (it != shader_cache.end())
         return it->second.shader;
 
-    // Compute shaders use VERTEX stage slot as a placeholder; the distinction
-    // is handled by SDL_CreateGPUComputePipeline, not the shader object itself.
-    // We store rw+ro in num_storage_buffers for display purposes only.
     ShaderAsset meta;
     meta.path                = path;
-    meta.stage               = SDL_GPU_SHADERSTAGE_VERTEX; // not used for compute
+    meta.stage               = SDL_GPU_SHADERSTAGE_VERTEX;
     meta.num_uniform_buffers = num_uniform_buffers;
     meta.num_storage_buffers = num_rw_storage_buffers + num_ro_storage_buffers;
     meta.num_sampler_textures = 0;
     meta.last_mtime          = get_mtime(path);
     meta.dirty               = false;
 
-    // For compute shaders we don't create an SDL_GPUShader — callers use the
-    // path directly to build SDL_GPUComputePipeline.  We still track the file
-    // for hot-swap detection.
     meta.shader = nullptr;
 
     shader_cache[key] = meta;
-    return nullptr; // compute pipeline callers use the path, not a shader handle
+    return nullptr;
 }
 
 void AssetManager::register_pipeline(const std::string &key,
@@ -128,8 +116,6 @@ void AssetManager::check_for_updates() {
         uint64_t mtime = get_mtime(asset.path);
         if (mtime == 0 || mtime <= asset.last_mtime) continue;
 
-        // File changed — reload shader (graphics only; compute pipelines are
-        // rebuilt by the caller using the path).
         if (asset.shader) {
             SDL_ReleaseGPUShader(device, asset.shader);
             asset.shader = nullptr;
@@ -138,14 +124,11 @@ void AssetManager::check_for_updates() {
         asset.dirty      = true;
 
         if (asset.stage != SDL_GPU_SHADERSTAGE_VERTEX || asset.num_storage_buffers >= 0) {
-            // Rebuild the shader object if it was a graphics shader
-            // (compute shaders don't have an SDL_GPUShader object here)
         }
         asset.shader = create_shader_internal(asset);
 
         SDL_Log("AssetManager: Hot-reloaded shader '%s' (%s)", key.c_str(), asset.path.c_str());
 
-        // Mark dependent pipelines
         for (auto &[pkey, prec] : pipeline_registry) {
             if (prec.vert_shader_key == key || prec.frag_shader_key == key) {
                 prec.needs_rebuild = true;
@@ -154,7 +137,6 @@ void AssetManager::check_for_updates() {
         }
     }
 
-    // Clear per-frame dirty flags after propagation
     for (auto &[key, asset] : shader_cache)
         asset.dirty = false;
 }
@@ -273,8 +255,6 @@ void AssetManager::render_debug_ui() const {
 
     ImGui::Spacing();
     if (ImGui::Button("Force Reload All Shaders")) {
-        // Zero out mtimes so check_for_updates() picks them all up next frame.
-        // cast away const for the button action — acceptable debug utility.
         auto *self = const_cast<AssetManager*>(this);
         for (auto &[key, asset] : self->shader_cache)
             asset.last_mtime = 0;

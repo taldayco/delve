@@ -9,7 +9,6 @@
 #include <mutex>
 #include <vector>
 
-// Forward declarations for async state
 struct TerrainMesh;
 struct MapData;
 struct ContourData;
@@ -28,7 +27,6 @@ struct GamePhase {
   Phase current = Playing;
 };
 
-// Plain ECS component — must remain copyable/movable for flecs.
 struct TerrainState {
   bool  use_isometric   = DEFAULT_ISOMETRIC;
   int   current_palette = 0;
@@ -38,7 +36,6 @@ struct TerrainState {
   bool  need_regenerate = true;
 };
 
-// Async generation state — NOT a flecs component; owned by TopoGame.
 struct AsyncTerrainState {
   std::atomic<bool>            is_generating{false};
   std::atomic<bool>            cancel_requested{false};

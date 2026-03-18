@@ -10,7 +10,7 @@ struct CameraState {
 
   float follow_x = 0.0f;
   float follow_y = 0.0f;
-  float follow_z = 0.0f;  // Z height for isometric projection centering
+  float follow_z = 0.0f;
   bool following = false;
 
   float shake_intensity = 0.0f;

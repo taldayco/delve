@@ -16,7 +16,6 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window,
   if (w <= 0 || h <= 0)
     return false;
 
-  // Create a texture to copy the swapchain into
   SDL_GPUTextureCreateInfo tex_info{};
   tex_info.type = SDL_GPU_TEXTURETYPE_2D;
   tex_info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -33,7 +32,6 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window,
     return false;
   }
 
-  // Create transfer buffer for CPU readback
   uint32_t row_pitch = (uint32_t)w * 4;
   uint32_t buffer_size = row_pitch * (uint32_t)h;
 
@@ -50,7 +48,6 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window,
     return false;
   }
 
-  // Copy swapchain to our texture, then texture to transfer buffer
   SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(device);
   if (!cmd) {
     SDL_ReleaseGPUTransferBuffer(device, transfer_buf);
@@ -79,7 +76,6 @@ bool capture_frame_to_png(SDL_GPUDevice *device, SDL_Window *window,
   SDL_WaitForGPUFences(device, true, &fence, 1);
   SDL_ReleaseGPUFence(device, fence);
 
-  // Map transfer buffer and write PNG
   void *mapped = SDL_MapGPUTransferBuffer(device, transfer_buf, false);
   bool success = false;
   if (mapped) {

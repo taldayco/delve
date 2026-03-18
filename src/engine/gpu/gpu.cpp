@@ -267,7 +267,6 @@ void UploadManager::init(SDL_GPUDevice *device, uint32_t size) {
     capacity = 0;
     return;
   }
-  // Map persistently — SDL3-GPU allows the buffer to stay mapped between frames.
   mapped = (uint8_t *)SDL_MapGPUTransferBuffer(device, buffer, false);
   if (!mapped) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -287,7 +286,6 @@ void UploadManager::cleanup(SDL_GPUDevice *device) {
 }
 
 void *UploadManager::alloc(uint32_t size, uint32_t *out_offset) {
-  // 256-byte align for GPU safety
   uint32_t aligned_cursor = (cursor + 255u) & ~255u;
   if (!mapped || aligned_cursor + size > capacity) return nullptr;
   *out_offset = aligned_cursor;

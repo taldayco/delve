@@ -54,30 +54,17 @@ void CameraSystem::set_zoom(CameraState &cam, float zoom) {
 CameraMatrices CameraSystem::build_matrices(const CameraState &cam, float aspect) const {
   CameraMatrices out;
 
-  // Replicate the original CPU iso transform in tile-unit space:
-  //   iso_x = (x - y) * TW       (TW=2, TH=1, HS=12.5 in tile units)
-  //   iso_y = (x + y) * TH - z * HS
-  //   iso_z = (x + y) * TH + z   (depth, increasing into screen)
-  //
-  // View matrix columns = where world X, Y, Z axes land in view space.
-  // We keep iso_x as view-X, iso_y as view-Y, depth as view-Z.
   const float TW = 2.0f;
   const float TH = 1.0f;
-  const float HS = 12.5f;  // Canonical value in Config::ISO_HS (game/config.h)
+  const float HS = 12.5f;
 
-  // Column-major: col0=where world-X goes, col1=where world-Y goes, col2=where world-Z goes
-  // world-X contributes: view_x += TW, view_y += TH, view_z += TH
-  // world-Y contributes: view_x -= TW, view_y += TH, view_z += TH
-  // world-Z contributes: view_x += 0,  view_y -= HS, view_z += 1
   out.view = glm::mat4(
-    glm::vec4( TW,  TH,  TH, 0.0f),  // col 0: world X
-    glm::vec4(-TW,  TH,  TH, 0.0f),  // col 1: world Y
-    glm::vec4(0.0f,-HS, 1.0f, 0.0f), // col 2: world Z
-    glm::vec4(0.0f, 0.0f, 0.0f, 1.0f) // col 3: translation (none)
+    glm::vec4( TW,  TH,  TH, 0.0f),
+    glm::vec4(-TW,  TH,  TH, 0.0f),
+    glm::vec4(0.0f,-HS, 1.0f, 0.0f),
+    glm::vec4(0.0f, 0.0f, 0.0f, 1.0f)
   );
 
-  // Ortho frustum in iso/view space centred on camera.
-  // Camera world pos maps to iso space via the same transform.
   float cam_iso_x = (cam.world_x - cam.world_y) * TW;
   float cam_iso_y = (cam.world_x + cam.world_y) * TH - cam.follow_z * HS;
 
@@ -97,7 +84,6 @@ CameraMatrices CameraSystem::build_matrices(const CameraState &cam, float aspect
   else
     hh = hw / aspect;
 
-  // Y axis: iso_y increases downward on screen, so bottom > top in glm::ortho
   out.projection = glm::ortho(
       cam_iso_x - hw, cam_iso_x + hw,
       cam_iso_y + hh, cam_iso_y - hh,

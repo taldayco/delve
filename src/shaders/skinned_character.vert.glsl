@@ -9,8 +9,6 @@ layout(location = 3) in vec4  in_tangent;
 layout(location = 4) in uvec4 in_joints;
 layout(location = 5) in vec4  in_weights;
 
-// Bone palette: each mat4 already encodes root_transform * global[i] * inverse_bind[i].
-// No separate model matrix push constant needed.
 layout(set = 0, binding = 0) readonly buffer BoneBuffer { mat4 bones[65]; };
 
 layout(location = 0) out vec3 frag_world_pos;
@@ -31,5 +29,5 @@ void main() {
     frag_world_pos = world_pos.xyz;
     frag_normal    = normalize(transpose(inverse(mat3(skin_mat))) * in_normal);
     frag_texcoord  = in_texcoord;
-    frag_sheen     = 0.4;
+    frag_sheen     = mix(0.2, 0.8, max(frag_normal.z, 0.0));
 }

@@ -18,15 +18,12 @@ static void generate_lava_grid_mesh(LavaBody &lava, int width, int height, float
 
   if (lava.pixels.empty()) return;
 
-  // Check grid dimensions BEFORE allocating pixel_set to avoid ~50MB
-  // allocation for pathologically large lava bodies.
   int nx = (int)std::ceil((lava.max_x - lava.min_x) / grid_spacing) + 1;
   int ny = (int)std::ceil((lava.max_y - lava.min_y) / grid_spacing) + 1;
 
-  constexpr int MAX_LAVA_GRID_CELLS = 200 * 200; // ~40k cells max
+  constexpr int MAX_LAVA_GRID_CELLS = 200 * 200;
   if (nx * ny > MAX_LAVA_GRID_CELLS) return;
 
-  // NOW build pixel_set (bounded since grid passed the guard)
   if (lava.pixel_set.empty()) {
     for (int idx : lava.pixels) lava.pixel_set.insert(idx);
   }
@@ -72,8 +69,6 @@ static void generate_lava_grid_mesh(LavaBody &lava, int width, int height, float
     }
   }
 
-  // pixel_set is only needed during mesh generation — free it now so that
-  // destructing a LavaBody on the main thread does not stall the render loop.
   lava.pixel_set.clear();
   { std::unordered_set<int> empty; lava.pixel_set.swap(empty); }
 }
@@ -88,10 +83,7 @@ FloodFillResult generate_lava_and_void(MapData &data, float void_chance, int see
 
   const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
 
-  // Per-component cap: anything larger is map-spanning junk.
   constexpr int MAX_COMPONENT_PIXELS = 50'000;
-  // Global budget: stop creating bodies once we've accumulated this many pixels
-  // across all bodies. Prevents compound memory blow-up with many medium bodies.
   constexpr int TOTAL_PIXEL_BUDGET = 200'000;
   int total_pixels_used = 0;
 
@@ -150,7 +142,6 @@ FloodFillResult generate_lava_and_void(MapData &data, float void_chance, int see
         }
       }
 
-      // If capped, drain remaining BFS queue (mark visited) and skip body.
       if (capped) {
         while (!q.empty()) {
           visited[q.front()] = true;
@@ -162,7 +153,6 @@ FloodFillResult generate_lava_and_void(MapData &data, float void_chance, int see
       if (component_pixels.size() < 50)
         continue;
 
-      // Check global pixel budget before creating a new body.
       if (total_pixels_used + (int)component_pixels.size() > TOTAL_PIXEL_BUDGET) {
         SDL_Log("generate_lava_and_void: pixel budget exhausted (%d used, component %zu would exceed %d)",
                 total_pixels_used, component_pixels.size(), TOTAL_PIXEL_BUDGET);
@@ -197,7 +187,6 @@ FloodFillResult generate_lava_and_void(MapData &data, float void_chance, int see
 
       total_pixels_used += (int)body.pixels.size();
 
-      // Pixels are no longer needed after terrain_map stamping — free them.
       body.pixels.clear();
       body.pixels.shrink_to_fit();
 

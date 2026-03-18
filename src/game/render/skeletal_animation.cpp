@@ -5,8 +5,6 @@
 #include <cmath>
 #include <cstring>
 
-// ---- AnimationPlayer ----
-
 void AnimationPlayer::set_clip(const GltfAnimationClip *clip) {
     clip_ = clip;
     time_ = 0.f;
@@ -15,7 +13,6 @@ void AnimationPlayer::set_clip(const GltfAnimationClip *clip) {
 void AnimationPlayer::update(float dt) {
     if (!clip_ || clip_->duration <= 0.f) return;
     time_ += dt;
-    // Wrap at clip duration
     while (time_ >= clip_->duration)
         time_ -= clip_->duration;
     if (time_ < 0.f) time_ = 0.f;
@@ -29,7 +26,6 @@ void AnimationPlayer::sample(std::vector<BoneLocalTransform> &out) const {
         BoneLocalTransform &xf = out[ch.bone_index];
 
         if (ch.path == "translation" && !ch.times.empty()) {
-            // Find bracketing keyframes
             int n = (int)ch.times.size();
             if (n == 1 || time_ <= ch.times[0]) {
                 xf.translation = ch.translations[0];
@@ -72,8 +68,6 @@ void AnimationPlayer::sample(std::vector<BoneLocalTransform> &out) const {
     }
 }
 
-// ---- compute_bone_palette ----
-
 static glm::mat4 local_to_mat4(const BoneLocalTransform &xf) {
     glm::mat4 T = glm::translate(glm::mat4(1.f), xf.translation);
     glm::mat4 R = glm::mat4_cast(xf.rotation);
@@ -88,13 +82,10 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
     int num_bones = (int)skel.bones.size();
     if (num_bones == 0) return palette;
 
-    // Cap at 65 bones (BonePalette capacity)
     num_bones = std::min(num_bones, 65);
 
-    // global_transforms[i] = world-space transform for bone i
     std::vector<glm::mat4> global(num_bones, glm::mat4(1.f));
 
-    // Bones are assumed to be in topological order (parent before child)
     for (int i = 0; i < num_bones; ++i) {
         glm::mat4 local = (i < (int)local_transforms.size())
             ? local_to_mat4(local_transforms[i])
@@ -102,9 +93,6 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
 
         int parent = skel.bones[i].parent_index;
         if (parent < 0 || parent >= num_bones) {
-            // Root bones: prepend the armature (non-joint ancestor) transform.
-            // This carries the Armature object's scale (e.g. 0.01 for Mixamo)
-            // and coordinate-system rotation (e.g. Blender Z-up → glTF Y-up).
             global[i] = skel.armature_transform * local;
         } else {
             global[i] = global[parent] * local;
@@ -116,27 +104,21 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
     return palette;
 }
 
-// ---- SkeletalAnimation ----
-
 void SkeletalAnimation::init(const GltfSkinnedAsset &asset) {
     skeleton_              = asset.skeleton;
     inverse_bind_matrices_ = asset.inverse_bind_matrices;
     clips_                 = asset.animations;
 
-    // Bake inverse_bind_matrices_ into skeleton bones so compute_bone_palette
-    // (which reads skel.bones[i].inverse_bind_matrix) gets the correct data.
     int n = std::min((int)skeleton_.bones.size(), (int)inverse_bind_matrices_.size());
     for (int i = 0; i < n; ++i) {
         skeleton_.bones[i].inverse_bind_matrix = inverse_bind_matrices_[i];
     }
 
-    // Start with identity palette
     std::memset(&bone_palette_, 0, sizeof(bone_palette_));
     int num_bones = std::min((int)skeleton_.bones.size(), 65);
     for (int i = 0; i < num_bones; ++i)
         bone_palette_.bones[i] = glm::mat4(1.f);
 
-    // Activate first clip if available
     if (!clips_.empty()) {
         player_.set_clip(&clips_[0]);
     }
@@ -157,11 +139,9 @@ void SkeletalAnimation::update(float dt, const glm::mat4 &root_transform) {
 
     player_.update(dt);
 
-    // Build rest-pose local transforms as baseline
     int num_bones = std::min((int)skeleton_.bones.size(), 65);
     std::vector<BoneLocalTransform> locals(num_bones);
     for (int i = 0; i < num_bones; ++i) {
-        // Decompose local_rest_transform into TRS (approximate via mat4 columns)
         const glm::mat4 &m = skeleton_.bones[i].local_rest_transform;
         locals[i].translation = glm::vec3(m[3]);
         glm::vec3 sx(m[0]), sy(m[1]), sz(m[2]);
@@ -170,7 +150,6 @@ void SkeletalAnimation::update(float dt, const glm::mat4 &root_transform) {
         locals[i].rotation = glm::quat_cast(rot);
     }
 
-    // Overlay animation samples
     player_.sample(locals);
 
     bone_palette_ = compute_bone_palette(skeleton_, locals, root_transform);

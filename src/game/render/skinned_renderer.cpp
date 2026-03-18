@@ -20,8 +20,6 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     std::string shader_dir = s_shader_dir;
     SDL_GPUTextureFormat sc_fmt = SDL_GetGPUSwapchainTextureFormat(device_, window);
 
-    // vert: 1 uniform (SceneUniforms), 1 storage (BoneBuffer)
-    // frag: 1 uniform (SceneUniforms), 3 storage (lights, grid, indices)
     SDL_GPUShader *vert = assets_->load_shader(
         "skinned_char.vert",
         shader_dir + "/skinned_character.vert.glsl.spv",
@@ -175,7 +173,6 @@ void SkinnedRenderer::load_character(const std::string &path) {
     for (auto &clip : asset.animations)
         clips_[clip.name] = std::move(clip);
 
-    // Start with idle if available
     if (clips_.count("idle")) {
         player_.set_clip(&clips_["idle"]);
         current_clip_ = "idle";
@@ -199,7 +196,6 @@ void SkinnedRenderer::load_animation(const std::string &name, const std::string 
                      path.c_str(), asset.error.c_str());
         return;
     }
-    // Build name→index map for the CHARACTER skeleton (our target).
     std::unordered_map<std::string, int> char_bone_map;
     for (int i = 0; i < (int)skeleton_.bones.size(); ++i)
         char_bone_map[skeleton_.bones[i].name] = i;
@@ -207,8 +203,6 @@ void SkinnedRenderer::load_animation(const std::string &name, const std::string 
     const auto &anim_bones = asset.skeleton.bones;
 
     for (auto &clip : asset.animations) {
-        // Remap each channel's bone_index from the animation file's skeleton
-        // ordering to the character skeleton's ordering (matched by bone name).
         std::vector<GltfAnimChannel> remapped;
         remapped.reserve(clip.channels.size());
         for (auto &ch : clip.channels) {
@@ -244,7 +238,6 @@ void SkinnedRenderer::set_animation(const std::string &name) {
 void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing, float speed) {
     if (!initialized_ || !char_loaded_) return;
 
-    // Select clip by speed
     if (speed < 0.1f)      set_animation("idle");
     else if (speed < 5.0f) set_animation("walk");
     else                    set_animation("run");
@@ -253,7 +246,6 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
 
     int num_bones = std::min((int)skeleton_.bones.size(), 65);
     std::vector<BoneLocalTransform> locals(num_bones);
-    // Seed with rest-pose transforms
     for (int i = 0; i < num_bones; ++i) {
         const glm::mat4 &m = skeleton_.bones[i].local_rest_transform;
         locals[i].translation = glm::vec3(m[3]);
@@ -268,7 +260,6 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
 
     glm::mat4 root;
     if (debug_raw_transform) {
-        // Debug: just translate + uniform scale, no facing or Y-up conversion
         root = glm::translate(glm::mat4(1.f), player_pos)
              * glm::scale(glm::mat4(1.f), glm::vec3(debug_uniform_scale));
         if (!printed_root_) {
@@ -280,13 +271,8 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
             printed_root_ = true;
         }
     } else {
-        // Mesh vertices are in glTF Y-up metres (~1.77m tall).
-        // Scale to match the rig character height (~1.4 game units).
-        // rotX(+90°) converts Y-up → engine Z-up.
-        // The mesh's default forward is +Z (Y-up), which maps to -Y in Z-up, so we add
-        // a +π/2 facing offset so that facing=0 (velocity along +X) points the mesh to +X.
-        constexpr float kCharacterScale = 0.8f; // ~1.4 game units for 1.77m mesh
-        constexpr float kIsoZScale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE; // 0.75072 — match rig renderer
+        constexpr float kCharacterScale = 0.8f;
+        constexpr float kIsoZScale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
         constexpr float kFacingOffset = glm::half_pi<float>();
         float s = kCharacterScale * debug_uniform_scale;
         glm::vec3 scale_vec(s, s * kIsoZScale, s);
@@ -331,14 +317,11 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
 
     SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
-    // Vertex storage slot 0: bone SSBO
     SDL_BindGPUVertexStorageBuffers(pass, 0, &bone_ssbo_, 1);
 
-    // Fragment storage slots 0-2: lights, cluster grid, light indices
     SDL_GPUBuffer *frag_ssbos[3] = { lights_ssbo, light_grid_ssbo, light_indices_ssbo };
     SDL_BindGPUFragmentStorageBuffers(pass, 0, frag_ssbos, 3);
 
-    // Uniform slot 0: SceneUniforms (vertex + fragment)
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
     SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));
 

@@ -11,11 +11,8 @@
 #include <cmath>
 #include <algorithm>
 
-// File-scope animation config — single instance shared by GaitSystem and RigRenderer.
 static const AnimationConfig s_anim_cfg{};
 
-// Draw a 3-sided triangular prism (wireframe strut) between two points.
-// Produces 18 vertices (3 quad faces, each split into 2 triangles).
 static void emit_strut(std::vector<BasaltVertex> &verts,
                        const glm::vec3 &pA, const glm::vec3 &pB,
                        float thickness) {
@@ -24,7 +21,6 @@ static void emit_strut(std::vector<BasaltVertex> &verts,
     if (len < 1e-5f) return;
     glm::vec3 dir = seg / len;
 
-    // Stable perpendicular basis — fallback when dir is near-parallel to Z.
     glm::vec3 right;
     if (fabsf(glm::dot(dir, glm::vec3(0.0f, 0.0f, 1.0f))) < 0.99f)
         right = glm::normalize(glm::cross(glm::vec3(0.0f, 0.0f, 1.0f), dir));
@@ -32,7 +28,6 @@ static void emit_strut(std::vector<BasaltVertex> &verts,
         right = glm::normalize(glm::cross(glm::vec3(1.0f, 0.0f, 0.0f), dir));
     glm::vec3 fwd = glm::cross(dir, right);
 
-    // 3-sided ring offsets at 0°, 120°, 240°.
     constexpr int SIDES = 3;
     constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
     glm::vec3 ring_A[SIDES], ring_B[SIDES];
@@ -43,7 +38,6 @@ static void emit_strut(std::vector<BasaltVertex> &verts,
         ring_B[i] = pB + offset;
     }
 
-    // Hardcoded neon cyan with sheen 0.3.
     constexpr float cr = 0.0f, cg = 1.0f, cb = 1.0f;
     constexpr float sheen = 0.3f;
 
@@ -56,7 +50,6 @@ static void emit_strut(std::vector<BasaltVertex> &verts,
         verts.push_back(bv);
     };
 
-    // Emit 3 quad faces (6 triangles, 18 vertices).
     for (int i = 0; i < SIDES; ++i) {
         int j = (i + 1) % SIDES;
 
@@ -65,23 +58,15 @@ static void emit_strut(std::vector<BasaltVertex> &verts,
         glm::vec3 p01 = ring_B[i];
         glm::vec3 p11 = ring_B[j];
 
-        // Flat-shaded face normal.
         glm::vec3 cross_val = glm::cross(p10 - p00, p01 - p00);
         float cross_len = glm::length(cross_val);
         glm::vec3 face_n = (cross_len > 1e-7f) ? (cross_val / cross_len) : dir;
 
-        // Two triangles per quad.
         push(p00, face_n); push(p10, face_n); push(p01, face_n);
         push(p10, face_n); push(p11, face_n); push(p01, face_n);
     }
 }
 
-// Emit wireframe struts forming a tapered cage along a bone.
-// mat_A: start joint transform (col0=Right, col1=Fwd, col2=Up, col3=Pos).
-// pos_B: end joint world position.
-// radius_A/radius_B: cross-section radii at start/end (allows tapering).
-// segments: 3 or 4 for low-poly net aesthetic.
-// color: xyz=RGB, w=sheen.
 static void append_bone_cage(std::vector<BasaltVertex> &verts,
                               const glm::mat4 &mat_A,
                               const glm::vec3 &pos_B,
@@ -117,19 +102,12 @@ static void append_bone_cage(std::vector<BasaltVertex> &verts,
 
     for (int i = 0; i < segments; ++i) {
         int j = (i + 1) % segments;
-        // Longitudinal struts (along bone axis)
         emit_strut(verts, ring_A[i], ring_B[i], STRUT_THICKNESS);
-        // Circumferential hoops at start ring
         emit_strut(verts, ring_A[i], ring_A[j], STRUT_THICKNESS);
-        // Circumferential hoops at end ring
         emit_strut(verts, ring_B[i], ring_B[j], STRUT_THICKNESS);
     }
 }
 
-// Unity-style critically-damped spring smoother.
-// Smoothly moves 'current' toward 'target' over time.
-// 'velocity' is internal state that must persist across calls.
-// smooth_time: ~time to reach target (seconds)
 static float smooth_damp(float current, float target, float *velocity,
                           float smooth_time, float dt) {
     float omega = 2.0f / smooth_time;
@@ -141,7 +119,6 @@ static float smooth_damp(float current, float target, float *velocity,
     return target + (delta + temp) * exp_f;
 }
 
-// Angle-aware smooth_damp that handles wraparound at ±π.
 static float smooth_damp_angle(float current, float target, float *velocity,
                                 float smooth_time, float dt) {
     float delta = target - current;
@@ -150,11 +127,6 @@ static float smooth_damp_angle(float current, float target, float *velocity,
     return smooth_damp(current, current + delta, velocity, smooth_time, dt);
 }
 
-// Generic two-bone analytical IK solver (extracted from leg IK).
-// H: root joint (hip/shoulder), target: end-effector goal,
-// a: upper bone length, b: lower bone length,
-// pole: pole target for bend direction,
-// fallback_perp: fallback perpendicular when pole is degenerate.
 static void solve_two_bone(glm::vec3 H, glm::vec3 target,
                            float a, float b,
                            glm::vec3 pole, glm::vec3 fallback_perp,
@@ -199,10 +171,6 @@ void register_rig_systems(flecs::world &ecs,
                            AnimationLogger &anim_log,
                            flecs::entity   player_entity) {
 
-    // =========================================================================
-    // 1. PlayerMovementSystem
-    //    Input → SmoothDamp velocity → position update
-    // =========================================================================
     ecs.system("PlayerMovementSystem")
         .kind(flecs::PostUpdate)
         .run([&input, &ecs, player_entity](flecs::iter &) {
@@ -219,23 +187,17 @@ void register_rig_systems(flecs::world &ecs,
             auto &in = input.state();
             float dt = ecs.delta_time();
 
-            // Desired velocity from raw input.
             float raw_x = 0.0f, raw_y = 0.0f;
             if (in.held[(int)Action::MoveUp])    raw_y -= 1.0f;
             if (in.held[(int)Action::MoveDown])  raw_y += 1.0f;
             if (in.held[(int)Action::MoveLeft])  raw_x -= 1.0f;
             if (in.held[(int)Action::MoveRight]) raw_x += 1.0f;
 
-            // Rotate -45 degrees to align WASD with isometric screen axes.
-            // Isometric camera looks from NE: world(-1,-1) = screen UP.
-            // -45° maps W(screen-up) → world(-x,-y), D(screen-right) → world(+x,-y).
-            static constexpr float COS_ISO = 0.70710678118f; // cos(45°)
-            static constexpr float SIN_ISO = 0.70710678118f; // sin(45°)
+            static constexpr float COS_ISO = 0.70710678118f;
+            static constexpr float SIN_ISO = 0.70710678118f;
             float desired_x = ( raw_x * COS_ISO + raw_y * SIN_ISO) * gait->move_speed;
             float desired_y = (-raw_x * SIN_ISO + raw_y * COS_ISO) * gait->move_speed;
 
-            // SmoothDamp: critically-damped spring gives feeling of mass.
-            // smooth_time = 0.1s → reaches ~90% of target in ~0.2s.
             const float smooth_time = 0.1f;
             anim->smooth_velocity.x = smooth_damp(anim->smooth_velocity.x, desired_x,
                                                     &anim->velocity_rate.x, smooth_time, dt);
@@ -252,7 +214,6 @@ void register_rig_systems(flecs::world &ecs,
             if (spd > 0.001f)
                 t->facing = atan2f(vel->y, vel->x);
 
-            // Turn detection
             float turn_delta = t->facing - anim->visual_facing;
             while (turn_delta >  glm::pi<float>()) turn_delta -= glm::two_pi<float>();
             while (turn_delta < -glm::pi<float>()) turn_delta += glm::two_pi<float>();
@@ -261,15 +222,13 @@ void register_rig_systems(flecs::world &ecs,
             anim->turn_magnitude = fabsf(turn_delta);
             anim->turn_urgency   = anim->turn_magnitude / glm::pi<float>();
 
-            // Hysteresis
-            constexpr float TURN_ENTER_RAD = 1.0472f;  // 60°
-            constexpr float TURN_EXIT_RAD  = 0.3491f;  // 20°
+            constexpr float TURN_ENTER_RAD = 1.0472f;
+            constexpr float TURN_EXIT_RAD  = 0.3491f;
             if (!anim->in_large_turn && anim->turn_magnitude > TURN_ENTER_RAD)
                 anim->in_large_turn = true;
             else if (anim->in_large_turn && anim->turn_magnitude < TURN_EXIT_RAD)
                 anim->in_large_turn = false;
 
-            // Adaptive: small turns 0.15s (responsive), full reversal 0.50s (feet can resequence)
             constexpr float SMOOTH_MIN = 0.15f;
             constexpr float SMOOTH_MAX = 0.50f;
             float turn_t = std::clamp(anim->turn_urgency, 0.0f, 1.0f);
@@ -278,7 +237,6 @@ void register_rig_systems(flecs::world &ecs,
             anim->visual_facing = smooth_damp_angle(anim->visual_facing, t->facing,
                                                      &anim->visual_facing_rate, adaptive_smooth, dt);
 
-            // Chest lags behind hips: slower smooth_time creates torsion during turns
             float chest_smooth = (spd > 0.3f) ? 0.22f : 0.06f;
             anim->chest_facing = smooth_damp_angle(anim->chest_facing, anim->visual_facing,
                                                     &anim->chest_facing_rate, chest_smooth, dt);
@@ -292,7 +250,6 @@ void register_rig_systems(flecs::world &ecs,
                 anim->chest_facing_rate = 0.0f;
             }
 
-            // Phase 2C: set look-at target in movement direction
             auto *look = player_entity.get_mut<LookAtTarget>();
             if (look) {
                 if (spd > 0.1f) {
@@ -300,20 +257,14 @@ void register_rig_systems(flecs::world &ecs,
                                                t->y + vel->y / spd * 5.0f,
                                                t->z);
                     look->active = true;
-                    // Ramp weight up when moving
                     look->weight = std::min(1.0f, look->weight + ecs.delta_time() * 4.0f);
                 } else {
-                    // Ramp weight down when idle
                     look->weight = std::max(0.0f, look->weight - ecs.delta_time() * 2.0f);
                     if (look->weight < 0.01f) look->active = false;
                 }
             }
         });
 
-    // =========================================================================
-    // 2. ActorGroundingSystem
-    //    Snap actor Z to terrain height using adaptive spring.
-    // =========================================================================
     ecs.system("ActorGroundingSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -322,17 +273,10 @@ void register_rig_systems(flecs::world &ecs,
 
             ecs.each([&](ActorTag, Transform &t, const ActorConfig &,
                          const LegState *) {
-                // Snap directly to terrain height — no spring, no foot feedback.
-                // ROOT is the immutable ground anchor; feet adapt via IK.
                 t.z = sample_world_height(*map_data, t.x, t.y);
             });
         });
 
-    // =========================================================================
-    // 3. GaitSystem
-    //    Procedural foot placement with one-foot-planted invariant.
-    //    Speed-adaptive step duration for natural cadence.
-    // =========================================================================
     ecs.system("GaitSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -354,17 +298,11 @@ void register_rig_systems(flecs::world &ecs,
                 float vel_dx = speed > 0.001f ? vel.x / speed : fwd_x;
                 float vel_dy = speed > 0.001f ? vel.y / speed : fwd_y;
 
-                // Turn urgency (local, for GaitSystem use)
-                float facing_delta = t.facing - anim.visual_facing;
-                while (facing_delta >  glm::pi<float>()) facing_delta -= glm::two_pi<float>();
-                while (facing_delta < -glm::pi<float>()) facing_delta += glm::two_pi<float>();
-                float turn_urgency = std::min(1.0f, fabsf(facing_delta) / glm::pi<float>());
+                float turn_urgency = anim.turn_urgency;
 
-                // Visual-facing forward
                 float vf_fwd_x = cosf(anim.visual_facing);
                 float vf_fwd_y = sinf(anim.visual_facing);
 
-                // Blend vel direction toward visual_facing during turns (max 70% blend)
                 float turn_blend = turn_urgency * 0.7f;
                 float step_dx = vel_dx * (1.0f - turn_blend) + vf_fwd_x * turn_blend;
                 float step_dy = vel_dy * (1.0f - turn_blend) + vf_fwd_y * turn_blend;
@@ -372,39 +310,30 @@ void register_rig_systems(flecs::world &ecs,
                 if (step_len > 0.001f) { step_dx /= step_len; step_dy /= step_len; }
                 else { step_dx = vf_fwd_x; step_dy = vf_fwd_y; }
 
-                // Gait phase drives arm swing and hip oscillation only (foot
-                // placement is distance-based and unaffected by this phase).
-                // Rate chosen so full-speed (4 u/s) gives ~1.27 Hz swing — a
-                // natural walking cadence.  Direction-independent: the old
-                // iso-vertical multiplier made arms/hips speed up depending on
-                // screen direction, which looked unnatural.
-                // Casual walk cadence: ~1.7 Hz at full speed (4 u/s).
-                // 2.7 rad/s per unit speed → ω = 10.8 rad/s → T ≈ 0.58s.
-                constexpr float SWING_RATE = 2.7f; // rad/s per unit speed
-                gait.phase += speed * dt * SWING_RATE;
+                constexpr float SWING_RATE = 2.7f;
 
-                (void)0; // rght_x/rght_y removed — unified basis below
+                float dir_scale = 1.0f;
+                if (speed > 0.01f) {
+                    float dx = vel.x / speed;
+                    float dy = vel.y / speed;
+                    float iso_align = fabsf(dx + dy) * 0.7071f;
+                    dir_scale = 1.0f + iso_align * s_anim_cfg.directional_speed_scale;
+                }
+                gait.phase += speed * dt * SWING_RATE * dir_scale;
 
-                // Unified right vector derived from step direction (orthogonal to travel).
-                // This ensures hip offsets and half-space math use the same basis as
-                // foot placement, preventing asymmetric reach during turns.
+                (void)0;
+
                 float step_rght_x = -step_dy, step_rght_y = step_dx;
 
-                // Hip socket XY offsets (legs offset left/right of facing).
-                float hip_sign[2] = { -1.0f, 1.0f }; // left, right
+                float hip_sign[2] = { -1.0f, 1.0f };
 
-                // Speed-adaptive step duration: faster movement = quicker steps.
                 float speed_ratio      = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
                 float adaptive_duration = gait.step_duration / speed_ratio;
-                adaptive_duration *= (1.0f - turn_urgency * 0.3f);  // 30% faster steps during turns
+                adaptive_duration *= (1.0f - turn_urgency * 0.3f);
 
-                // Blend forward prediction toward zero when idle so feet
-                // return to a neutral stance directly under the hips.
                 float speed_factor = std::min(1.0f, speed / (gait.move_speed * 0.15f));
-                speed_factor *= (1.0f - turn_urgency * 0.5f);  // reduce forward prediction during pivots
+                speed_factor *= (1.0f - turn_urgency * 0.5f);
 
-                // Turn-aware step sequencing: trailing foot steps first.
-                // Use the unified step basis (step_dx/dy) for consistent behind calculation.
                 if (turn_urgency > 0.4f && !legs.stepping[0] && !legs.stepping[1]) {
                     float behind[2];
                     for (int i = 0; i < 2; ++i) {
@@ -414,9 +343,6 @@ void register_rig_systems(flecs::world &ecs,
                     }
                     legs.turn_step_queued = (behind[0] < behind[1]) ? 0 : 1;
                 }
-                // Starvation guard: if turn_urgency drops below threshold while a
-                // step is queued but neither leg is stepping, reset the queue so the
-                // blocked leg isn't permanently locked out by floating-point drift.
                 if (turn_urgency <= 0.4f && legs.turn_step_queued >= 0
                     && !legs.stepping[0] && !legs.stepping[1]) {
                     legs.turn_step_queued = -1;
@@ -428,9 +354,6 @@ void register_rig_systems(flecs::world &ecs,
                     float hip_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width;
                     float hip_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width;
 
-                    // Trigger check: how far the planted foot is from nominal center.
-                    // When idle, center collapses to hip position (no forward offset)
-                    // so feet that landed ahead during walking trigger return steps.
                     float half_stride = gait.stride_len * 0.5f;
                     float center_off = half_stride * speed_factor;
                     float center_x = hip_x + step_dx * center_off;
@@ -441,8 +364,6 @@ void register_rig_systems(flecs::world &ecs,
                         float dy   = legs.foot[leg].y - center_y;
                         float dist = sqrtf(dx * dx + dy * dy);
 
-                        // One-foot-planted invariant: only step if other foot is planted.
-                        // Lower trigger threshold when idle so return steps fire sooner.
                         bool other_planted = !legs.stepping[other_leg];
                         float trigger_dist = half_stride * (0.25f + 0.75f * speed_factor);
                         bool turn_blocked = (turn_urgency > 0.4f
@@ -455,16 +376,11 @@ void register_rig_systems(flecs::world &ecs,
                             if (legs.turn_step_queued == leg)
                                 legs.turn_step_queued = -1;
 
-                            // Velocity-predicted target: foot lands ahead of where
-                            // the hip will be when the step completes, implementing
-                            // heel-strike placement (inverted pendulum model).
-                            // When idle, target collapses to hip position (neutral stance).
                             float step_travel = speed * adaptive_duration;
                             float target_off  = (half_stride + step_travel * 0.75f) * speed_factor;
                             float tgt_x = hip_x + step_dx * target_off;
                             float tgt_y = hip_y + step_dy * target_off;
 
-                            // Half-space clamp: keep target on correct side of center line
                             float tgt_lat = (tgt_x - t.x) * step_rght_x + (tgt_y - t.y) * step_rght_y;
                             if ((hip_sign[leg] < 0 && tgt_lat > 0.02f) || (hip_sign[leg] > 0 && tgt_lat < -0.02f)) {
                                 tgt_x -= step_rght_x * (tgt_lat - hip_sign[leg] * 0.05f);
@@ -480,11 +396,9 @@ void register_rig_systems(flecs::world &ecs,
                         legs.progress[leg] += dt / adaptive_duration;
                         float progress = std::min(legs.progress[leg], 1.0f);
 
-                        // Smootherstep interpolation for XY: steeper S-curve than cosine-ease.
                         float warped_t = progress * progress * progress
                                          * (progress * (progress * 6.0f - 15.0f) + 10.0f);
 
-                        // Z height arc: half-sine lift peaking at mid-stride.
                         float ts_z  = progress * progress * (3.0f - 2.0f * progress);
 
                         legs.foot[leg].x = legs.prev_foot[leg].x + (legs.target[leg].x - legs.prev_foot[leg].x) * warped_t;
@@ -493,7 +407,6 @@ void register_rig_systems(flecs::world &ecs,
                                            + sinf(progress * glm::pi<float>()) * gait.step_height;
 
                         if (legs.progress[leg] >= 1.0f) {
-                            // Log contact velocity for grounding quality metrics.
                             float step_dist = glm::length(legs.target[leg] - legs.prev_foot[leg]);
                             anim.foot_contact_velocity[leg] = step_dist / adaptive_duration;
 
@@ -505,7 +418,6 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 }
 
-                // ---- Planted-foot continuous Z tracking (Phase 1A) ----
                 for (int leg = 0; leg < 2; ++leg) {
                     if (!legs.stepping[leg]) {
                         float ground_z = sphere_trace_height(*map_data,
@@ -514,13 +426,10 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 }
 
-                // ---- Half-space constraint: force corrective step if foot crossed center line ----
                 for (int leg = 0; leg < 2; ++leg) {
                     if (legs.stepping[leg] || legs.stepping[1 - leg]) continue;
                     float lat = (legs.foot[leg].x - t.x) * step_rght_x
                               + (legs.foot[leg].y - t.y) * step_rght_y;
-                    // Symmetrical threshold: left (hip_sign=-1) must be on left (lat<0),
-                    // right (hip_sign=+1) must be on right (lat>0).
                     bool crossed = (hip_sign[leg] < 0) ? (lat > 0.02f) : (lat < -0.02f);
                     if (crossed) {
                         legs.stepping[leg] = true;
@@ -537,19 +446,16 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 }
 
-                // ---- Planted-foot world-lock & reach clamp ----
                 float max_horiz = gait.stride_len * 0.9f;
                 for (int leg = 0; leg < 2; ++leg) {
                     float hip_x = t.x + step_rght_x * hip_sign[leg] * cfg.hip_width;
                     float hip_y = t.y + step_rght_y * hip_sign[leg] * cfg.hip_width;
 
                     if (!legs.stepping[leg]) {
-                        // World-lock: restore XY to plant position
                         if (legs.planted[leg]) {
                             legs.foot[leg].x = legs.plant_pos[leg].x;
                             legs.foot[leg].y = legs.plant_pos[leg].y;
                         }
-                        // Reach check: trigger corrective step instead of sliding
                         float dx = legs.foot[leg].x - hip_x;
                         float dy = legs.foot[leg].y - hip_y;
                         float hd = sqrtf(dx * dx + dy * dy);
@@ -565,7 +471,6 @@ void register_rig_systems(flecs::world &ecs,
                                 legs.target[leg] = {tgt_x, tgt_y,
                                     sphere_trace_height(*map_data, tgt_x, tgt_y, cfg.leg_radius)};
                             } else {
-                                // Last resort: slide to prevent hyperextension
                                 float s = max_horiz / hd;
                                 legs.foot[leg].x = hip_x + dx * s;
                                 legs.foot[leg].y = hip_y + dy * s;
@@ -591,10 +496,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 3.5. GrabDriveSystem (Phase 5)
-    //      GrabState → ArmIKGoal + weight compensation on gait.
-    // =========================================================================
     ecs.system("GrabDriveSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -618,11 +519,9 @@ void register_rig_systems(flecs::world &ecs,
                     arm_ik.weight_r = 0.0f;
                 }
 
-                // Weight compensation: reduce stride when carrying
                 float carry_w = std::max(grab.active_l ? grab.weight : 0.0f,
                                          grab.active_r ? grab.weight : 0.0f);
                 if (carry_w > 0.01f) {
-                    // Activate heavy carry overlay if available
                     if (overlay) {
                         overlay->active = AnimationOverlay::Type::HeavyCarry;
                         overlay->intensity = carry_w;
@@ -631,10 +530,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 4. IKSystem
-    //    Two-bone analytical leg IK + pendulum arm swing with joint delay chain.
-    // =========================================================================
     ecs.system("IKSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -655,11 +550,9 @@ void register_rig_systems(flecs::world &ecs,
                 float fwd_x  =  cosf(facing), fwd_y  = sinf(facing);
                 float rght_x = -sinf(facing), rght_y = cosf(facing);
 
-                // Chest-facing vectors (lags behind visual_facing for torsion)
                 float chest_fwd_x  =  cosf(anim.chest_facing), chest_fwd_y  = sinf(anim.chest_facing);
                 float chest_rght_x = -sinf(anim.chest_facing), chest_rght_y = cosf(anim.chest_facing);
 
-                // HIPS derived upward from ROOT (Transform is ground-level).
                 float leg_height = cfg.leg_len + cfg.shin_len;
                 glm::vec3 hips(t.x, t.y, t.z + leg_height);
                 glm::vec3 spine01 = hips  + glm::vec3(0, 0, cfg.torso_len * 0.4f);
@@ -673,14 +566,20 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::NECK]     = neck;
                 pose.joints[(int)J::HEAD]     = head;
 
-                // Hip sockets (L_UPPER_LEG / R_UPPER_LEG).
-                float hip_z = t.z + leg_height;
-                glm::vec3 l_upper_leg(t.x - rght_x * cfg.hip_width, t.y - rght_y * cfg.hip_width, hip_z);
-                glm::vec3 r_upper_leg(t.x + rght_x * cfg.hip_width, t.y + rght_y * cfg.hip_width, hip_z);
+                float center_hip_z = t.z + leg_height;
+                float l_hip_z = center_hip_z;
+                float r_hip_z = center_hip_z;
+                if (legs.foot[0].z != 0.0f || legs.foot[1].z != 0.0f) {
+                    float l_ground_hip = legs.foot[0].z + leg_height;
+                    float r_ground_hip = legs.foot[1].z + leg_height;
+                    l_hip_z = center_hip_z * 0.7f + l_ground_hip * 0.3f;
+                    r_hip_z = center_hip_z * 0.7f + r_ground_hip * 0.3f;
+                }
+                glm::vec3 l_upper_leg(t.x - rght_x * cfg.hip_width, t.y - rght_y * cfg.hip_width, l_hip_z);
+                glm::vec3 r_upper_leg(t.x + rght_x * cfg.hip_width, t.y + rght_y * cfg.hip_width, r_hip_z);
                 pose.joints[(int)J::L_UPPER_LEG] = l_upper_leg;
                 pose.joints[(int)J::R_UPPER_LEG] = r_upper_leg;
 
-                // Shoulder sockets use chest_facing (L_UPPER_ARM / R_UPPER_ARM).
                 glm::vec3 l_upper_arm(chest.x - chest_rght_x * cfg.shoulder_width,
                                       chest.y - chest_rght_y * cfg.shoulder_width,
                                       chest.z);
@@ -690,7 +589,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_UPPER_ARM] = l_upper_arm;
                 pose.joints[(int)J::R_UPPER_ARM] = r_upper_arm;
 
-                // ---- Pendulum arm swing (FK) ----
                 float speed       = sqrtf(vel.x * vel.x + vel.y * vel.y);
                 float swing_amp   = std::min(1.0f, speed / gait.move_speed) * glm::radians(30.0f);
 
@@ -699,7 +597,6 @@ void register_rig_systems(flecs::world &ecs,
                 anim.l_arm_target = l_arm_target;
                 anim.r_arm_target = r_arm_target;
 
-                // Successive breaking (joint delay chain).
                 anim.l_shoulder_smooth = smooth_damp(anim.l_shoulder_smooth, l_arm_target,
                                                       &anim.l_shoulder_rate, 0.02f, dt);
                 anim.l_elbow_smooth    = smooth_damp(anim.l_elbow_smooth, anim.l_shoulder_smooth,
@@ -714,7 +611,6 @@ void register_rig_systems(flecs::world &ecs,
                 anim.r_wrist_smooth    = smooth_damp(anim.r_wrist_smooth, anim.r_elbow_smooth,
                                                       &anim.r_wrist_rate,    0.06f, dt);
 
-                // Apply arm swing: rotate "hang down" vector by swing angle around chest-facing axis.
                 glm::vec3 right_axis(chest_rght_x, chest_rght_y, 0.0f);
                 glm::vec3 hang_down(0.0f, 0.0f, -1.0f);
 
@@ -740,19 +636,16 @@ void register_rig_systems(flecs::world &ecs,
                     return elbow_pos + dir * forearm_len;
                 };
 
-                // Left arm FK.
                 glm::vec3 l_lower_arm_fk = swing_elbow_pos(l_upper_arm, anim.l_shoulder_smooth,
                                                             anim.l_elbow_smooth, cfg.arm_len);
                 glm::vec3 l_hand_fk      = swing_wrist_pos(l_lower_arm_fk, anim.l_shoulder_smooth,
                                                             anim.l_wrist_smooth, cfg.forearm_len);
 
-                // Right arm FK.
                 glm::vec3 r_lower_arm_fk = swing_elbow_pos(r_upper_arm, anim.r_shoulder_smooth,
                                                             anim.r_elbow_smooth, cfg.arm_len);
                 glm::vec3 r_hand_fk      = swing_wrist_pos(r_lower_arm_fk, anim.r_shoulder_smooth,
                                                             anim.r_wrist_smooth, cfg.forearm_len);
 
-                // Phase 3C: Blend arm IK with FK when ArmIKGoal is present
                 glm::vec3 l_lower_arm = l_lower_arm_fk, l_hand = l_hand_fk;
                 glm::vec3 r_lower_arm = r_lower_arm_fk, r_hand = r_hand_fk;
 
@@ -787,13 +680,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_HAND]      = l_hand;
                 pose.joints[(int)J::R_LOWER_ARM] = r_lower_arm;
                 pose.joints[(int)J::R_HAND]      = r_hand;
-
-                // ---- Leg IK — using shared two-bone solver ----
-                // Per-leg pole targets and fallback perpendiculars use a guaranteed
-                // orthogonal basis. The outward flare is symmetrical: left knee
-                // bends slightly outward-left, right knee outward-right.
-
-                // Left leg: fallback pushes knee outward (−right = left)
                 glm::vec3 l_fallback(-rght_x, -rght_y, 0.0f);
                 glm::vec3 l_pole = l_upper_leg + glm::vec3(fwd_x * 0.5f - rght_x * 0.08f,
                                                              fwd_y * 0.5f - rght_y * 0.08f, 0.2f);
@@ -803,7 +689,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_LOWER_LEG] = l_lower_leg;
                 pose.joints[(int)J::L_FOOT]      = l_foot;
 
-                // Right leg: fallback pushes knee outward (+right)
                 glm::vec3 r_fallback(rght_x, rght_y, 0.0f);
                 glm::vec3 r_pole = r_upper_leg + glm::vec3(fwd_x * 0.5f + rght_x * 0.08f,
                                                              fwd_y * 0.5f + rght_y * 0.08f, 0.2f);
@@ -815,10 +700,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 5. OverlaySystem (Phase 4)
-    //    Additive animation overlays: limp, fatigue, heavy carry.
-    // =========================================================================
     ecs.system("OverlaySystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -836,7 +717,7 @@ void register_rig_systems(flecs::world &ecs,
 
                 if (overlay.active == OT::None || overlay.intensity < 0.001f) return;
 
-                overlay.phase += dt * 2.0f; // overlay tick
+                overlay.phase += dt * 2.0f;
 
                 float I = overlay.intensity;
                 float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
@@ -844,31 +725,26 @@ void register_rig_systems(flecs::world &ecs,
 
                 switch (overlay.active) {
                 case OT::Limp: {
-                    // Asymmetric hip drop on left side
                     float limp_drop = sinf(gait.phase) * 0.04f * I;
                     pose.joints[(int)J::L_UPPER_LEG].z -= limp_drop;
                     pose.joints[(int)J::HIPS].z -= fabsf(limp_drop) * 0.3f;
                     break;
                 }
                 case OT::Fatigue: {
-                    // Increased sway + forward lean + slow breathing
                     float fatigue_sway = sinf(overlay.phase * 0.8f) * 0.025f * I;
                     glm::vec3 sway_vec(rght_x * fatigue_sway, rght_y * fatigue_sway, 0.0f);
                     pose.joints[(int)J::CHEST]    += sway_vec;
                     pose.joints[(int)J::NECK]     += sway_vec * 1.2f;
                     pose.joints[(int)J::HEAD]     += sway_vec * 1.4f;
-                    // Forward lean
                     float lean = 0.03f * I;
                     pose.joints[(int)J::CHEST] += glm::vec3(fwd_x * lean, fwd_y * lean, 0.0f);
                     pose.joints[(int)J::NECK]  += glm::vec3(fwd_x * lean * 1.3f, fwd_y * lean * 1.3f, 0.0f);
                     break;
                 }
                 case OT::HeavyCarry: {
-                    // Forward lean + hands pulled down
                     float lean = 0.05f * I;
                     pose.joints[(int)J::CHEST] += glm::vec3(fwd_x * lean, fwd_y * lean, 0.0f);
                     pose.joints[(int)J::NECK]  += glm::vec3(fwd_x * lean * 0.8f, fwd_y * lean * 0.8f, 0.0f);
-                    // Pull hands down
                     pose.joints[(int)J::L_HAND].z -= 0.06f * I;
                     pose.joints[(int)J::R_HAND].z -= 0.06f * I;
                     break;
@@ -878,10 +754,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 6. LookAtSystem (Phase 2)
-    //    Procedural head/neck/chest tracking toward LookAtTarget.
-    // =========================================================================
     ecs.system("LookAtSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -901,43 +773,35 @@ void register_rig_systems(flecs::world &ecs,
                 glm::vec3 to_target = look.position - head_pos;
                 float horiz_dist = sqrtf(to_target.x * to_target.x + to_target.y * to_target.y);
 
-                // Decompose into yaw/pitch relative to facing
                 float target_yaw = 0.0f, target_pitch = 0.0f;
                 if (horiz_dist > 0.01f) {
                     float abs_yaw = atan2f(to_target.y, to_target.x);
                     target_yaw = abs_yaw - t.facing;
-                    // Wrap to [-PI, PI]
                     while (target_yaw >  glm::pi<float>()) target_yaw -= glm::two_pi<float>();
                     while (target_yaw < -glm::pi<float>()) target_yaw += glm::two_pi<float>();
                     target_pitch = atan2f(to_target.z, horiz_dist);
                 }
 
-                // Clamp
                 float max_yaw   = glm::radians(70.0f);
                 float max_pitch = glm::radians(30.0f);
                 target_yaw   = std::clamp(target_yaw,   -max_yaw,   max_yaw);
                 target_pitch = std::clamp(target_pitch, -max_pitch, max_pitch);
 
-                // Apply weight
                 target_yaw   *= look.weight;
                 target_pitch *= look.weight;
 
-                // SmoothDamp toward target
                 anim.look_yaw = smooth_damp(anim.look_yaw, target_yaw,
                                              &anim.look_yaw_rate, 0.08f, dt);
                 anim.look_pitch = smooth_damp(anim.look_pitch, target_pitch,
                                                &anim.look_pitch_rate, 0.08f, dt);
 
-                // Distribute rotation: HEAD 60%, NECK 30%, CHEST 10%
                 float fwd_x = cosf(t.facing), fwd_y = sinf(t.facing);
                 float rght_x = -sinf(t.facing), rght_y = cosf(t.facing);
 
-                // Yaw offset as lateral displacement (simplified)
                 auto apply_yaw = [&](Joint j, float frac) {
                     float offset = sinf(anim.look_yaw * frac) * 0.1f;
                     pose.joints[(int)j] += glm::vec3(rght_x * offset, rght_y * offset, 0.0f);
                 };
-                // Pitch offset as vertical displacement
                 auto apply_pitch = [&](Joint j, float frac) {
                     pose.joints[(int)j].z += sinf(anim.look_pitch * frac) * 0.05f;
                 };
@@ -948,12 +812,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 7. SkeletonFinaliseSystem
-    //    Hip sway, acceleration-driven torso lean, idle micro-motion.
-    //    Also computes derived joints: ROOT, SPINE_02, HEAD_END, clavicles,
-    //    toes, pole targets, and IK goals.
-    // =========================================================================
     ecs.system("SkeletonFinaliseSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -973,7 +831,6 @@ void register_rig_systems(flecs::world &ecs,
                 float speed   = sqrtf(vel.x * vel.x + vel.y * vel.y);
                 float rght_x  = -sinf(anim.visual_facing), rght_y = cosf(anim.visual_facing);
 
-                // ---- Phase 1C: Slope-driven hip tilt ----
                 if (legs) {
                     float foot_diff = legs->foot[0].z - legs->foot[1].z;
                     float max_tilt = glm::radians(8.0f);
@@ -983,7 +840,6 @@ void register_rig_systems(flecs::world &ecs,
                     anim.hip_tilt = smooth_damp(anim.hip_tilt, hip_tilt_target,
                                                 &anim.hip_tilt_rate, 0.06f, dt);
 
-                    // Apply as lateral Z offset to hip sockets
                     float tilt_offset = sinf(anim.hip_tilt) * cfg.hip_width;
                     pose.joints[(int)J::L_UPPER_LEG].z -= tilt_offset;
                     pose.joints[(int)J::R_UPPER_LEG].z += tilt_offset;
@@ -991,8 +847,6 @@ void register_rig_systems(flecs::world &ecs,
                                                    * (foot_diff > 0 ? 1.0f : -1.0f) * 0.1f;
                 }
 
-                // ---- CoM hip sway (leg-driven) ----
-                // Target: shift toward planted foot (-1 left, +1 right)
                 float balance_target = 0.0f;
                 if (legs) {
                     if (legs->stepping[0] && !legs->stepping[1]) balance_target =  1.0f;
@@ -1008,23 +862,19 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::NECK]     += sway_vec;
                 pose.joints[(int)J::HEAD]     += sway_vec;
 
-                // Fix 3: Hip counter-animation (CoM shift + double-bounce).
                 float walk_blend = std::min(1.0f, speed / (gait.move_speed * 0.3f));
 
-                // Turn urgency from visual_facing_rate
                 float turn_urgency = std::min(1.0f, fabsf(anim.visual_facing_rate) / 10.0f);
 
                 float target_hip_roll = sinf(gait.phase) * 0.06f * walk_blend;
                 anim.hip_roll = smooth_damp(anim.hip_roll, target_hip_roll,
                                             &anim.hip_roll_rate, 0.04f, dt);
 
-                // Gait-phase bob: fade during turns (it's steady-walk motion)
                 float bob_blend = walk_blend * (1.0f - turn_urgency * 0.7f);
                 float target_hip_bob = fabsf(sinf(gait.phase)) * 0.018f * bob_blend;
                 anim.hip_bob = smooth_damp(anim.hip_bob, target_hip_bob,
                                            &anim.hip_bob_rate, 0.03f, dt);
 
-                // Step-event hip dip: parabolic when foot is airborne
                 float step_dip_target = 0.0f;
                 if (legs) {
                     float leg_height_dip = cfg.leg_len + cfg.shin_len;
@@ -1043,7 +893,6 @@ void register_rig_systems(flecs::world &ecs,
                 anim.hip_dip = smooth_damp(anim.hip_dip, step_dip_target,
                                            &anim.hip_dip_rate, 0.025f, dt);
 
-                // Apply hip roll as a lateral CoM shift.
                 float roll_shift = sinf(anim.hip_roll) * cfg.hip_width * 0.4f;
                 glm::vec3 roll_vec(rght_x * roll_shift, rght_y * roll_shift, 0.0f);
                 pose.joints[(int)J::HIPS]        += roll_vec;
@@ -1051,14 +900,12 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::L_UPPER_LEG] += roll_vec;
                 pose.joints[(int)J::R_UPPER_LEG] += roll_vec;
 
-                // Combined vertical offset: bob (up) + dip (down)
                 float hip_z_offset = anim.hip_bob - anim.hip_dip;
                 pose.joints[(int)J::HIPS].z         += hip_z_offset;
                 pose.joints[(int)J::SPINE_01].z     += hip_z_offset * 0.7f;
                 pose.joints[(int)J::L_UPPER_LEG].z  += hip_z_offset;
                 pose.joints[(int)J::R_UPPER_LEG].z  += hip_z_offset;
 
-                // ---- Acceleration-driven torso lean ----
                 glm::vec3 cur_vel(vel.x, vel.y, 0.0f);
                 glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - anim.prev_velocity) / dt)
                                                : glm::vec3(0.0f);
@@ -1103,7 +950,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::NECK]  += glm::vec3(anim.neck_lean_x,  anim.neck_lean_y,  0.0f);
                 pose.joints[(int)J::HEAD]  += glm::vec3(anim.head_lean_x,  anim.head_lean_y,  0.0f);
 
-                // ---- Chest counter-rotation: lateral offset from hips-chest angular difference ----
                 {
                     float lag_angle = anim.visual_facing - anim.chest_facing;
                     while (lag_angle >  glm::pi<float>()) lag_angle -= glm::two_pi<float>();
@@ -1119,7 +965,6 @@ void register_rig_systems(flecs::world &ecs,
                     pose.joints[(int)J::R_UPPER_ARM] += lag_vec;
                 }
 
-                // ---- Idle micro-motion ----
                 float idle_blend = 1.0f - std::min(1.0f, speed / 0.2f);
 
                 anim.breath_phase += dt * glm::two_pi<float>() * 0.6f;
@@ -1136,7 +981,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::NECK]     += idle_sway_vec;
                 pose.joints[(int)J::HEAD]     += idle_sway_vec;
 
-                // ---- Idle weight shift ----
                 if (idle_blend > 0.1f) {
                     anim.idle_weight_phase += dt * glm::two_pi<float>() * 0.3f;
                     float weight_shift = sinf(anim.idle_weight_phase);
@@ -1157,21 +1001,16 @@ void register_rig_systems(flecs::world &ecs,
                     pose.joints[(int)J::NECK]  += counter_vec * 0.5f;
                 }
 
-                // ---- Compute derived joints ----
-                // ROOT: ground anchor from Transform (already at ground level).
                 pose.joints[(int)J::ROOT] = glm::vec3(t.x, t.y, t.z);
 
-                // SPINE_02: mid-point between SPINE_01 and CHEST
                 pose.joints[(int)J::SPINE_02] = glm::mix(
                     pose.joints[(int)J::SPINE_01],
                     pose.joints[(int)J::CHEST],
                     0.6f);
 
-                // HEAD_END: skull-top nub
                 pose.joints[(int)J::HEAD_END] = pose.joints[(int)J::HEAD]
                     + glm::vec3(0.0f, 0.0f, cfg.head_radius);
 
-                // Clavicles: 25% from CHEST toward each upper arm
                 pose.joints[(int)J::L_CLAVICLE] = glm::mix(
                     pose.joints[(int)J::CHEST],
                     pose.joints[(int)J::L_UPPER_ARM],
@@ -1181,14 +1020,12 @@ void register_rig_systems(flecs::world &ecs,
                     pose.joints[(int)J::R_UPPER_ARM],
                     0.25f);
 
-                // Toes: extend forward from foot
                 glm::vec3 facing_dir(fwd_x, fwd_y, 0.0f);
                 pose.joints[(int)J::L_TOE] = pose.joints[(int)J::L_FOOT]
                     + facing_dir * cfg.toe_len;
                 pose.joints[(int)J::R_TOE] = pose.joints[(int)J::R_FOOT]
                     + facing_dir * cfg.toe_len;
 
-                // Pole targets
                 glm::vec3 fwd3(fwd_x, fwd_y, 0.0f);
                 pose.joints[(int)J::POLE_KNEE_L]  = pose.joints[(int)J::L_LOWER_LEG] + fwd3 * 0.25f;
                 pose.joints[(int)J::POLE_KNEE_R]  = pose.joints[(int)J::R_LOWER_LEG] + fwd3 * 0.25f;
@@ -1198,7 +1035,6 @@ void register_rig_systems(flecs::world &ecs,
                 pose.joints[(int)J::POLE_ELBOW_L] = pose.joints[(int)J::L_LOWER_ARM] - chest_fwd3 * 0.25f;
                 pose.joints[(int)J::POLE_ELBOW_R] = pose.joints[(int)J::R_LOWER_ARM] - chest_fwd3 * 0.25f;
 
-                // IK goals = current end-effector positions
                 pose.joints[(int)J::IK_FOOT_L] = pose.joints[(int)J::L_FOOT];
                 pose.joints[(int)J::IK_FOOT_R] = pose.joints[(int)J::R_FOOT];
                 pose.joints[(int)J::IK_HAND_L] = pose.joints[(int)J::L_HAND];
@@ -1208,11 +1044,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 7.5 RigTransformSystem
-    //     Computes per-joint glm::mat4 transforms from finalized joint positions.
-    //     Runs AFTER SkeletonFinaliseSystem, BEFORE AnimationLogSystem.
-    // =========================================================================
     ecs.system("RigTransformSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -1232,12 +1063,10 @@ void register_rig_systems(flecs::world &ecs,
                 glm::vec3 chest_fwd(cosf(cf), sinf(cf), 0.0f);
                 glm::vec3 chest_rght(-sinf(cf), cosf(cf), 0.0f);
 
-                // --- A. ROOT ---
                 xforms.bones[(int)J::ROOT] = make_bone_mat4(
                     vis_rght, vis_fwd, glm::vec3(0.0f, 0.0f, 1.0f),
                     jt[(int)J::ROOT]);
 
-                // --- B. Spine chain (table-driven with chest_blend) ---
                 struct SpineEntry { Joint self; Joint child; float chest_blend; };
                 static constexpr SpineEntry spine_chain[] = {
                     { J::HIPS,     J::SPINE_01, 0.0f },
@@ -1250,7 +1079,6 @@ void register_rig_systems(flecs::world &ecs,
                     glm::vec3 bone_dir = jt[(int)e.child] - jt[(int)e.self];
                     float blen = glm::length(bone_dir);
                     if (blen < 1e-5f) {
-                        // Degenerate — identity rotation at position
                         glm::mat4 m(1.0f);
                         m[3] = glm::vec4(jt[(int)e.self], 1.0f);
                         xforms.bones[(int)e.self] = m;
@@ -1258,14 +1086,13 @@ void register_rig_systems(flecs::world &ecs,
                     }
                     glm::vec3 ref = glm::mix(vis_fwd, chest_fwd, e.chest_blend);
                     float ref_len = glm::length(ref);
-                    if (ref_len < 1e-5f) ref = vis_fwd; // opposing facings fallback
+                    if (ref_len < 1e-5f) ref = vis_fwd;
                     else ref /= ref_len;
 
                     glm::vec3 right, fwd, up;
                     build_bone_basis(bone_dir, ref, right, fwd, up);
                     xforms.bones[(int)e.self] = make_bone_mat4(right, fwd, up, jt[(int)e.self]);
                 }
-                // HEAD: point toward HEAD_END
                 {
                     glm::vec3 bone_dir = jt[(int)J::HEAD_END] - jt[(int)J::HEAD];
                     float blen = glm::length(bone_dir);
@@ -1279,14 +1106,12 @@ void register_rig_systems(flecs::world &ecs,
                         xforms.bones[(int)J::HEAD] = make_bone_mat4(right, fwd, up, jt[(int)J::HEAD]);
                     }
                 }
-                // HEAD_END: copy HEAD rotation, override position
                 {
                     glm::mat4 m = xforms.bones[(int)J::HEAD];
                     m[3] = glm::vec4(jt[(int)J::HEAD_END], 1.0f);
                     xforms.bones[(int)J::HEAD_END] = m;
                 }
 
-                // --- C. Limbs (bend-plane-normal method) ---
                 auto compute_limb_chain = [&](Joint upper, Joint lower, Joint end,
                                               Joint toe, const glm::vec3 &fallback_perp,
                                               bool is_leg) {
@@ -1295,7 +1120,6 @@ void register_rig_systems(flecs::world &ecs,
                     float upper_len = glm::length(upper_dir);
                     float lower_len = glm::length(lower_dir);
 
-                    // Bend plane normal from cross of bone directions
                     glm::vec3 bend_normal = fallback_perp;
                     if (upper_len > 1e-5f && lower_len > 1e-5f) {
                         glm::vec3 bn = glm::cross(
@@ -1304,12 +1128,11 @@ void register_rig_systems(flecs::world &ecs,
                         if (bn_len > 1e-5f) bend_normal = bn / bn_len;
                     }
 
-                    // Upper bone
                     if (upper_len > 1e-5f) {
                         glm::vec3 up = upper_dir / upper_len;
                         glm::vec3 right = bend_normal;
                         glm::vec3 fwd = glm::cross(up, right);
-                        right = glm::cross(fwd, up); // re-orthogonalize
+                        right = glm::cross(fwd, up);
                         xforms.bones[(int)upper] = make_bone_mat4(right, fwd, up, jt[(int)upper]);
                     } else {
                         glm::mat4 m(1.0f);
@@ -1317,18 +1140,14 @@ void register_rig_systems(flecs::world &ecs,
                         xforms.bones[(int)upper] = m;
                     }
 
-                    // Lower bone
                     if (lower_len > 1e-5f) {
                         glm::vec3 up = lower_dir / lower_len;
-                        // Project bend_normal perpendicular to lower bone direction
                         glm::vec3 right = bend_normal - glm::dot(bend_normal, up) * up;
                         float rlen = glm::length(right);
                         if (rlen < 1e-5f) {
-                            // Fallback: project fallback_perp
                             right = fallback_perp - glm::dot(fallback_perp, up) * up;
                             rlen = glm::length(right);
                             if (rlen < 1e-5f) {
-                                // Arbitrary perpendicular
                                 glm::vec3 alt = (std::abs(up.z) < 0.9f)
                                     ? glm::vec3(0.0f, 0.0f, 1.0f)
                                     : glm::vec3(1.0f, 0.0f, 0.0f);
@@ -1345,9 +1164,7 @@ void register_rig_systems(flecs::world &ecs,
                         xforms.bones[(int)lower] = m;
                     }
 
-                    // End effector (foot or hand)
                     if (is_leg) {
-                        // Foot: forward = toe direction, up = world Z
                         glm::vec3 toe_dir = jt[(int)toe] - jt[(int)end];
                         float toe_len = glm::length(toe_dir);
                         glm::vec3 fwd = (toe_len > 1e-5f)
@@ -1359,12 +1176,10 @@ void register_rig_systems(flecs::world &ecs,
                         else right /= rlen;
                         up = glm::cross(right, fwd);
                         xforms.bones[(int)end] = make_bone_mat4(right, fwd, up, jt[(int)end]);
-                        // Toe: copy foot rotation at toe position
                         glm::mat4 m = xforms.bones[(int)end];
                         m[3] = glm::vec4(jt[(int)toe], 1.0f);
                         xforms.bones[(int)toe] = m;
                     } else {
-                        // Hand: continue forearm direction
                         if (lower_len > 1e-5f) {
                             glm::mat4 m = xforms.bones[(int)lower];
                             m[3] = glm::vec4(jt[(int)end], 1.0f);
@@ -1377,20 +1192,15 @@ void register_rig_systems(flecs::world &ecs,
                     }
                 };
 
-                // Left leg
                 compute_limb_chain(J::L_UPPER_LEG, J::L_LOWER_LEG, J::L_FOOT, J::L_TOE,
                     glm::vec3(-vis_rght.x, -vis_rght.y, 0.0f), true);
-                // Right leg
                 compute_limb_chain(J::R_UPPER_LEG, J::R_LOWER_LEG, J::R_FOOT, J::R_TOE,
                     glm::vec3(vis_rght.x, vis_rght.y, 0.0f), true);
-                // Left arm
                 compute_limb_chain(J::L_UPPER_ARM, J::L_LOWER_ARM, J::L_HAND, J::L_HAND,
                     glm::vec3(-chest_fwd.x, -chest_fwd.y, 0.0f), false);
-                // Right arm
                 compute_limb_chain(J::R_UPPER_ARM, J::R_LOWER_ARM, J::R_HAND, J::R_HAND,
                     glm::vec3(-chest_fwd.x, -chest_fwd.y, 0.0f), false);
 
-                // --- D. Clavicles ---
                 auto compute_clavicle = [&](Joint clav, Joint upper_arm,
                                             const glm::vec3 &ref) {
                     glm::vec3 bone_dir = jt[(int)upper_arm] - jt[(int)clav];
@@ -1408,7 +1218,6 @@ void register_rig_systems(flecs::world &ecs,
                 compute_clavicle(J::L_CLAVICLE, J::L_UPPER_ARM, chest_fwd);
                 compute_clavicle(J::R_CLAVICLE, J::R_UPPER_ARM, -chest_fwd);
 
-                // --- E. IK Virtual Joints (identity rotation at position) ---
                 static constexpr Joint ik_joints[] = {
                     J::POLE_KNEE_L, J::POLE_KNEE_R,
                     J::POLE_ELBOW_L, J::POLE_ELBOW_R,
@@ -1426,11 +1235,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 7.75 MeshGenerationSystem
-    //      Generates procedural bone cage meshes from RigTransforms + ActorConfig.
-    //      Runs AFTER RigTransformSystem, BEFORE AnimationLogSystem.
-    // =========================================================================
     ecs.system("MeshGenerationSystem")
         .kind(flecs::PostUpdate)
         .run([&ecs](flecs::iter &) {
@@ -1447,9 +1251,8 @@ void register_rig_systems(flecs::world &ecs,
                 const auto &b = xforms.bones;
                 const auto &jt = pose.joints;
 
-                glm::vec4 body(0.55f, 0.52f, 0.48f, 0.1f);  // warm grey, low sheen
+                glm::vec4 body(0.55f, 0.52f, 0.48f, 0.1f);
 
-                // --- SPINE CHAIN (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],     jt[(int)J::SPINE_01],
                                  cfg.torso_radius * 1.3f, cfg.torso_radius * 1.0f, 6, body);
                 append_bone_cage(v, b[(int)J::SPINE_01], jt[(int)J::SPINE_02],
@@ -1459,13 +1262,11 @@ void register_rig_systems(flecs::world &ecs,
                 append_bone_cage(v, b[(int)J::CHEST],    jt[(int)J::NECK],
                                  cfg.torso_radius * 1.4f, cfg.neck_radius,         6, body);
 
-                // --- HEAD CHAIN (2 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::NECK],     jt[(int)J::HEAD],
                                  cfg.head_radius * 0.4f,  cfg.head_radius * 0.6f, 6, body);
                 append_bone_cage(v, b[(int)J::HEAD],     jt[(int)J::HEAD_END],
                                  cfg.head_radius * 0.6f,  cfg.head_radius * 0.3f, 6, body);
 
-                // --- LEFT LEG (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::L_UPPER_LEG],
                                  cfg.leg_radius * 1.4f,       cfg.leg_radius * 1.4f, 6, body);
                 append_bone_cage(v, b[(int)J::L_UPPER_LEG],   jt[(int)J::L_LOWER_LEG],
@@ -1475,7 +1276,6 @@ void register_rig_systems(flecs::world &ecs,
                 append_bone_cage(v, b[(int)J::L_FOOT],        jt[(int)J::L_TOE],
                                  cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 6, body);
 
-                // --- RIGHT LEG (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::HIPS],          jt[(int)J::R_UPPER_LEG],
                                  cfg.leg_radius * 1.4f,       cfg.leg_radius * 1.4f, 6, body);
                 append_bone_cage(v, b[(int)J::R_UPPER_LEG],   jt[(int)J::R_LOWER_LEG],
@@ -1485,7 +1285,6 @@ void register_rig_systems(flecs::world &ecs,
                 append_bone_cage(v, b[(int)J::R_FOOT],        jt[(int)J::R_TOE],
                                  cfg.leg_radius * 0.6f,       cfg.leg_radius * 0.3f, 6, body);
 
-                // --- LEFT ARM (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::L_CLAVICLE],
                                  cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.5f, 6, body);
                 append_bone_cage(v, b[(int)J::L_CLAVICLE],    jt[(int)J::L_UPPER_ARM],
@@ -1495,7 +1294,6 @@ void register_rig_systems(flecs::world &ecs,
                 append_bone_cage(v, b[(int)J::L_LOWER_ARM],   jt[(int)J::L_HAND],
                                  cfg.arm_radius * 1.0f,       cfg.arm_radius * 0.75f, 6, body);
 
-                // --- RIGHT ARM (4 segments, 6-sided) ---
                 append_bone_cage(v, b[(int)J::CHEST],         jt[(int)J::R_CLAVICLE],
                                  cfg.arm_radius * 1.5f,       cfg.arm_radius * 1.5f, 6, body);
                 append_bone_cage(v, b[(int)J::R_CLAVICLE],    jt[(int)J::R_UPPER_ARM],
@@ -1507,10 +1305,6 @@ void register_rig_systems(flecs::world &ecs,
             });
         });
 
-    // =========================================================================
-    // 9. AnimationLogSystem
-    //    JSONL frame telemetry — runs after MeshGenerationSystem.
-    // =========================================================================
     ecs.system("AnimationLogSystem")
         .kind(flecs::PostUpdate)
         .run([&anim_log, &ecs, &camera, player_entity](flecs::iter &) {

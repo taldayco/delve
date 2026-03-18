@@ -44,6 +44,6 @@ void TaskSystem::worker_loop() {
     active_count_.fetch_add(1);
     task();
     active_count_.fetch_sub(1);
-    cv_.notify_all(); // wake is_idle() waiters if any
+    cv_.notify_all();
   }
 }

@@ -15,7 +15,6 @@ std::atomic<bool> g_emergency_shutdown{false};
 static std::atomic<bool> s_watchdog_running{false};
 static std::thread       s_watchdog_thread;
 
-// Read current process RSS in bytes. Returns 0 on failure.
 static size_t get_rss_bytes() {
 #ifdef __linux__
   std::ifstream status("/proc/self/status");
@@ -24,9 +23,8 @@ static size_t get_rss_bytes() {
   std::string line;
   while (std::getline(status, line)) {
     if (line.rfind("VmRSS:", 0) == 0) {
-      // Format: "VmRSS:    <number> kB"
       size_t kb = 0;
-      const char *p = line.c_str() + 6; // skip "VmRSS:"
+      const char *p = line.c_str() + 6;
       while (*p == ' ' || *p == '\t') ++p;
       while (*p >= '0' && *p <= '9') {
         kb = kb * 10 + (*p - '0');
@@ -39,7 +37,6 @@ static size_t get_rss_bytes() {
   return 0;
 }
 
-// Get total system RAM in bytes. Returns 0 on failure.
 static size_t get_total_ram() {
 #ifdef __linux__
   long pages = sysconf(_SC_PHYS_PAGES);
@@ -52,14 +49,14 @@ static size_t get_total_ram() {
 
 void start_watchdog(size_t rss_limit_bytes) {
   if (s_watchdog_running.exchange(true))
-    return; // already running
+    return;
 
   if (rss_limit_bytes == 0) {
     size_t total = get_total_ram();
     if (total > 0)
       rss_limit_bytes = (size_t)(total * 0.75);
     else
-      rss_limit_bytes = (size_t)2 * 1024 * 1024 * 1024; // fallback: 2 GB
+      rss_limit_bytes = (size_t)2 * 1024 * 1024 * 1024;
   }
 
   size_t limit = rss_limit_bytes;
@@ -74,7 +71,6 @@ void start_watchdog(size_t rss_limit_bytes) {
                         rss / (1024 * 1024), limit / (1024 * 1024));
         g_emergency_shutdown.store(true, std::memory_order_release);
 
-        // Grace period to allow log to flush
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         std::quick_exit(1);
       }
@@ -86,7 +82,7 @@ void start_watchdog(size_t rss_limit_bytes) {
 
 void stop_watchdog() {
   if (!s_watchdog_running.exchange(false))
-    return; // wasn't running
+    return;
   if (s_watchdog_thread.joinable())
     s_watchdog_thread.join();
   SDL_Log("Watchdog: stopped");

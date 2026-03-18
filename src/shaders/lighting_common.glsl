@@ -11,7 +11,7 @@ layout(set = 2, binding = 0) readonly buffer LightBuffer {
 };
 
 layout(set = 2, binding = 1) readonly buffer LightGridBuffer {
-    uvec2 light_grid[];  // (offset, count) per cluster
+    uvec2 light_grid[];
 };
 
 layout(set = 2, binding = 2) readonly buffer IndexBuffer {
@@ -62,8 +62,10 @@ vec3 apply_star_ambient(vec3 color, vec3 normal, float sheen) {
     return color + star_light.rgb * star_int * sheen;
 }
 
-// Clustered point lighting with brute-force fallback for isometric projection.
-// Requires COORD_FRAGMENT_STAGE (cluster_index() from coord.glsl).
+// TODO(V12): Linear depth slicing is suboptimal under isometric projection.
+// Fix: project world-space light positions to view-space XY and use 2D spatial
+// hashing instead of depth-based slicing. This would eliminate the brute-force
+// fallback path below. Deferred until light counts exceed ~128.
 vec3 clustered_point_lighting(vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3 result = vec3(0.0);
 
@@ -72,8 +74,6 @@ vec3 clustered_point_lighting(vec3 frag_pos, vec3 normal, vec3 base_color) {
     uint offset = grid_entry.x;
     uint count  = grid_entry.y;
 
-    // Cluster depth slicing is suboptimal for the isometric view matrix,
-    // so some clusters miss lights. Fall back to brute-force when empty.
     if (count == 0u && LIGHT_COUNT > 0u) {
         uint total = min(LIGHT_COUNT, 128u);
         for (uint i = 0u; i < total; ++i) {
@@ -89,6 +89,6 @@ vec3 clustered_point_lighting(vec3 frag_pos, vec3 normal, vec3 base_color) {
     return result;
 }
 
-#endif // PBR_LIGHTING_ONLY
+#endif
 
-#endif // LIGHTING_COMMON_GLSL
+#endif

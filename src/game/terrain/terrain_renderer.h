@@ -56,18 +56,13 @@ public:
   SDL_GPUBuffer           *get_light_grid_ssbo()   const { return light_grid_ssbo;   }
   SDL_GPUBuffer           *get_global_index_ssbo() const { return global_index_ssbo; }
 
-  // Called from on_pre_frame_game (no frame cmd buf open). Releases and recreates
-  // the depth texture if desired_depth_w/h differ from current depth_w/h.
-  // Caller must have already called SDL_WaitForGPUIdle before invoking this.
   void prepare_frame_resources(SDL_GPUDevice *device);
 
-  // Returns true if the depth texture needs to be (re)created before the next frame.
   bool depth_needs_rebuild() const {
     return desired_depth_w > 0 && desired_depth_h > 0 &&
            (desired_depth_w != depth_w || desired_depth_h != depth_h);
   }
 
-  // Requested depth texture dimensions (set by begin_render_pass from swapchain size).
   uint32_t desired_depth_w = 0;
   uint32_t desired_depth_h = 0;
 
@@ -80,7 +75,6 @@ public:
   uint32_t cluster_tiles_x() const { return cluster_grid_w; }
   uint32_t cluster_tiles_y() const { return cluster_grid_y; }
 
-  // Current depth texture dimensions (0 until first prepare_frame_resources call).
   uint32_t depth_width()  const { return depth_w; }
   uint32_t depth_height() const { return depth_h; }
 
@@ -153,7 +147,7 @@ private:
   SDL_GPUBuffer *light_grid_ssbo    = nullptr;
   SDL_GPUBuffer *global_index_ssbo  = nullptr;
   SDL_GPUBuffer *cull_counter_ssbo  = nullptr;
-  SDL_GPUBuffer *dummy_ssbo         = nullptr; // 4-byte fallback; always valid after init
+  SDL_GPUBuffer *dummy_ssbo         = nullptr;
 
 
 

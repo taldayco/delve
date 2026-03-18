@@ -198,8 +198,6 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.cam_world_y = cam_y;
   u.cam_world_z = cam_z;
 
-  // Extract view direction from the view matrix (row 2 = depth axis).
-  // Negate so it points from scene toward camera.
   glm::vec3 depth_dir(view[0][2], view[1][2], view[2][2]);
   glm::vec3 vdir = -glm::normalize(depth_dir);
   u.view_dir_x = vdir.x;

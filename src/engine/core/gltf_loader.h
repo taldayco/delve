@@ -6,11 +6,11 @@
 #include <glm/gtc/quaternion.hpp>
 
 struct GltfVertex {
-    glm::vec3 position;    // 12B (offset 0)
-    glm::vec3 normal;      // 12B (offset 12)
-    glm::vec2 texcoord;    //  8B (offset 24)
-    glm::vec4 tangent;     // 16B (offset 32, xyz=tangent, w=handedness)
-};  // 48 bytes total
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 texcoord;
+    glm::vec4 tangent;
+};
 static_assert(sizeof(GltfVertex) == 48, "GltfVertex must be 48 bytes");
 
 struct GltfMeshData {
@@ -22,9 +22,9 @@ struct GltfMeshData {
 
 struct GltfTextureData {
     std::string          name;
-    std::vector<uint8_t> pixels;  // RGBA8
+    std::vector<uint8_t> pixels;
     int width = 0, height = 0;
-    bool srgb = true;  // true for base_color, false for normal/ORM
+    bool srgb = true;
 };
 
 struct GltfAsset {
@@ -36,21 +36,19 @@ struct GltfAsset {
 
 GltfAsset load_gltf(const std::string &path);
 
-// ---- Skinned mesh types ----
-
 struct SkinnedVertex {
-    glm::vec3    position;   // 12B
-    glm::vec3    normal;     // 12B
-    glm::vec2    texcoord;   //  8B
-    glm::vec4    tangent;    // 16B
-    uint8_t      joints[4];  //  4B
-    float        weights[4]; // 16B
-};  // 68 bytes total
+    glm::vec3    position;
+    glm::vec3    normal;
+    glm::vec2    texcoord;
+    glm::vec4    tangent;
+    uint8_t      joints[4];
+    float        weights[4];
+};
 static_assert(sizeof(SkinnedVertex) == 68, "SkinnedVertex must be 68 bytes");
 
 struct GltfBone {
     std::string  name;
-    int          parent_index;           // -1 for root
+    int          parent_index;
     glm::mat4    inverse_bind_matrix;
     glm::mat4    local_rest_transform;
 };
@@ -58,8 +56,6 @@ struct GltfBone {
 struct GltfSkeleton {
     std::vector<GltfBone> bones;
     int                   root_bone_index = 0;
-    // Transform from non-joint ancestor nodes (e.g. Armature object).
-    // Applied to root bones before hierarchy propagation.
     glm::mat4             armature_transform{1.0f};
 };
 
@@ -72,7 +68,7 @@ struct GltfAnimKeyframe {
 
 struct GltfAnimChannel {
     int                          bone_index;
-    std::string                  path;   // "translation" | "rotation" | "scale"
+    std::string                  path;
     std::vector<float>           times;
     std::vector<glm::vec3>       translations;
     std::vector<glm::quat>       rotations;
@@ -97,9 +93,7 @@ struct GltfSkinnedAsset {
     std::vector<GltfTextureData>     textures;
     GltfSkeleton                     skeleton;
     std::vector<GltfAnimationClip>   animations;
-    // Flat inverse bind matrix array (one per bone, same order as skeleton.bones)
     std::vector<glm::mat4>           inverse_bind_matrices;
-    // Root scene node transform (captures Blender Y→Z-up +90° X rotation, etc.)
     glm::mat4                        root_transform{1.0f};
     bool        ok = false;
     std::string error;

@@ -45,7 +45,6 @@ void InstancedTerrain::upload(SDL_GPUDevice *device) {
         return;
     }
 
-    // Release old SSBO if present
     if (instance_ssbo) {
         SDL_ReleaseGPUBuffer(device, instance_ssbo);
         instance_ssbo = nullptr;

@@ -13,7 +13,6 @@
 
 
 
-// Helper: build a compute pipeline from SPIR-V on disk (used by init and hot-swap).
 static SDL_GPUComputePipeline *build_compute_pipeline(SDL_GPUDevice *device,
                                                        const char *path,
                                                        int num_uniform_buffers,
@@ -78,9 +77,6 @@ void TerrainRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
   init_pbr_pipeline(device, window);
   init_compute_pipelines(device);
 
-  // Small dummy buffer used as a valid fallback for unbound SSBOs.
-  // The terrain shader declares 3 fragment storage buffers; all 3 must be
-  // bound even when cluster buffers haven't been created yet.
   dummy_ssbo = gpu_create_zeroed_buffer(device, 4,
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
@@ -146,7 +142,6 @@ void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window 
     terrain_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pi);
 
     asset_manager->register_pipeline("terrain", "terrain.vert", "terrain.frag");
-    // Shaders are owned by the asset manager; do NOT release them here.
   }
 
 
@@ -191,7 +186,6 @@ void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window 
       lava_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pi);
       asset_manager->register_pipeline("lava", "lava.vert", "lava.frag");
     }
-    // Shaders owned by asset_manager.
   }
 
 
@@ -241,7 +235,6 @@ void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window 
       contour_pipeline = SDL_CreateGPUGraphicsPipeline(device, &pi);
       asset_manager->register_pipeline("contour", "contour.vert", "contour.frag");
     }
-    // Shaders owned by asset_manager.
   }
 
   SDL_Log("TerrainRenderer: Graphics pipelines created");
@@ -282,10 +275,10 @@ void TerrainRenderer::init_instanced_pipeline(SDL_GPUDevice *device, SDL_Window 
 
   SDL_GPUShader *vert = asset_manager->load_shader(
       "instanced_terrain.vert", shader_dir + "/instanced_terrain.vert.glsl.spv",
-      SDL_GPU_SHADERSTAGE_VERTEX, 1, 1);  // 1 UBO, 1 SSBO (instance buffer)
+      SDL_GPU_SHADERSTAGE_VERTEX, 1, 1);
   SDL_GPUShader *frag = asset_manager->load_shader(
       "instanced_terrain.frag", shader_dir + "/instanced_terrain.frag.glsl.spv",
-      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);  // 1 UBO, 3 SSBOs
+      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);
 
   if (!vert || !frag) {
     SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
@@ -293,15 +286,14 @@ void TerrainRenderer::init_instanced_pipeline(SDL_GPUDevice *device, SDL_Window 
     return;
   }
 
-  // GltfVertex layout: position(vec3) + normal(vec3) — only first 2 attrs used
   SDL_GPUVertexBufferDescription vbuf_desc = {};
   vbuf_desc.slot       = 0;
-  vbuf_desc.pitch      = 48;  // sizeof(GltfVertex)
+  vbuf_desc.pitch      = 48;
   vbuf_desc.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
   SDL_GPUVertexAttribute attrs[2] = {};
-  attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0  };   // position
-  attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 12 };   // normal
+  attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0  };
+  attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 12 };
 
   SDL_GPUColorTargetDescription color_desc = {};
   color_desc.format = swapchain_format;
@@ -347,7 +339,6 @@ void TerrainRenderer::init_pbr_pipeline(SDL_GPUDevice *device, SDL_Window *windo
     return;
   }
 
-  // Same BasaltVertex layout as terrain_pipeline — drop-in replacement
   SDL_GPUVertexBufferDescription vbuf_desc = {};
   vbuf_desc.slot       = 0;
   vbuf_desc.pitch      = sizeof(BasaltVertex);
@@ -526,7 +517,6 @@ void TerrainRenderer::rebuild_dirty_pipelines(SDL_Window *window) {
     return SDL_CreateGPUGraphicsPipeline(gpu_device, &pi);
   });
 
-  // Compute pipelines
   if (asset_manager->pipeline_needs_rebuild("cluster_gen")) {
     SDL_WaitForGPUIdle(gpu_device);
     if (cluster_gen_pipeline) { SDL_ReleaseGPUComputePipeline(gpu_device, cluster_gen_pipeline); cluster_gen_pipeline = nullptr; }
@@ -610,10 +600,7 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
 
 
 void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh) {
-  // Caller is responsible for SDL_WaitForGPUIdle before calling this.
   release_buffers(device);
-
-  // --- Gather all CPU data first so we can size transfer buffers exactly ---
 
   std::vector<BasaltVertex> all_verts;
   std::vector<uint32_t>     all_indices;
@@ -639,15 +626,12 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
   }
   basalt_total_index_count = (uint32_t)all_indices.size();
 
-  // --- Compute total staging size and create one shared transfer buffer ---
-
   uint32_t basalt_vbo_sz    = (uint32_t)(all_verts.size()                    * sizeof(BasaltVertex));
   uint32_t basalt_ibo_sz    = (uint32_t)(all_indices.size()                  * sizeof(uint32_t));
   uint32_t lava_vbo_sz      = (uint32_t)(mesh.lava_vertices.size()           * sizeof(GpuLavaVertex));
   uint32_t lava_ibo_sz      = (uint32_t)(mesh.lava_indices.size()            * sizeof(uint32_t));
   uint32_t contour_vbo_sz   = (uint32_t)(mesh.contour_vertices.size()        * sizeof(ContourVertex));
 
-  // Align each section to 4 bytes so GPU buffer offsets are valid.
   auto align4 = [](uint32_t v) { return (v + 3u) & ~3u; };
 
   uint32_t off_basalt_vbo  = 0;
@@ -662,8 +646,7 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
     return;
   }
 
-  // Hard cap: refuse to upload meshes that would blow out GPU/CPU memory.
-  constexpr uint32_t MAX_TRANSFER_SZ = 128u * 1024u * 1024u; // 128 MB
+  constexpr uint32_t MAX_TRANSFER_SZ = 128u * 1024u * 1024u;
   if (total_sz > MAX_TRANSFER_SZ) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
                  "TerrainRenderer::upload_mesh: mesh too large (%u bytes > %u limit), skipping",
@@ -691,7 +674,6 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
     return;
   }
 
-  // Copy all sections into the staging buffer.
   if (basalt_vbo_sz)  SDL_memcpy(mapped + off_basalt_vbo,  all_verts.data(),               basalt_vbo_sz);
   if (basalt_ibo_sz)  SDL_memcpy(mapped + off_basalt_ibo,  all_indices.data(),              basalt_ibo_sz);
   if (lava_vbo_sz)    SDL_memcpy(mapped + off_lava_vbo,    mesh.lava_vertices.data(),       lava_vbo_sz);
@@ -699,8 +681,6 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
   if (contour_vbo_sz) SDL_memcpy(mapped + off_contour_vbo, mesh.contour_vertices.data(),    contour_vbo_sz);
 
   SDL_UnmapGPUTransferBuffer(device, transfer);
-
-  // --- Create all GPU buffers ---
 
   if (basalt_vbo_sz && basalt_ibo_sz) {
     basalt_vbo = gpu_create_buffer(device, basalt_vbo_sz,  SDL_GPU_BUFFERUSAGE_VERTEX);
@@ -718,8 +698,6 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
     contour_vbo          = gpu_create_buffer(device, contour_vbo_sz, SDL_GPU_BUFFERUSAGE_VERTEX);
     contour_vertex_count = (uint32_t)mesh.contour_vertices.size();
   }
-
-  // --- One command buffer, one copy pass, all uploads ---
 
   SDL_GPUCommandBuffer *cmd  = SDL_AcquireGPUCommandBuffer(device);
   SDL_GPUCopyPass      *copy = SDL_BeginGPUCopyPass(cmd);
@@ -740,11 +718,8 @@ void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh
   SDL_EndGPUCopyPass(copy);
   SDL_SubmitGPUCommandBuffer(cmd);
 
-  // One final wait so the transfer buffer is safe to release.
   SDL_WaitForGPUIdle(device);
   SDL_ReleaseGPUTransferBuffer(device, transfer);
-
-  // --- Register buffers with asset manager ---
 
   if (asset_manager) {
     if (basalt_vbo)  asset_manager->register_buffer("basalt_vbo",  basalt_vbo);
@@ -786,11 +761,9 @@ void TerrainRenderer::stage_instanced_draw(SDL_GPURenderPass *pass,
   SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
   SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
 
-  // Vertex storage: instance SSBO at slot 0
   SDL_GPUBuffer *vert_storage[1] = { instanced_terrain->get_instance_ssbo() };
   SDL_BindGPUVertexStorageBuffers(pass, 0, vert_storage, 1);
 
-  // Fragment storage: lights, grid, indices
   SDL_GPUBuffer *frag_storage[3] = {
     point_light_ssbo  ? point_light_ssbo  : dummy_ssbo,
     light_grid_ssbo   ? light_grid_ssbo   : dummy_ssbo,
@@ -821,7 +794,6 @@ void TerrainRenderer::upload_lights(SDL_GPUCommandBuffer *cmd,
   void *dst_ptr   = uploader.alloc(byte_size, &offset);
 
   if (!dst_ptr) {
-    // UploadManager overflow — fall back to a one-shot transfer buffer.
     SDL_GPUTransferBufferCreateInfo ti = {};
     ti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     ti.size  = byte_size;
@@ -973,9 +945,8 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
   cu.screen_w      = u.grid_size_x * u.tile_px;
   cu.screen_h      = u.grid_size_y * u.tile_px;
   cu.light_count_f = (float)current_light_count;
-  // Approximate world-to-NDC scale for light radius: use the smaller ortho axis scale
   glm::mat4 proj = u.projection;
-  cu.ndc_radius_scale = 0.0f; // unused — AABB-AABB test in shader
+  cu.ndc_radius_scale = 0.0f;
   cu._pad1 = cu._pad2 = 0.0f;
   glm::mat4 view_proj = u.projection * u.view;
 
@@ -1012,7 +983,6 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
       && gltf_column_vbo && gltf_column_ibo && gltf_column_index_count > 0) {
     stage_instanced_draw(pass, cmd, uniforms);
   } else if (basalt_vbo && basalt_ibo && basalt_total_index_count > 0 && terrain_pipeline) {
-    // Select pipeline: PBR or Lambertian
     SDL_GPUGraphicsPipeline *active_pipeline =
         (use_pbr && pbr_terrain_pipeline) ? pbr_terrain_pipeline : terrain_pipeline;
     SDL_BindGPUGraphicsPipeline(pass, active_pipeline);
@@ -1182,7 +1152,6 @@ void TerrainRenderer::prepare_frame_resources(SDL_GPUDevice *device) {
   if (desired_depth_w == 0 || desired_depth_h == 0) return;
   if (depth_texture && depth_w == desired_depth_w && depth_h == desired_depth_h) return;
 
-  // Caller (on_pre_frame_game) has already called SDL_WaitForGPUIdle.
   if (depth_texture) {
     SDL_ReleaseGPUTexture(device, depth_texture);
     depth_texture = nullptr;
@@ -1219,7 +1188,6 @@ void TerrainRenderer::release_buffers(SDL_GPUDevice *device) {
 }
 
 void TerrainRenderer::release_cluster_buffers(SDL_GPUDevice *device) {
-  // Release through asset manager when available so the registry stays consistent.
   auto rel = [&](SDL_GPUBuffer *&buf, const char *key) {
     if (!buf) return;
     if (asset_manager) { asset_manager->release_buffer(key); }
@@ -1254,8 +1222,6 @@ void TerrainRenderer::cleanup(SDL_GPUDevice *device) {
   if (pbr_terrain_pipeline)          { SDL_ReleaseGPUGraphicsPipeline(device, pbr_terrain_pipeline);          pbr_terrain_pipeline          = nullptr; }
   if (cluster_gen_pipeline)     { SDL_ReleaseGPUComputePipeline(device, cluster_gen_pipeline);         cluster_gen_pipeline     = nullptr; }
   if (light_culling_pipeline)   { SDL_ReleaseGPUComputePipeline(device, light_culling_pipeline);       light_culling_pipeline   = nullptr; }
-  // Shaders are owned by AssetManager and released via asset_manager.clear().
-
   initialized = false;
   SDL_Log("TerrainRenderer: Cleaned up");
 }

@@ -51,7 +51,6 @@ public:
   static int reg_##name = TestRegistry::add(#name, test_fn_##name);            \
   static bool test_fn_##name()
 
-// Assertion macros
 #define EXPECT_TRUE(expr)                                                      \
   do { if (!(expr)) {                                                          \
     fprintf(stderr, "  FAIL: %s:%d: %s\n", __FILE__, __LINE__, #expr);         \

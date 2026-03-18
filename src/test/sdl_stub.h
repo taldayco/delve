@@ -1,6 +1,4 @@
 #pragma once
-// Stub for SDL functions used by terrain code in headless builds.
-// Only SDL_Log is needed — terrain code doesn't use GPU/window functions.
 
 #include <cstdio>
 #include <cstdarg>
@@ -9,7 +7,6 @@
 #ifndef SDL_STUB_DEFINED
 #define SDL_STUB_DEFINED
 
-// Minimal type stubs
 using Sint64 = int64_t;
 using Uint64 = uint64_t;
 using Uint32 = uint32_t;
@@ -32,7 +29,6 @@ inline void SDL_LogError(int, const char *fmt, ...) {
 
 inline Uint64 SDL_GetTicks() { return 0; }
 
-// Category constants
 #define SDL_LOG_CATEGORY_APPLICATION 0
 
-#endif // SDL_STUB_DEFINED
+#endif

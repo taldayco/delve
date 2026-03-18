@@ -18,7 +18,6 @@ void AgentServer::register_command(const std::string &cmd, CommandHandler handle
 }
 
 bool AgentServer::start() {
-  // Remove stale socket
   unlink(socket_path.c_str());
 
   listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -27,7 +26,6 @@ bool AgentServer::start() {
     return false;
   }
 
-  // Set non-blocking
   int flags = fcntl(listen_fd, F_GETFL, 0);
   fcntl(listen_fd, F_SETFL, flags | O_NONBLOCK);
 
@@ -57,12 +55,10 @@ bool AgentServer::start() {
 void AgentServer::poll() {
   if (!running) return;
 
-  // Accept new client if none connected
   if (client_fd < 0) {
     accept_client();
   }
 
-  // Read from connected client
   if (client_fd >= 0) {
     process_client_data();
   }
@@ -77,11 +73,9 @@ void AgentServer::accept_client() {
     return;
   }
 
-  // Set non-blocking
   int flags = fcntl(fd, F_GETFL, 0);
   fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 
-  // Only one client at a time
   if (client_fd >= 0) {
     close(client_fd);
   }
@@ -97,7 +91,6 @@ void AgentServer::process_client_data() {
     if (n > 0) {
       read_buffer.append(buf, n);
     } else if (n == 0) {
-      // Client disconnected
       SDL_Log("AgentServer: client disconnected");
       close(client_fd);
       client_fd = -1;
@@ -115,7 +108,6 @@ void AgentServer::process_client_data() {
     }
   }
 
-  // Process complete lines
   size_t pos;
   while ((pos = read_buffer.find('\n')) != std::string::npos) {
     std::string line = read_buffer.substr(0, pos);
@@ -127,17 +119,12 @@ void AgentServer::process_client_data() {
 }
 
 void AgentServer::handle_message(const std::string &line) {
-  // Minimal JSON parsing — extract "cmd" and "params" fields
-  // Format: {"cmd":"name","params":{...}}
-
-  // Find cmd value
   auto cmd_pos = line.find("\"cmd\"");
   if (cmd_pos == std::string::npos) {
     send_response("{\"ok\":false,\"error\":\"missing cmd field\"}\n");
     return;
   }
 
-  // Extract cmd string value
   auto colon = line.find(':', cmd_pos + 5);
   auto quote1 = line.find('"', colon + 1);
   auto quote2 = line.find('"', quote1 + 1);
@@ -147,16 +134,13 @@ void AgentServer::handle_message(const std::string &line) {
   }
   std::string cmd = line.substr(quote1 + 1, quote2 - quote1 - 1);
 
-  // Extract params (everything between "params": and the closing })
   std::string params_json = "{}";
   auto params_pos = line.find("\"params\"");
   if (params_pos != std::string::npos) {
     auto params_colon = line.find(':', params_pos + 8);
     if (params_colon != std::string::npos) {
-      // Find the opening brace after the colon
       auto brace_start = line.find('{', params_colon + 1);
       if (brace_start != std::string::npos) {
-        // Find matching closing brace
         int depth = 0;
         size_t end = brace_start;
         for (size_t i = brace_start; i < line.size(); ++i) {
@@ -171,7 +155,6 @@ void AgentServer::handle_message(const std::string &line) {
     }
   }
 
-  // Dispatch to handler
   auto it = handlers.find(cmd);
   if (it == handlers.end()) {
     send_response("{\"ok\":false,\"error\":\"unknown command: " + cmd + "\"}\n");

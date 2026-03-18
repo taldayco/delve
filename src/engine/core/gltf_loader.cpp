@@ -2,12 +2,11 @@
 #include <cgltf.h>
 #include <stb_image.h>
 #include <SDL3/SDL_log.h>
+#include <glm/gtc/matrix_transform.hpp>
 #include <filesystem>
 #include <unordered_map>
 
 namespace fs = std::filesystem;
-
-// --- Image extraction helpers ---
 
 static GltfTextureData load_image_from_buffer(const cgltf_buffer_view *view,
                                                const char *name, bool srgb) {
@@ -48,7 +47,6 @@ static GltfTextureData load_image_from_file(const std::string &uri,
 
 static bool is_srgb_texture(const cgltf_material *mat, const cgltf_texture *tex) {
     if (!mat || !tex) return true;
-    // Base color textures are sRGB; normal and metallic-roughness are linear
     if (mat->has_pbr_metallic_roughness) {
         if (mat->pbr_metallic_roughness.base_color_texture.texture == tex)
             return true;
@@ -61,8 +59,6 @@ static bool is_srgb_texture(const cgltf_material *mat, const cgltf_texture *tex)
     return true;
 }
 
-// --- Mesh extraction ---
-
 static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
                           std::vector<GltfMeshData> &out) {
     for (cgltf_size pi = 0; pi < mesh->primitives_count; ++pi) {
@@ -74,7 +70,6 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
         if (prim.material)
             md.material_index = (int)(prim.material - data->materials);
 
-        // Find accessors
         const cgltf_accessor *pos_acc     = nullptr;
         const cgltf_accessor *norm_acc    = nullptr;
         const cgltf_accessor *uv_acc      = nullptr;
@@ -95,14 +90,12 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
         cgltf_size vert_count = pos_acc->count;
         md.vertices.resize(vert_count);
 
-        // Extract positions
         for (cgltf_size vi = 0; vi < vert_count; ++vi) {
             float v[3] = {0, 0, 0};
             cgltf_accessor_read_float(pos_acc, vi, v, 3);
             md.vertices[vi].position = {v[0], v[1], v[2]};
         }
 
-        // Extract normals
         if (norm_acc) {
             for (cgltf_size vi = 0; vi < vert_count; ++vi) {
                 float v[3] = {0, 0, 1};
@@ -114,7 +107,6 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
                 md.vertices[vi].normal = {0.0f, 0.0f, 1.0f};
         }
 
-        // Extract texcoords
         if (uv_acc) {
             for (cgltf_size vi = 0; vi < vert_count; ++vi) {
                 float v[2] = {0, 0};
@@ -126,7 +118,6 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
                 md.vertices[vi].texcoord = {0.0f, 0.0f};
         }
 
-        // Extract tangents
         if (tan_acc) {
             for (cgltf_size vi = 0; vi < vert_count; ++vi) {
                 float v[4] = {1, 0, 0, 1};
@@ -138,7 +129,6 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
                 md.vertices[vi].tangent = {1.0f, 0.0f, 0.0f, 1.0f};
         }
 
-        // Extract indices
         if (prim.indices) {
             md.indices.resize(prim.indices->count);
             for (cgltf_size ii = 0; ii < prim.indices->count; ++ii)
@@ -152,8 +142,6 @@ static void extract_mesh(const cgltf_mesh *mesh, const cgltf_data *data,
         out.push_back(std::move(md));
     }
 }
-
-// --- Main loader ---
 
 GltfAsset load_gltf(const std::string &path) {
     GltfAsset asset;
@@ -183,11 +171,9 @@ GltfAsset load_gltf(const std::string &path) {
 
     std::string base_dir = fs::path(path).parent_path().string();
 
-    // Extract textures (images referenced by materials)
     for (cgltf_size i = 0; i < data->images_count; ++i) {
         const cgltf_image &img = data->images[i];
 
-        // Determine sRGB from material references
         bool srgb = true;
         for (cgltf_size mi = 0; mi < data->materials_count; ++mi) {
             for (cgltf_size ti = 0; ti < data->textures_count; ++ti) {
@@ -208,7 +194,6 @@ GltfAsset load_gltf(const std::string &path) {
             asset.textures.push_back(std::move(tex));
     }
 
-    // Extract meshes via node traversal
     std::vector<bool> mesh_extracted(data->meshes_count, false);
     for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
         const cgltf_node &node = data->nodes[ni];
@@ -220,10 +205,46 @@ GltfAsset load_gltf(const std::string &path) {
 
         extract_mesh(node.mesh, data, asset.meshes);
     }
-    // Fallback: extract any meshes not referenced by nodes
     for (cgltf_size i = 0; i < data->meshes_count; ++i) {
         if (!mesh_extracted[i])
             extract_mesh(&data->meshes[i], data, asset.meshes);
+    }
+
+    if (data->scene && data->scene->nodes_count > 0) {
+        const cgltf_node *root_node = data->scene->nodes[0];
+        glm::mat4 root_xform(1.0f);
+        if (root_node->has_matrix) {
+            const float *lm = root_node->matrix;
+            root_xform = glm::mat4(
+                lm[0], lm[1], lm[2],  lm[3],
+                lm[4], lm[5], lm[6],  lm[7],
+                lm[8], lm[9], lm[10], lm[11],
+                lm[12],lm[13],lm[14], lm[15]);
+        } else {
+            glm::vec3 rt(0.0f), rs(1.0f);
+            glm::quat rr(1.0f, 0.0f, 0.0f, 0.0f);
+            if (root_node->has_translation)
+                rt = {root_node->translation[0], root_node->translation[1], root_node->translation[2]};
+            if (root_node->has_rotation)
+                rr = glm::quat(root_node->rotation[3], root_node->rotation[0], root_node->rotation[1], root_node->rotation[2]);
+            if (root_node->has_scale)
+                rs = {root_node->scale[0], root_node->scale[1], root_node->scale[2]};
+            root_xform = glm::translate(glm::mat4(1.0f), rt) * glm::mat4_cast(rr) * glm::scale(glm::mat4(1.0f), rs);
+        }
+
+        if (root_xform != glm::mat4(1.0f)) {
+            glm::mat3 rot = glm::mat3(root_xform);
+            glm::vec3 trans = glm::vec3(root_xform[3]);
+            for (auto &mesh : asset.meshes) {
+                for (auto &v : mesh.vertices) {
+                    v.position = rot * v.position + trans;
+                    v.normal   = glm::normalize(rot * v.normal);
+                    float w    = v.tangent.w;
+                    v.tangent  = glm::vec4(glm::normalize(rot * glm::vec3(v.tangent)), w);
+                }
+            }
+            SDL_Log("GltfLoader: Applied root node transform to %zu meshes", asset.meshes.size());
+        }
     }
 
     cgltf_free(data);
@@ -233,8 +254,6 @@ GltfAsset load_gltf(const std::string &path) {
             path.c_str(), asset.meshes.size(), asset.textures.size());
     return asset;
 }
-
-// --- Skinned mesh loader ---
 
 GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
     GltfSkinnedAsset asset;
@@ -252,18 +271,15 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
         cgltf_free(data); return asset;
     }
 
-    // --- Parse skeleton from first skin ---
     if (data->skins_count > 0) {
         const cgltf_skin &skin = data->skins[0];
         int bone_count = (int)skin.joints_count;
         asset.skeleton.bones.resize(bone_count);
 
-        // Build node->bone index map
         std::unordered_map<const cgltf_node *, int> node_to_bone;
         for (int i = 0; i < bone_count; ++i)
             node_to_bone[skin.joints[i]] = i;
 
-        // Inverse bind matrices
         std::vector<float> ibm_data(bone_count * 16, 0.0f);
         if (skin.inverse_bind_matrices) {
             for (int i = 0; i < bone_count; ++i)
@@ -275,7 +291,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             GltfBone &bone = asset.skeleton.bones[i];
             bone.name = joint->name ? joint->name : "";
 
-            // Parent index
             bone.parent_index = -1;
             if (joint->parent) {
                 auto it = node_to_bone.find(joint->parent);
@@ -283,7 +298,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                     bone.parent_index = it->second;
             }
 
-            // Inverse bind matrix (column-major from glTF)
             float *m = ibm_data.data() + i * 16;
             bone.inverse_bind_matrix = glm::mat4(
                 m[0], m[1], m[2], m[3],
@@ -291,7 +305,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                 m[8], m[9], m[10], m[11],
                 m[12], m[13], m[14], m[15]);
 
-            // Local rest transform
             glm::mat4 local(1.0f);
             if (joint->has_matrix) {
                 const float *lm = joint->matrix;
@@ -311,7 +324,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             bone.local_rest_transform = local;
         }
 
-        // Find root bone (bone with no parent in skin)
         asset.skeleton.root_bone_index = 0;
         for (int i = 0; i < bone_count; ++i) {
             if (asset.skeleton.bones[i].parent_index == -1) {
@@ -320,15 +332,12 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             }
         }
 
-        // Compute armature_transform: accumulated transform from non-joint
-        // ancestors of root bones (e.g. Blender's Armature object node which
-        // typically carries scale=0.01 for Mixamo and a Y-up rotation).
         {
             int ri = asset.skeleton.root_bone_index;
             const cgltf_node *root_joint = skin.joints[ri];
             std::vector<glm::mat4> chain;
             for (const cgltf_node *p = root_joint->parent; p; p = p->parent) {
-                if (node_to_bone.find(p) != node_to_bone.end()) break; // stop at skin joints
+                if (node_to_bone.find(p) != node_to_bone.end()) break;
                 glm::mat4 lm(1.0f);
                 if (p->has_matrix) {
                     const float *pm = p->matrix;
@@ -346,7 +355,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                 }
                 chain.push_back(lm);
             }
-            // Apply from outermost ancestor down
             glm::mat4 arm(1.f);
             for (int j = (int)chain.size() - 1; j >= 0; --j)
                 arm = arm * chain[j];
@@ -355,12 +363,10 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                     glm::length(glm::vec3(arm[0])));
         }
 
-        // Build flat inverse_bind_matrices array for GPU upload
         asset.inverse_bind_matrices.resize(bone_count);
         for (int i = 0; i < bone_count; ++i)
             asset.inverse_bind_matrices[i] = asset.skeleton.bones[i].inverse_bind_matrix;
 
-        // --- Parse skinned meshes ---
         for (cgltf_size ni = 0; ni < data->nodes_count; ++ni) {
             const cgltf_node &node = data->nodes[ni];
             if (!node.mesh) continue;
@@ -436,7 +442,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
             }
         }
 
-        // --- Parse animations ---
         for (cgltf_size ai = 0; ai < data->animations_count; ++ai) {
             const cgltf_animation &anim = data->animations[ai];
             GltfAnimationClip clip;
@@ -453,7 +458,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                 GltfAnimChannel gc;
                 gc.bone_index = it->second;
 
-                // Read times
                 const cgltf_accessor *times_acc = ch.sampler->input;
                 gc.times.resize(times_acc->count);
                 for (cgltf_size ti = 0; ti < times_acc->count; ++ti) {
@@ -474,7 +478,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
                     gc.rotations.resize(times_acc->count);
                     for (cgltf_size ti = 0; ti < times_acc->count; ++ti) {
                         float v[4]; cgltf_accessor_read_float(vals_acc, ti, v, 4);
-                        // glTF [x,y,z,w] → glm::quat(w,x,y,z)
                         gc.rotations[ti] = glm::quat(v[3], v[0], v[1], v[2]);
                     }
                 } else if (ch.target_path == cgltf_animation_path_type_scale) {
@@ -495,7 +498,6 @@ GltfSkinnedAsset load_gltf_skinned(const std::string &path) {
         }
     }
 
-    // Parse root scene node transform (captures Blender Y→Z-up rotation, etc.)
     if (data->scene && data->scene->nodes_count > 0) {
         const cgltf_node *root_node = data->scene->nodes[0];
         if (root_node->has_matrix) {

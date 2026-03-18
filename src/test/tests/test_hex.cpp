@@ -32,7 +32,6 @@ DELVE_TEST(hex_to_pixel_origin) {
 DELVE_TEST(hex_corners_count_six) {
   Vec2 corners[6];
   get_hex_corners(0, 0, HEX, corners);
-  // All 6 should be distinct
   std::set<std::pair<int,int>> unique;
   for (int i = 0; i < 6; ++i) {
     unique.insert({(int)(corners[i].x * 1000), (int)(corners[i].y * 1000)});
@@ -64,15 +63,11 @@ DELVE_TEST(pixel_in_hex_far_away_is_outside) {
   return true;
 }
 
-// ─── Hex Coordinate Invariant Tests ─────────────────────────────────────────
-
 DELVE_TEST(hex_neighbor_offsets_canonical) {
-  // The 6 axial neighbor offsets for a hex grid
   const int dq[] = { 1, 0, -1, -1,  0,  1 };
   const int dr[] = { 0, 1,  1,  0, -1, -1 };
   for (int i = 0; i < 6; ++i) {
     int ds = -dq[i] - dr[i];
-    // Cube constraint: exactly one of |dq|, |dr|, |ds| must be zero
     int zeros = (std::abs(dq[i]) == 0 ? 1 : 0)
               + (std::abs(dr[i]) == 0 ? 1 : 0)
               + (std::abs(ds) == 0 ? 1 : 0);
@@ -87,7 +82,6 @@ DELVE_TEST(hex_cube_roundtrip_invariant) {
       float px, py;
       hex_to_pixel(q, r, HEX, px, py);
       HexCoord back = pixel_to_hex(px, py, HEX);
-      // Verify cube constraint: q + r + s = 0 where s = -q - r
       int s = -back.q - back.r;
       EXPECT_EQ(back.q + back.r + s, 0);
     }
@@ -103,7 +97,6 @@ DELVE_TEST(hex_corner_angles_60_degrees) {
     float angle_i = std::atan2(corners[i].y, corners[i].x);
     float angle_j = std::atan2(corners[j].y, corners[j].x);
     float diff = angle_j - angle_i;
-    // Normalize to [-pi, pi]
     while (diff > M_PI) diff -= 2.0f * M_PI;
     while (diff < -M_PI) diff += 2.0f * M_PI;
     EXPECT_NEAR(std::abs(diff), (float)(M_PI / 3.0), 0.01f);

@@ -9,8 +9,6 @@ struct TextureHandle {
   int height = 0;
 };
 
-// Persistent linear staging allocator — mapped once, reset each frame.
-// Allows zero-allocation per-frame uploads into a single transfer buffer.
 struct UploadManager {
   SDL_GPUTransferBuffer *buffer   = nullptr;
   uint8_t               *mapped   = nullptr;
@@ -19,9 +17,8 @@ struct UploadManager {
 
   void init(SDL_GPUDevice *device, uint32_t size);
   void cleanup(SDL_GPUDevice *device);
-  // Returns mapped CPU pointer at *out_offset, or nullptr on overflow.
   void *alloc(uint32_t size, uint32_t *out_offset);
-  void  reset(); // call at the top of each frame before any alloc()
+  void  reset();
 };
 
 struct GpuContext {
@@ -56,7 +53,6 @@ TextureHandle upload_rgba_texture(SDL_GPUDevice *device,
                                   const uint8_t *pixels, int width,
                                   int height, bool srgb);
 
-// GPU buffer utilities (used by terrain renderer and any other subsystem)
 SDL_GPUBuffer *gpu_create_buffer(SDL_GPUDevice *device, uint32_t size,
                                   SDL_GPUBufferUsageFlags usage);
 SDL_GPUBuffer *gpu_upload_buffer(SDL_GPUDevice *device, const void *data,

@@ -19,7 +19,6 @@ public:
     void load_animation(const std::string &name, const std::string &path);
     void set_animation(const std::string &name);
 
-    // player_pos/facing/speed drive clip selection and root transform
     void update(float dt, const glm::vec3 &player_pos, float facing, float speed);
     void prepare(SDL_GPUCommandBuffer *cmd);
     void draw(SDL_GPURenderPass *pass,
@@ -52,7 +51,6 @@ private:
     AnimationPlayer                                    player_;
     BonePalette                                        palette_{};
 
-    // current clip name for hysteresis
     std::string current_clip_;
 
     SDL_GPUTextureFormat depth_format_ = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;

@@ -39,7 +39,6 @@ float sphere_trace_height(const MapData &map, float wx, float wy, float radius) 
     float max_h = sample_world_height(map, wx, wy);
     if (radius <= 0.0f) return max_h;
 
-    // 8 perimeter samples at 45° intervals
     for (int i = 0; i < 8; ++i) {
         float angle = i * (2.0f * 3.14159265358979323846f / 8.0f);
         float sx = wx + radius * cosf(angle);
@@ -51,12 +50,11 @@ float sphere_trace_height(const MapData &map, float wx, float wy, float radius) 
 }
 
 glm::vec3 sample_terrain_normal(const MapData &map, float wx, float wy) {
-    constexpr float eps = 0.05f; // world-space sample offset
+    constexpr float eps = 0.05f;
     float hL = sample_world_height(map, wx - eps, wy);
     float hR = sample_world_height(map, wx + eps, wy);
     float hD = sample_world_height(map, wx, wy - eps);
     float hU = sample_world_height(map, wx, wy + eps);
-    // Central-difference gradient → surface normal
     glm::vec3 n(-( hR - hL) / (2.0f * eps),
                 -(hU - hD) / (2.0f * eps),
                 1.0f);
@@ -66,19 +64,16 @@ glm::vec3 sample_terrain_normal(const MapData &map, float wx, float wy) {
 HexColumn find_spawn_column(const MapData &map, uint32_t seed) {
     if (map.columns.empty()) return HexColumn{};
 
-    // Build lookup map for O(1) neighbour queries.
     std::unordered_map<HexCoord, const HexColumn *, HexHash> lookup;
     lookup.reserve(map.columns.size());
     for (const auto &col : map.columns)
         lookup[{col.q, col.r}] = &col;
 
-    // Flat-top hex neighbour offsets.
     static const int dx[6] = { 1,  0, -1, -1,  0,  1};
     static const int dy[6] = { 0,  1,  1,  0, -1, -1};
 
     std::vector<bool> visited(map.columns.size(), false);
 
-    // Index each column for BFS tracking.
     std::unordered_map<HexCoord, size_t, HexHash> col_index;
     col_index.reserve(map.columns.size());
     for (size_t i = 0; i < map.columns.size(); ++i)

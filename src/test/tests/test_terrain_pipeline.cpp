@@ -12,7 +12,6 @@
 #include "config.h"
 #include <cmath>
 
-// Small map for fast test runs
 static constexpr int TW = 256;
 static constexpr int TH = 256;
 
@@ -60,7 +59,6 @@ DELVE_TEST(pipeline_no_nan_inf_elevation) {
 DELVE_TEST(pipeline_valid_terrain_map) {
   auto md = run_pipeline();
   for (auto v : md.terrain_map) {
-    // Valid values: TERRAIN_EMPTY(0), TERRAIN_BASALT(-1), TERRAIN_LAVA(-2), TERRAIN_VOID(-3), or positive plateau index
     EXPECT_TRUE(v >= TERRAIN_VOID);
   }
   return true;

@@ -9,7 +9,6 @@
 static void emergency_signal_handler(int sig) {
   (void)sig;
   g_emergency_shutdown.store(true, std::memory_order_release);
-  // Give the main loop a chance to exit gracefully
   std::this_thread::sleep_for(std::chrono::seconds(1));
   std::quick_exit(1);
 }

@@ -81,7 +81,6 @@ static void json_to_params(const json &j, ElevationParams &elev,
     if (t.contains("master_seed"))     ts.master_seed     = t["master_seed"];
   }
 
-  // Backward compatibility: old configs with individual seeds but no master_seed
   if (!j.contains("terrain") || !j["terrain"].contains("master_seed")) {
     if (j.contains("elevation") && j["elevation"].contains("seed")) {
       ts.master_seed = j["elevation"]["seed"];
@@ -158,7 +157,6 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
         camera_system.update(camera, dt);
       });
 
-  // Create player entity.
   player_entity = ecs.entity("player")
       .add<Player>()
       .add<ActorTag>()
@@ -176,7 +174,6 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<RigTransforms>({})
       .set<ProceduralMesh>({});
 
-  // Register all animation ECS systems.
   register_rig_systems(ecs, input, camera, anim_log, player_entity);
 }
 
@@ -222,7 +219,6 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
                                    tilesY != terrain_renderer.cluster_tiles_y());
   }
 
-  // Single GPU idle wait if any operation needs it.
   if (ready_mesh_pending || needs_depth_rebuild_early || needs_cluster_rebuild_early) {
     SDL_WaitForGPUIdle(gpu.device);
   }
@@ -230,7 +226,6 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (ready_mesh_pending) {
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
-    // Build instanced terrain data from columns
     if (ready_map_pending && !ready_map_pending->columns.empty()) {
       auto *ts = ecs.get<TerrainState>();
       if (ts) {
@@ -314,7 +309,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     terrain_renderer.init(gpu.device, gpu.game_window, asset_manager);
     terrain_renderer.instanced_terrain = &instanced_terrain;
 
-    // Load glTF column mesh for instanced terrain
     if (!gltf_column_loaded) {
       GltfAsset column_asset = load_gltf(std::string(ASSET_DIR) + "/meshes/basalt_column.glb");
       if (column_asset.ok && !column_asset.meshes.empty()) {
@@ -336,16 +330,16 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                              terrain_renderer.get_depth_format(),
                              asset_manager);
     rig_renderer.init(gpu.device,
-                        terrain_renderer.get_terrain_pipeline(),
+                        gpu.game_window,
                         terrain_renderer.get_dummy_ssbo(),
-                        &asset_manager);
+                        &asset_manager,
+                        terrain_renderer.get_depth_format());
 
     skinned_renderer.init(gpu.device, gpu.game_window, &asset_manager,
                           terrain_renderer.get_depth_format());
 
   }
 
-  // One-time load of skinned character and animation clips.
   if (skinned_renderer.is_initialized() && !skinned_char_loaded) {
     skinned_renderer.load_character(std::string(ASSET_DIR) + "/characters/wireframe_character.glb");
     skinned_renderer.load_animation("idle",     std::string(ASSET_DIR) + "/characters/anim_idle.glb");
@@ -378,7 +372,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
   if (ts && ts->need_regenerate && !async_terrain.is_generating) {
     if (regen_cooldown > 0.0f) {
-      // Keep need_regenerate true; wait for cooldown to expire.
     } else {
     ts->need_regenerate = false;
     async_terrain.is_generating = true;
@@ -387,7 +380,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
     elev->map_scale = ts->map_scale;
 
-    // Derive per-layer seeds from master seed
     elev->seed   = ts->master_seed;
     river->seed  = ts->master_seed * 7 + 1;
     worley->seed = ts->master_seed * 13 + 3;
@@ -524,7 +516,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           gpu.upload_manager);
 
     if (use_skinned) {
-      // Animate and draw skinned character renderer.
       if (skinned_renderer.is_initialized() && skinned_renderer.has_character() && player_entity.is_alive()) {
         float speed = 0.0f;
         glm::vec3 player_pos(0.f);

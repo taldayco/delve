@@ -51,15 +51,10 @@ private:
   void render_ui(flecs::world &ecs, bool game_window_open);
   int save_status_timer = 0;
 
-  // Pending mesh/map/contours pulled from async_terrain but not yet uploaded.
-  // Populated in on_render_game, consumed (upload_mesh called) in on_pre_frame_game
-  // so that SDL_WaitForGPUIdle fires BEFORE the frame command buffer is acquired.
   std::shared_ptr<TerrainMesh> ready_mesh_pending;
   std::shared_ptr<MapData>     ready_map_pending;
   std::shared_ptr<ContourData> ready_contours_pending;
 
-  // Debounce timer (seconds) to avoid queuing rapid sequential regenerations
-  // when sliders are dragged continuously.
   float regen_cooldown = 0.0f;
   bool  gltf_column_loaded = false;
 };

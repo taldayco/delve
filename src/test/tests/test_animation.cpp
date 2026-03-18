@@ -10,8 +10,6 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 
-// ---- Existing 5 tests (preserved) + height proportions ----
-
 DELVE_TEST(default_gait_parameters_valid) {
   ProceduralGait g;
   EXPECT_GT(g.stride_len, 0.0f);
@@ -23,10 +21,10 @@ DELVE_TEST(default_gait_parameters_valid) {
 
 DELVE_TEST(default_actor_config_proportional) {
   ActorConfig c;
-  EXPECT_GT(c.leg_len, c.arm_len);          // legs longer than arms
-  EXPECT_GT(c.torso_len, 0.3f);             // torso substantial
-  EXPECT_LT(c.head_radius, c.torso_len);    // head smaller than torso
-  EXPECT_GT(c.shoulder_width, c.hip_width); // shoulders wider than hips
+  EXPECT_GT(c.leg_len, c.arm_len);
+  EXPECT_GT(c.torso_len, 0.3f);
+  EXPECT_LT(c.head_radius, c.torso_len);
+  EXPECT_GT(c.shoulder_width, c.hip_width);
   return true;
 }
 
@@ -82,9 +80,6 @@ DELVE_TEST(leg_state_parallel_arrays_consistent) {
   return true;
 }
 
-// ---- Biomechanical animation tests ----
-
-// smooth_damp helper (mirrors rig_animation.cpp implementation).
 static float smooth_damp_test(float current, float target, float *velocity,
                               float smooth_time, float dt) {
   float omega = 2.0f / smooth_time;
@@ -96,8 +91,6 @@ static float smooth_damp_test(float current, float target, float *velocity,
   return target + (delta + temp) * exp_f;
 }
 
-// Test: smooth_damp converges to target within 1 second (60 frames,
-// smooth_time=0.1s).
 DELVE_TEST(smooth_damp_convergence) {
   float current = 0.0f, target = 1.0f, rate = 0.0f;
   float dt = 1.0f / 60.0f;
@@ -107,9 +100,6 @@ DELVE_TEST(smooth_damp_convergence) {
   return true;
 }
 
-// Test: Arm phase opposes leg phase (anti-phase) for >70% of gait cycle
-// samples. Fix 1 foundation: left arm = sin(phase + PI) = -sin(phase), left leg
-// ∝ sin(phase).
 DELVE_TEST(arm_phase_opposes_leg) {
   int opposing_count = 0;
   int total_samples = 100;
@@ -126,9 +116,6 @@ DELVE_TEST(arm_phase_opposes_leg) {
   return true;
 }
 
-// Test: Joint delay ordering — shoulder converges faster than wrist (successive
-// breaking). Validates joint-delay chain: shoulder(0.02s) <
-// elbow(0.04s) < wrist(0.06s).
 DELVE_TEST(joint_delay_ordering) {
   float dt = 1.0f / 60.0f;
   float target = 1.0f;
@@ -148,8 +135,6 @@ DELVE_TEST(joint_delay_ordering) {
   return true;
 }
 
-// Test: Idle breathing frequency is approximately 0.6 Hz (≈3 cycles in 5
-// seconds).
 DELVE_TEST(idle_breathing_frequency) {
   float dt = 1.0f / 60.0f;
   int frames = (int)(5.0f / dt);
@@ -167,7 +152,6 @@ DELVE_TEST(idle_breathing_frequency) {
   return true;
 }
 
-// Test: Velocity smoothing has weight — can't reach full speed in 1 frame.
 DELVE_TEST(velocity_smoothing_has_weight) {
   float move_speed = 4.0f, current = 0.0f, rate = 0.0f;
   float dt = 1.0f / 60.0f;
@@ -177,9 +161,6 @@ DELVE_TEST(velocity_smoothing_has_weight) {
   return true;
 }
 
-// Test: Fix 1 — Smootherstep foot path has peak XY velocity at mid-stride.
-// smootherstep(t) = 6t^5 - 15t^4 + 10t^3
-// Derivative peaks at t=0.5 and has zero first+second derivatives at endpoints.
 DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
   auto smootherstep = [](float t) {
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
@@ -188,38 +169,29 @@ DELVE_TEST(elliptical_foot_path_peak_velocity_at_midstride) {
   float t_start = smootherstep(0.00f + dp) - smootherstep(0.00f);
   float t_mid   = smootherstep(0.50f + dp) - smootherstep(0.50f);
   float t_end   = smootherstep(1.00f)      - smootherstep(1.00f - dp);
-  // Mid-stride velocity is strictly greater than start and end.
   EXPECT_GT(t_mid, t_start);
   EXPECT_GT(t_mid, t_end);
-  // Endpoints are slow: less than half the mid-stride rate.
   EXPECT_LT(t_start, t_mid * 0.5f);
   EXPECT_LT(t_end, t_mid * 0.5f);
   return true;
 }
 
-// Test: Fix 2 — Gait phase uses constant swing rate (direction-independent).
-// At full speed (4.0 u/s) with SWING_RATE=2.7, arm swing frequency is ~1.72 Hz
-// — a casual walking cadence regardless of movement direction.
 DELVE_TEST(gait_phase_constant_swing_rate) {
-  constexpr float SWING_RATE = 2.7f; // must match rig_animation.cpp
+  constexpr float SWING_RATE = 2.7f;
   constexpr float FULL_SPEED = 4.0f;
   constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
 
-  float phase_rate = FULL_SPEED * SWING_RATE; // rad/s at full speed
+  float phase_rate = FULL_SPEED * SWING_RATE;
   float freq_hz = phase_rate / TWO_PI;
 
-  // Casual walk cadence: ~1.5–2.0 Hz at full speed.
   EXPECT_GT(freq_hz, 1.5f);
   EXPECT_LT(freq_hz, 2.0f);
 
-  // Direction-independent: phase rate is strictly linear with speed.
   float half_speed_rate = (FULL_SPEED * 0.5f) * SWING_RATE;
-  EXPECT_NEAR(half_speed_rate, phase_rate * 0.5f, 1e-4f); // linear with speed
+  EXPECT_NEAR(half_speed_rate, phase_rate * 0.5f, 1e-4f);
   return true;
 }
 
-// Test: Inverted pendulum — |sin(phase)| has exactly 2 peaks (midstance rises)
-// per 2*PI cycle. Peaks of |sin(x)| occur at x=PI/2 and x=3*PI/2.
 DELVE_TEST(hip_double_bounce_twice_per_stride) {
   float amplitude = 0.018f;
   int peak_count = 0;
@@ -238,24 +210,17 @@ DELVE_TEST(hip_double_bounce_twice_per_stride) {
   return true;
 }
 
-// Test: Hip roll follows planted foot via support_balance.
-// When support_balance > 0 (right planted), hip roll > 0.
-// When support_balance < 0 (left planted), hip roll < 0.
 DELVE_TEST(hip_roll_counter_animation) {
   float walk_blend = 1.0f;
-  // Right foot planted
   float target_roll_r = 0.8f * 0.06f * walk_blend;
   EXPECT_GT(target_roll_r, 0.0f);
-  // Left foot planted
   float target_roll_l = -0.8f * 0.06f * walk_blend;
   EXPECT_LT(target_roll_l, 0.0f);
-  // Idle (both planted)
   float target_roll_idle = 0.0f * 0.06f * walk_blend;
   EXPECT_NEAR(target_roll_idle, 0.0f, 1e-6f);
   return true;
 }
 
-// Test: One-foot-planted invariant — both legs never step simultaneously.
 DELVE_TEST(no_simultaneous_stepping) {
   LegState legs{};
   ProceduralGait gait{};
@@ -315,7 +280,6 @@ DELVE_TEST(no_simultaneous_stepping) {
       if (legs.stepping[leg]) {
         legs.progress[leg] += dt / adaptive_duration;
         float progress = std::min(legs.progress[leg], 1.0f);
-        // Use smootherstep for XY — matches live GaitSystem.
         float ts = progress * progress * progress * (progress * (progress * 6.0f - 15.0f) + 10.0f);
 
         legs.foot[leg].x = legs.prev_foot[leg].x +
@@ -338,12 +302,6 @@ DELVE_TEST(no_simultaneous_stepping) {
   return true;
 }
 
-// ---- Character height proportion tests (fixes "too tall" appearance) ----
-
-// Total standing height from ground = leg_len + shin_len + torso_len + neck_len
-// + head_radius. This must be a reasonable fraction of the hex tile size so the
-// character doesn't appear giant relative to terrain. Max 35% of HEX_SIZE is
-// enforced.
 DELVE_TEST(character_total_height_relative_to_hex_size) {
   ActorConfig cfg;
   float total_height = cfg.leg_len + cfg.shin_len + cfg.torso_len +
@@ -355,7 +313,6 @@ DELVE_TEST(character_total_height_relative_to_hex_size) {
   return true;
 }
 
-// Leg proportion: (leg_len + shin_len) / total_height should be ~0.45–0.55
 DELVE_TEST(character_leg_proportion_human_like) {
   ActorConfig cfg;
   float leg_height = cfg.leg_len + cfg.shin_len;
@@ -367,31 +324,23 @@ DELVE_TEST(character_leg_proportion_human_like) {
   return true;
 }
 
-// Test: Actor total height must be < 0.5 * HEX_SIZE as a hard sanity ceiling
-// (distinct from the proportional 15–35% bound in character_total_height_relative_to_hex_size).
 DELVE_TEST(actor_total_height_within_one_tile) {
   ActorConfig c;
   float total_height =
       c.leg_len + c.shin_len + c.torso_len + c.neck_len + c.head_radius;
-  EXPECT_LT(total_height, Config::HEX_SIZE * 0.5f); // hard ceiling: < 4 world units
+  EXPECT_LT(total_height, Config::HEX_SIZE * 0.5f);
   EXPECT_GT(total_height, 0.5f);
   return true;
 }
 
-// Grounding offset (leg_len + shin_len) must equal the distance added to
-// terrain height to place the actor root — the IK solver assumes this exactly.
 DELVE_TEST(grounding_offset_equals_leg_plus_shin) {
   ActorConfig c;
   float grounding_offset = c.leg_len + c.shin_len;
-  // This verifies config values are in the expected physical range.
-  // The actual grounding system's use of this offset is exercised by the ECS system.
   EXPECT_GT(grounding_offset, 0.0f);
   EXPECT_LT(grounding_offset, 4.0f);
   return true;
 }
 
-// Test: Spine chain is strictly ascending in Z — IK chain doesn't flip the
-// skeleton.
 DELVE_TEST(spine_chain_ascending_in_z) {
   ActorConfig cfg;
   float base_z = 10.0f;
@@ -407,8 +356,6 @@ DELVE_TEST(spine_chain_ascending_in_z) {
   return true;
 }
 
-// Test: Hip double-bounce bob magnitude is bounded (≤ 0.025 world units).
-// Ensures vertical bob doesn't make character appear to sink into terrain.
 DELVE_TEST(hip_bob_magnitude_bounded) {
   float max_bob = 0.0f;
   int total = 100;
@@ -422,15 +369,8 @@ DELVE_TEST(hip_bob_magnitude_bounded) {
   return true;
 }
 
-// ---- Tests for walk animation math (update_walk_animation, compute_hip_counter_animation,
-//      compute_foot_position formulas verified inline) ----
-
-// Inline helpers mirroring rig_animation.cpp pure-math functions so tests
-// have no SDL/Flecs/ECS dependency.
-
-// Mirrors the live GaitSystem phase advance formula (direction-independent).
 static float test_advance_phase(float phase, float dt, float speed) {
-    constexpr float SWING_RATE = 2.7f; // must match rig_animation.cpp
+    constexpr float SWING_RATE = 2.7f;
     return phase + speed * dt * SWING_RATE;
 }
 
@@ -454,7 +394,6 @@ static TestHipState test_compute_hip_counter(float stride_phase,
 
 static glm::vec3 test_compute_foot_position(float t,
                                              glm::vec3 prev, glm::vec3 target, float step_height) {
-    // Smootherstep — matches live rig_animation.cpp GaitSystem formula.
     float warped_t = t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
     float ts_z     = t * t * (3.0f - 2.0f * t);
     glm::vec3 out;
@@ -464,50 +403,30 @@ static glm::vec3 test_compute_foot_position(float t,
     return out;
 }
 
-// Test: phase advances proportional to speed; double speed → double advance.
-// GaitSystem uses a constant swing rate (no directional weighting).
 DELVE_TEST(walk_animation_phase_proportional_to_speed) {
     float dt = 1.0f / 60.0f;
 
     float p1 = test_advance_phase(0.0f, dt, 1.0f);
     float p2 = test_advance_phase(0.0f, dt, 2.0f);
 
-    // Double speed → exactly double phase advance (linear, direction-independent).
     EXPECT_GT(p2, p1 * 1.98f);
     EXPECT_LT(p2, p1 * 2.02f);
     return true;
 }
 
-// Test: Elbow bends forward (natural direction) — forearm rotates toward
-// front of character, not backward (hyperextension).
-// The swing_wrist_pos formula adds -25° to the forearm rotation relative to
-// the upper arm. In the rotation convention used (positive angle = backward),
-// subtracting 25° keeps the forearm angled forward at all swing phases.
 DELVE_TEST(elbow_bends_forward_not_backward) {
     constexpr float PI = 3.14159265358979323846f;
-    // Simulate the wrist position formula at a backward arm swing (+0.3 rad).
-    // right_axis = (0,1,0), hang_down = (0,0,-1), shoulder_angle = +0.3 rad.
-    // With -25° constant: total_angle = 0.3 - radians(25) = 0.3 - 0.436 = -0.136
-    // Forearm dir (world facing=0): -sin(total_angle) x, 0 y, -cos(total_angle) z
-    // Elbow angle contribution is small; test the pure constant-bend direction.
-    float shoulder_angle = 0.3f; // backward swing
-    float elbow_bias     = -25.0f * (PI / 180.0f); // -25 degrees = forward bend
-    float total_angle    = shoulder_angle + elbow_bias; // net: slightly forward of vertical
+    float shoulder_angle = 0.3f;
+    float elbow_bias     = -25.0f * (PI / 180.0f);
+    float total_angle    = shoulder_angle + elbow_bias;
 
-    // Rodrigues rotation of hang_down=(0,0,-1) around right_axis=(0,1,0):
-    // dir = (0,0,-1)*cos(a) + (-1,0,0)*sin(a)  [cross((0,1,0),(0,0,-1)) = (-1,0,0)]
-    float forearm_fwd_component = -sinf(total_angle); // x-component with facing=0
+    float forearm_fwd_component = -sinf(total_angle);
 
-    // At shoulder_angle=+0.3 (backward) with -25° bias, total ≈ -0.136 rad.
-    // sin(-0.136) ≈ -0.136, so forearm_fwd_component = +0.136 (forward lean).
-    // Shoulder direction at +0.3: forearm_fwd_component would be -sin(0.3) ≈ -0.296.
-    // The forearm is more forward than the upper arm → natural forward elbow bend.
-    float upper_arm_fwd = -sinf(shoulder_angle); // upper arm forward component
-    EXPECT_GT(forearm_fwd_component, upper_arm_fwd); // forearm is more forward
+    float upper_arm_fwd = -sinf(shoulder_angle);
+    EXPECT_GT(forearm_fwd_component, upper_arm_fwd);
     return true;
 }
 
-// Test: hip_rotation_deg bounded to ±hip_sway_deg, bob ≥ 0, drop ≥ 0.
 DELVE_TEST(hip_counter_animation_bounds) {
     bool rotation_ok = true, bob_ok = true, drop_ok = true;
     const float sway_deg = 5.0f, drop_max = 0.03f, bob_amp = 0.02f;
@@ -524,7 +443,6 @@ DELVE_TEST(hip_counter_animation_bounds) {
     return true;
 }
 
-// Test: hip_bob_y (|sin(2π*phase)|) peaks exactly twice per [0,1) cycle.
 DELVE_TEST(hip_bob_two_peaks_per_cycle) {
     float prev = 0.0f, pprev = 0.0f;
     int peaks = 0;
@@ -538,7 +456,6 @@ DELVE_TEST(hip_bob_two_peaks_per_cycle) {
     return true;
 }
 
-// Test: foot Z-lift = 0 at t=0 and t=1, peaks near step_height at t=0.5.
 DELVE_TEST(foot_position_z_lift_arc) {
     glm::vec3 prev{0,0,0}, target{1,0,0};
     float sh = 0.5f;
@@ -554,7 +471,6 @@ DELVE_TEST(foot_position_z_lift_arc) {
     return true;
 }
 
-// Test: foot XY velocity peaks at mid-stride (sine-warp easing).
 DELVE_TEST(foot_position_xy_velocity_peaks_at_midstride) {
     glm::vec3 prev{0,0,0}, target{2,0,0};
     float dp = 0.05f;
@@ -571,7 +487,6 @@ DELVE_TEST(foot_position_xy_velocity_peaks_at_midstride) {
     return true;
 }
 
-// Test: foot position XY reaches target exactly at t=1 (Z also reaches target when sh=0).
 DELVE_TEST(foot_position_reaches_target_at_t1) {
     glm::vec3 prev{3,-1,2}, target{5,2,1};
     glm::vec3 at1 = test_compute_foot_position(1.0f, prev, target, 0.0f);
@@ -580,27 +495,17 @@ DELVE_TEST(foot_position_reaches_target_at_t1) {
     EXPECT_NEAR(at1.z, target.z, 1e-4f);
     return true;
 }
-
-// ---- ISO height foreshortening tests ----
-
-// Test: AnimationConfig::ISO_CHAR_HEIGHT_SCALE = 0.816 * 0.92 ≈ 0.751.
-// This constant squashes character height for correct 2:1 isometric proportions.
 DELVE_TEST(iso_char_height_scale_value) {
     float scale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
-    // Should be ~0.751 (within 1% tolerance).
     EXPECT_GT(scale, 0.74f);
     EXPECT_LT(scale, 0.76f);
     return true;
 }
 
-// Test: Foreshortening reduces skeleton height relative to foot_z.
-// After applying ISO_CHAR_HEIGHT_SCALE, the vertical extent above foot_z
-// is strictly less than before (and greater than 0).
 DELVE_TEST(iso_foreshortening_reduces_height) {
     ActorConfig cfg;
     float foot_z = 0.0f;
 
-    // Build a simple spine stack above foot_z.
     float heights_before[5] = {
         0.0f,
         cfg.leg_len,
@@ -615,28 +520,23 @@ DELVE_TEST(iso_foreshortening_reduces_height) {
 
     EXPECT_LT(top_after, top_before);
     EXPECT_GT(top_after, 0.0f);
-    // Foot level stays planted (foot_z is the reference, not scaled).
     float foot_after = foot_z + (foot_z - foot_z) * scale;
     EXPECT_NEAR(foot_after, foot_z, 1e-6f);
     return true;
 }
 
-// Test: Planted-foot XY clamp limits horizontal distance from hip.
-// Simulates a foot planted far behind its hip (as in a 180° turn).
 DELVE_TEST(planted_foot_clamped_to_stride_len) {
   ProceduralGait gait{};
   float max_horiz = gait.stride_len * 0.9f;
 
-  // Foot 3.0 units behind hip — clearly hyperextended.
   float hip_x = 5.0f, hip_y = 0.0f;
   float foot_x = 2.0f, foot_y = 0.0f;
 
   float dx = foot_x - hip_x;
   float dy = foot_y - hip_y;
   float hd = sqrtf(dx * dx + dy * dy);
-  EXPECT_GT(hd, max_horiz); // confirm over the limit
+  EXPECT_GT(hd, max_horiz);
 
-  // Apply clamp (mirrors GaitSystem logic).
   if (hd > max_horiz) {
     float s = max_horiz / hd;
     foot_x = hip_x + dx * s;
@@ -649,21 +549,17 @@ DELVE_TEST(planted_foot_clamped_to_stride_len) {
   return true;
 }
 
-// Test: IK ankle clamp pulls ankle inward when foot target is
-// significantly beyond leg reach (prevents visual hyperextension).
 DELVE_TEST(ik_ankle_clamp_prevents_hyperextension) {
   ActorConfig cfg;
   float a = cfg.leg_len, b = cfg.shin_len;
   float max_D = a + b - 0.005f;
   float stretch_limit = max_D * 1.15f;
 
-  // Hip at origin, foot target far away.
   glm::vec3 H(0, 0, 0);
   glm::vec3 foot_target(1.0f, 0.0f, -2.0f);
   float D = glm::length(foot_target - H);
-  EXPECT_GT(D, stretch_limit); // confirm over-extended
+  EXPECT_GT(D, stretch_limit);
 
-  // Apply ankle clamp (mirrors IKSystem logic).
   glm::vec3 axis = foot_target - H;
   glm::vec3 clamped_ankle = H + (axis / D) * stretch_limit;
   float clamped_D = glm::length(clamped_ankle - H);
@@ -672,8 +568,6 @@ DELVE_TEST(ik_ankle_clamp_prevents_hyperextension) {
   return true;
 }
 
-// Test: During a simulated 180° turn, planted foot XY distance from
-// hip never exceeds stride_len (with clamp applied).
 DELVE_TEST(no_hyperextension_during_180_turn) {
   LegState legs{};
   ProceduralGait gait{};
@@ -684,13 +578,12 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
 
   float dt = 1.0f / 60.0f;
   float pos_x = 0.0f;
-  float vel_x = 4.0f; // walking right at full speed
+  float vel_x = 4.0f;
   float max_horiz = gait.stride_len * 0.9f;
   float max_observed = 0.0f;
   float visual_facing = 0.0f;
   float visual_facing_rate = 0.0f;
 
-  // 60 frames forward, then 120 frames reversed.
   for (int frame = 0; frame < 180; ++frame) {
     if (frame == 60) vel_x = -4.0f;
     pos_x += vel_x * dt;
@@ -698,7 +591,6 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
     float vel_dx = vel_x / speed;
     float facing = (vel_x > 0) ? 0.0f : 3.14159265f;
 
-    // Smooth visual_facing like the live system
     {
       float delta = facing - visual_facing;
       while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
@@ -744,7 +636,6 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
       }
     }
 
-    // Apply planted-foot clamp (mirrors live GaitSystem).
     for (int leg = 0; leg < 2; ++leg) {
       float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
       if (!legs.stepping[leg]) {
@@ -764,7 +655,6 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
       }
     }
 
-    // Track max XY distance from hip.
     for (int leg = 0; leg < 2; ++leg) {
       float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
       float d = fabsf(legs.foot[leg].x - hip_x);
@@ -772,50 +662,36 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
     }
   }
 
-  // With clamp, max distance should be <= stride_len.
   EXPECT_LT(max_observed, gait.stride_len * 1.1f);
   return true;
 }
 
-// Test: Knee reaches near-full extension (lock) at mid-stance when foot is
-// directly below the hip socket.  The IK margin (0.005) allows the knee angle
-// to reach ≥ 160° (within 20° of full extension = 180°), giving the visual
-// appearance of a locked stance leg.
 DELVE_TEST(knee_locks_at_midstance) {
   ActorConfig cfg;
-  float a = cfg.leg_len;   // 0.430 thigh
-  float b = cfg.shin_len;  // 0.390 shin
+  float a = cfg.leg_len;
+  float b = cfg.shin_len;
   float margin = 0.005f;
   float max_D = a + b - margin;
 
-  // At mid-stance the foot is directly below the hip socket.
-  // D ≈ leg_len + shin_len, clamped to max_D.
   float D = std::min(a + b, max_D);
 
-  // Knee angle via law of cosines: cos(K) = (a² + b² - D²) / (2ab)
   float cos_knee = (a * a + b * b - D * D) / (2.0f * a * b);
   cos_knee = std::max(-1.0f, std::min(1.0f, cos_knee));
   float knee_deg = std::acos(cos_knee) * (180.0f / 3.14159265f);
 
-  // Knee should be ≥ 160° (near full extension, reads as "locked").
   EXPECT_GT(knee_deg, 160.0f);
-  // But not perfectly 180° (margin prevents that).
   EXPECT_LT(knee_deg, 180.0f);
   return true;
 }
 
-// Test: AnimationConfig retains directional_speed_scale field for reference,
-// but gait phase no longer uses it (constant swing rate instead).
 DELVE_TEST(animation_config_hip_counter_fields_valid) {
     AnimationConfig cfg;
-    // Hip counter-animation parameters should have sensible defaults.
     EXPECT_GT(cfg.hip_sway_deg, 0.0f);
     EXPECT_GT(cfg.hip_drop_max, 0.0f);
     EXPECT_GT(cfg.hip_bob_amplitude, 0.0f);
     return true;
 }
 
-// Test: AnimationConfig hip counter-animation defaults are non-zero and bounded.
 DELVE_TEST(animation_config_hip_defaults_valid) {
     AnimationConfig acfg;
     EXPECT_GT(acfg.hip_sway_deg,      0.0f);
@@ -826,27 +702,15 @@ DELVE_TEST(animation_config_hip_defaults_valid) {
     EXPECT_LT(acfg.hip_bob_amplitude, 0.1f);
     return true;
 }
-
-// ---- Rig shape / rendering geometry tests ----
-
-// Test: Structural joints (ROOT..R_TOE = 0..23) come before IK/virtual joints
-// (POLE_KNEE_L..IK_HAND_R = 24..31). Verifies enum layout assumed by the renderer
-// joint-sphere loop.
 DELVE_TEST(rig_structural_joints_before_ik) {
-    // R_TOE must be the last structural joint (index 23).
     EXPECT_EQ((int)Joint::R_TOE, 23);
-    // IK joints start immediately after.
     EXPECT_EQ((int)Joint::POLE_KNEE_L, 24);
     EXPECT_LT((int)Joint::R_TOE, (int)Joint::POLE_KNEE_L);
-    // Full range: 8 IK joints (24–31), COUNT = 32.
     EXPECT_EQ((int)Joint::IK_HAND_R, 31);
     EXPECT_EQ((int)Joint::COUNT, 32);
     return true;
 }
 
-// Test: Bone octahedron equatorial ring is non-degenerate for all bone widths
-// in the default ActorConfig. The equator sits at 20% of bone length; that
-// distance and the width must both be strictly positive.
 DELVE_TEST(rig_bone_oct_equator_nonzero) {
     ActorConfig cfg;
     constexpr float EQUATOR_T = 0.2f;
@@ -870,25 +734,19 @@ DELVE_TEST(rig_bone_oct_equator_nonzero) {
     return true;
 }
 
-// Test: RGB tripod axes are mutually orthogonal (world XYZ basis vectors).
-// Verifies the tripod orientation convention used by emit_tripod.
 DELVE_TEST(rig_tripod_axes_orthogonal) {
-    glm::vec3 x_axis{1.0f, 0.0f, 0.0f}; // red
-    glm::vec3 y_axis{0.0f, 1.0f, 0.0f}; // green
-    glm::vec3 z_axis{0.0f, 0.0f, 1.0f}; // blue
+    glm::vec3 x_axis{1.0f, 0.0f, 0.0f};
+    glm::vec3 y_axis{0.0f, 1.0f, 0.0f};
+    glm::vec3 z_axis{0.0f, 0.0f, 1.0f};
     EXPECT_NEAR(glm::dot(x_axis, y_axis), 0.0f, 1e-6f);
     EXPECT_NEAR(glm::dot(y_axis, z_axis), 0.0f, 1e-6f);
     EXPECT_NEAR(glm::dot(x_axis, z_axis), 0.0f, 1e-6f);
-    // Axes are unit length.
     EXPECT_NEAR(glm::length(x_axis), 1.0f, 1e-6f);
     EXPECT_NEAR(glm::length(y_axis), 1.0f, 1e-6f);
     EXPECT_NEAR(glm::length(z_axis), 1.0f, 1e-6f);
     return true;
 }
 
-// Test: Smootherstep is strictly steeper than cosine-ease at midpoint.
-// Both are S-curves: smootherstep has zero 1st+2nd derivatives at endpoints,
-// giving faster transit through midpoint than cosine-ease.
 DELVE_TEST(smootherstep_steeper_than_cosine_ease_at_midpoint) {
     auto smootherstep = [](float t) {
         return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
@@ -899,17 +757,11 @@ DELVE_TEST(smootherstep_steeper_than_cosine_ease_at_midpoint) {
     float dp = 0.02f;
     float ss_mid = smootherstep(0.5f + dp) - smootherstep(0.5f);
     float ce_mid = cosease(0.5f + dp)      - cosease(0.5f);
-    // Smootherstep has higher velocity at midpoint (the curves are distinct).
     EXPECT_GT(ss_mid, ce_mid);
-    // Both start and end at 0 and 1 exactly.
     EXPECT_NEAR(smootherstep(0.0f), 0.0f, 1e-6f);
     EXPECT_NEAR(smootherstep(1.0f), 1.0f, 1e-6f);
     return true;
 }
-
-// ---- Isometric bone compressor tests ----
-
-// Mirror of iso_compensate_bone from rig_renderer.cpp (pure math, no GPU dependency).
 struct TestIsoCompensation {
     float width_scale;
     float equator_t;
@@ -930,78 +782,62 @@ static TestIsoCompensation test_iso_compensate(const glm::vec3 &a, const glm::ve
     return comp;
 }
 
-// Test: z_align = 0 for horizontal, 1 for vertical, intermediate for diagonal.
 DELVE_TEST(iso_compressor_z_align_range) {
-    // Horizontal bone (along X)
     auto h = test_iso_compensate({0,0,0}, {1,0,0});
-    // Vertical bone (along Z)
     auto v = test_iso_compensate({0,0,0}, {0,0,1});
-    // Diagonal bone (45 degrees in XZ)
     auto d = test_iso_compensate({0,0,0}, {1,0,1});
 
-    // Horizontal: z_align ≈ 0, so width_scale ≈ 1.0
     EXPECT_NEAR(h.width_scale, 1.0f, 0.01f);
-    // Vertical: z_align = 1, so width_scale = 3.0
     EXPECT_NEAR(v.width_scale, 3.0f, 0.01f);
-    // Diagonal: intermediate
     EXPECT_GT(d.width_scale, 1.0f);
     EXPECT_LT(d.width_scale, 3.0f);
     return true;
 }
 
-// Test: width_scale bounds: 1.0 at horizontal, 3.0 at vertical, monotonically increasing.
 DELVE_TEST(iso_compressor_width_scale_bounds) {
     float prev_ws = 0.0f;
     for (int i = 0; i <= 10; ++i) {
         float t = (float)i / 10.0f;
-        // Bone from origin to (1-t, 0, t) — sweeps from horizontal to vertical.
         float x = 1.0f - t;
         float z = t;
         if (x < 1e-5f && z < 1e-5f) continue;
         auto c = test_iso_compensate({0,0,0}, {x, 0, z});
         EXPECT_GT(c.width_scale, 0.99f);
         EXPECT_LT(c.width_scale, 3.01f);
-        if (i > 0) EXPECT_GT(c.width_scale, prev_ws - 0.01f); // monotonic
+        if (i > 0) EXPECT_GT(c.width_scale, prev_ws - 0.01f);
         prev_ws = c.width_scale;
     }
     return true;
 }
 
-// Test: equator_t range: 0.20 → 0.35, monotonic.
 DELVE_TEST(iso_compressor_equator_range) {
     auto h = test_iso_compensate({0,0,0}, {1,0,0});
     auto v = test_iso_compensate({0,0,0}, {0,0,1});
     EXPECT_NEAR(h.equator_t, 0.20f, 0.01f);
     EXPECT_NEAR(v.equator_t, 0.35f, 0.01f);
-    // Intermediate is between
     auto d = test_iso_compensate({0,0,0}, {1,0,1});
     EXPECT_GT(d.equator_t, 0.20f);
     EXPECT_LT(d.equator_t, 0.35f);
     return true;
 }
 
-// Test: radial_z_comp lerp: 0.18 → 1.0.
 DELVE_TEST(iso_compressor_radial_z_range) {
     auto h = test_iso_compensate({0,0,0}, {1,0,0});
     auto v = test_iso_compensate({0,0,0}, {0,0,1});
     EXPECT_NEAR(h.radial_z_comp, 0.18f, 0.01f);
     EXPECT_NEAR(v.radial_z_comp, 1.0f, 0.01f);
-    // Intermediate
     auto d = test_iso_compensate({0,0,0}, {1,0,1});
     EXPECT_GT(d.radial_z_comp, 0.18f);
     EXPECT_LT(d.radial_z_comp, 1.0f);
     return true;
 }
 
-// Test: Ground trace endpoints sit at ROOT.z level.
 DELVE_TEST(ground_trace_z_at_root_level) {
-    // Simulate: ROOT at z=5.0, HIPS at z=6.0, feet at z=5.2
     float root_z = 5.0f;
     glm::vec3 hips(1.0f, 2.0f, 6.0f);
     glm::vec3 l_foot(-0.5f, 2.0f, 5.2f);
     glm::vec3 r_foot(0.5f, 2.0f, 5.2f);
 
-    // Ground projections (mirrors prepare() logic)
     glm::vec3 hip_ground(hips.x, hips.y, root_z);
     glm::vec3 lfoot_ground(l_foot.x, l_foot.y, root_z);
     glm::vec3 rfoot_ground(r_foot.x, r_foot.y, root_z);
@@ -1009,54 +845,41 @@ DELVE_TEST(ground_trace_z_at_root_level) {
     EXPECT_NEAR(hip_ground.z, root_z, 1e-6f);
     EXPECT_NEAR(lfoot_ground.z, root_z, 1e-6f);
     EXPECT_NEAR(rfoot_ground.z, root_z, 1e-6f);
-    // XY preserved from source joints
     EXPECT_NEAR(hip_ground.x, hips.x, 1e-6f);
     EXPECT_NEAR(lfoot_ground.x, l_foot.x, 1e-6f);
     return true;
 }
 
-// Test: V/A frame bar span matches config — shoulder bar connects L/R upper arms,
-// pelvis bar connects L/R upper legs.
 DELVE_TEST(va_frame_bar_span_matches_config) {
     ActorConfig cfg;
-    // At rest pose, upper arms are at ±shoulder_width from center
     glm::vec3 l_upper_arm(-cfg.shoulder_width, 0, cfg.torso_len);
     glm::vec3 r_upper_arm( cfg.shoulder_width, 0, cfg.torso_len);
     float shoulder_span = glm::length(r_upper_arm - l_upper_arm);
     EXPECT_NEAR(shoulder_span, 2.0f * cfg.shoulder_width, 1e-4f);
 
-    // Pelvis bar: upper legs at ±hip_width
     glm::vec3 l_upper_leg(-cfg.hip_width, 0, 0);
     glm::vec3 r_upper_leg( cfg.hip_width, 0, 0);
     float pelvis_span = glm::length(r_upper_leg - l_upper_leg);
     EXPECT_NEAR(pelvis_span, 2.0f * cfg.hip_width, 1e-4f);
 
-    // Shoulder bar is wider than pelvis bar
     EXPECT_GT(shoulder_span, pelvis_span);
     return true;
 }
-
-// ---- Phase 1: Continuous foot grounding + slope adaptation tests ----
-
-// Test: Hip tilt from foot height difference is bounded to ±8°.
 DELVE_TEST(hip_tilt_bounded_by_max_angle) {
     float max_tilt = glm::radians(8.0f);
     ActorConfig cfg;
 
-    // Extreme foot height difference (1.0 unit)
     float foot_diff = 1.0f;
     float tilt = std::clamp(
         atan2f(foot_diff, cfg.hip_width * 2.0f),
         -max_tilt, max_tilt);
     EXPECT_LT(fabsf(tilt), max_tilt + 1e-4f);
 
-    // Negative difference
     float tilt_neg = std::clamp(
         atan2f(-foot_diff, cfg.hip_width * 2.0f),
         -max_tilt, max_tilt);
     EXPECT_GT(tilt_neg, -max_tilt - 1e-4f);
 
-    // Zero difference → zero tilt
     float tilt_zero = std::clamp(
         atan2f(0.0f, cfg.hip_width * 2.0f),
         -max_tilt, max_tilt);
@@ -1064,7 +887,6 @@ DELVE_TEST(hip_tilt_bounded_by_max_angle) {
     return true;
 }
 
-// Test: Foot-average hip height is correct for level feet.
 DELVE_TEST(foot_average_hip_height_level) {
     ActorConfig cfg;
     float foot_z = 3.0f;
@@ -1075,7 +897,6 @@ DELVE_TEST(foot_average_hip_height_level) {
     return true;
 }
 
-// Test: Foot-average hip height splits between two different foot heights.
 DELVE_TEST(foot_average_hip_height_sloped) {
     ActorConfig cfg;
     float foot_l = 2.0f, foot_r = 4.0f;
@@ -1085,31 +906,23 @@ DELVE_TEST(foot_average_hip_height_sloped) {
     EXPECT_NEAR(target_z, mid_height, 1e-6f);
     return true;
 }
-
-// ---- Phase 2: Look-at system tests ----
-
-// Test: Look-at yaw clamp limits to ±70°.
 DELVE_TEST(look_at_yaw_clamp) {
     float max_yaw = glm::radians(70.0f);
 
-    // Target directly behind (180° relative yaw)
     float target_yaw = glm::pi<float>();
     target_yaw = std::clamp(target_yaw, -max_yaw, max_yaw);
     EXPECT_NEAR(target_yaw, max_yaw, 1e-4f);
 
-    // Target to the right (90° yaw)
     float right_yaw = glm::radians(90.0f);
     right_yaw = std::clamp(right_yaw, -max_yaw, max_yaw);
     EXPECT_NEAR(right_yaw, max_yaw, 1e-4f);
 
-    // Target slightly left (30° yaw — within limits)
     float left_yaw = glm::radians(-30.0f);
     left_yaw = std::clamp(left_yaw, -max_yaw, max_yaw);
     EXPECT_NEAR(left_yaw, glm::radians(-30.0f), 1e-4f);
     return true;
 }
 
-// Test: Look-at pitch clamp limits to ±30°.
 DELVE_TEST(look_at_pitch_clamp) {
     float max_pitch = glm::radians(30.0f);
 
@@ -1123,7 +936,6 @@ DELVE_TEST(look_at_pitch_clamp) {
     return true;
 }
 
-// Test: Look-at weight zero produces no offset.
 DELVE_TEST(look_at_weight_zero_no_offset) {
     float target_yaw = glm::radians(45.0f);
     float weight = 0.0f;
@@ -1131,11 +943,6 @@ DELVE_TEST(look_at_weight_zero_no_offset) {
     EXPECT_NEAR(effective_yaw, 0.0f, 1e-6f);
     return true;
 }
-
-// ---- Phase 3: Two-bone solver tests ----
-
-// Test: solve_two_bone produces mid-joint at correct distance from root.
-// Mirror of file-scope solve_two_bone from rig_animation.cpp.
 static void test_solve_two_bone(glm::vec3 H, glm::vec3 target,
                                 float a, float b,
                                 glm::vec3 pole, glm::vec3 fallback_perp,
@@ -1184,25 +991,19 @@ DELVE_TEST(two_bone_solver_mid_joint_distance) {
     return true;
 }
 
-// Test: Two-bone solver handles over-extension gracefully.
 DELVE_TEST(two_bone_solver_over_extension) {
     float a = 0.3f, b = 0.25f;
     glm::vec3 H(0, 0, 0);
-    glm::vec3 target(0, 0, -2.0f); // way beyond reach
+    glm::vec3 target(0, 0, -2.0f);
     glm::vec3 mid, end;
     test_solve_two_bone(H, target, a, b, glm::vec3(0, 0.3f, 0),
                         glm::vec3(0, 1, 0), mid, end);
 
-    // End effector should be clamped, not at target
     float end_dist = glm::length(end - H);
     float max_reach = (a + b - 0.005f) * 1.15f;
     EXPECT_LT(end_dist, max_reach + 0.01f);
     return true;
 }
-
-// ---- Phase 4: Overlay tests ----
-
-// Test: AnimationOverlay defaults to None with zero intensity.
 DELVE_TEST(overlay_defaults_none) {
     AnimationOverlay overlay;
     EXPECT_EQ((int)overlay.active, (int)AnimationOverlay::Type::None);
@@ -1211,7 +1012,6 @@ DELVE_TEST(overlay_defaults_none) {
     return true;
 }
 
-// Test: AnimationOverlay::Type enum values are distinct.
 DELVE_TEST(overlay_types_distinct) {
     EXPECT_EQ((int)AnimationOverlay::Type::None, 0);
     EXPECT_EQ((int)AnimationOverlay::Type::Limp, 1);
@@ -1219,10 +1019,6 @@ DELVE_TEST(overlay_types_distinct) {
     EXPECT_EQ((int)AnimationOverlay::Type::HeavyCarry, 3);
     return true;
 }
-
-// ---- Phase 5: Grab state tests ----
-
-// Test: GrabState defaults to inactive.
 DELVE_TEST(grab_state_defaults_inactive) {
     GrabState grab;
     EXPECT_FALSE(grab.active_l);
@@ -1231,7 +1027,6 @@ DELVE_TEST(grab_state_defaults_inactive) {
     return true;
 }
 
-// Test: GrabState drives ArmIKGoal targets when active.
 DELVE_TEST(grab_drives_arm_ik_when_active) {
     GrabState grab;
     grab.grab_point = glm::vec3(1.0f, 2.0f, 0.5f);
@@ -1240,7 +1035,6 @@ DELVE_TEST(grab_drives_arm_ik_when_active) {
     grab.active_r = false;
 
     ArmIKGoal arm_ik{};
-    // Simulate GrabDriveSystem logic
     if (grab.active_l) {
         arm_ik.target_l = grab.grab_point;
         arm_ik.weight_l = grab.weight;
@@ -1258,7 +1052,6 @@ DELVE_TEST(grab_drives_arm_ik_when_active) {
     return true;
 }
 
-// Test: LookAtTarget defaults.
 DELVE_TEST(look_at_target_defaults) {
     LookAtTarget lat;
     EXPECT_FALSE(lat.active);
@@ -1266,18 +1059,12 @@ DELVE_TEST(look_at_target_defaults) {
     return true;
 }
 
-// Test: ArmIKGoal defaults to zero weight (pure FK).
 DELVE_TEST(arm_ik_goal_defaults_fk) {
     ArmIKGoal aik;
     EXPECT_NEAR(aik.weight_l, 0.0f, 1e-6f);
     EXPECT_NEAR(aik.weight_r, 0.0f, 1e-6f);
     return true;
 }
-
-// ---- Sphere trace & terrain clearance tests ----
-
-// Helper: create a small MapData with a linear slope in X.
-// basalt_height[y * w + x] = slope * x, so height increases with pixel X.
 static MapData make_slope_map(int w, int h, float slope) {
     MapData map;
     map.width = w;
@@ -1289,7 +1076,6 @@ static MapData make_slope_map(int w, int h, float slope) {
     return map;
 }
 
-// Helper: create a flat MapData with uniform height.
 static MapData make_flat_map(int w, int h, float height) {
     MapData map;
     map.width = w;
@@ -1299,10 +1085,8 @@ static MapData make_flat_map(int w, int h, float height) {
 }
 
 DELVE_TEST(sphere_trace_ge_point_sample) {
-    // On a slope, sphere trace must be >= point sample.
     auto map = make_slope_map(64, 64, 0.5f);
     float radii[] = {0.05f, 0.1f, 0.2f};
-    // Test at several world positions (converting: px = wx * HEX_SIZE)
     float positions[] = {1.0f, 2.0f, 3.0f, 4.0f};
     for (float wx : positions) {
         float wy = 2.0f;
@@ -1316,7 +1100,6 @@ DELVE_TEST(sphere_trace_ge_point_sample) {
 }
 
 DELVE_TEST(sphere_trace_flat_equals_point) {
-    // On flat terrain, sphere trace should equal point sample.
     auto map = make_flat_map(32, 32, 5.0f);
     float wx = 1.5f, wy = 1.5f;
     float point_h = sample_world_height(map, wx, wy);
@@ -1326,7 +1109,6 @@ DELVE_TEST(sphere_trace_flat_equals_point) {
 }
 
 DELVE_TEST(sphere_trace_radius_zero_equals_point) {
-    // Zero radius should return exactly the point sample.
     auto map = make_slope_map(64, 64, 0.3f);
     float wx = 2.0f, wy = 2.0f;
     float point_h = sample_world_height(map, wx, wy);
@@ -1336,14 +1118,11 @@ DELVE_TEST(sphere_trace_radius_zero_equals_point) {
 }
 
 DELVE_TEST(foot_z_clears_terrain_on_slope) {
-    // Simulate planted foot with sphere trace at leg_radius.
-    // Verify foot.z >= point-sampled height everywhere within leg_radius.
     auto map = make_slope_map(64, 64, 0.4f);
     ActorConfig cfg;
     float wx = 3.0f, wy = 3.0f;
     float foot_z = sphere_trace_height(map, wx, wy, cfg.leg_radius);
 
-    // Check 8 perimeter points within leg_radius
     for (int i = 0; i < 8; ++i) {
         float angle = i * (2.0f * 3.14159265f / 8.0f);
         float sx = wx + cfg.leg_radius * cosf(angle);
@@ -1355,7 +1134,6 @@ DELVE_TEST(foot_z_clears_terrain_on_slope) {
 }
 
 DELVE_TEST(root_z_above_terrain) {
-    // Verify the new ROOT formula: max(algebraic, terrain) >= terrain.
     auto map = make_slope_map(64, 64, 0.5f);
     ActorConfig cfg;
     float hips_z_values[] = {1.0f, 2.0f, 5.0f, 0.5f};
@@ -1369,10 +1147,6 @@ DELVE_TEST(root_z_above_terrain) {
     }
     return true;
 }
-
-// ---- Foreshortening ground-contact exemption tests ----
-
-// Helper: apply the foreshortening logic with ground-contact exemption (mirrors rig_renderer.cpp).
 static void apply_foreshortening(RigPose &pose, float foot_z) {
     using J = Joint;
     constexpr int ground_joints[] = {
@@ -1394,13 +1168,12 @@ static void apply_foreshortening(RigPose &pose, float foot_z) {
 DELVE_TEST(foreshortening_preserves_foot_z) {
     ActorConfig cfg;
     RigPose pose;
-    // Simulate slope: left foot higher than right
     float lfoot_z = 3.0f, rfoot_z = 2.5f;
     pose.joints[(int)Joint::L_FOOT].z = lfoot_z;
     pose.joints[(int)Joint::R_FOOT].z = rfoot_z;
     pose.joints[(int)Joint::HIPS].z = 3.5f;
 
-    float foot_z = (lfoot_z + rfoot_z) * 0.5f; // reference
+    float foot_z = (lfoot_z + rfoot_z) * 0.5f;
     apply_foreshortening(pose, foot_z);
 
     EXPECT_NEAR(pose.joints[(int)Joint::L_FOOT].z, lfoot_z, 1e-6f);
@@ -1433,7 +1206,6 @@ DELVE_TEST(foreshortening_compresses_body) {
     EXPECT_NEAR(pose.joints[(int)Joint::HIPS].z, expected_hips, 1e-5f);
     EXPECT_NEAR(pose.joints[(int)Joint::CHEST].z, expected_chest, 1e-5f);
     EXPECT_NEAR(pose.joints[(int)Joint::HEAD].z, expected_head, 1e-5f);
-    // Body joints are compressed (closer to foot_z than original)
     EXPECT_LT(pose.joints[(int)Joint::HIPS].z, hips_z);
     EXPECT_LT(pose.joints[(int)Joint::HEAD].z, head_z);
     return true;
@@ -1443,11 +1215,9 @@ DELVE_TEST(slope_foot_z_matches_terrain_after_foreshorten) {
     auto map = make_slope_map(64, 64, 0.4f);
     ActorConfig cfg;
 
-    // Two foot positions at different world X → different terrain heights
     float wx_l = 2.0f, wx_r = 3.0f, wy = 3.0f;
     float lfoot_z = sphere_trace_height(map, wx_l, wy, cfg.leg_radius);
     float rfoot_z = sphere_trace_height(map, wx_r, wy, cfg.leg_radius);
-    // Heights should differ on a slope
     EXPECT_GT(fabsf(lfoot_z - rfoot_z), 0.01f);
 
     RigPose pose;
@@ -1462,7 +1232,6 @@ DELVE_TEST(slope_foot_z_matches_terrain_after_foreshorten) {
     float foot_z_ref = avg;
     apply_foreshortening(pose, foot_z_ref);
 
-    // Feet must still match their terrain heights exactly
     EXPECT_NEAR(pose.joints[(int)Joint::L_FOOT].z, lfoot_z, 1e-6f);
     EXPECT_NEAR(pose.joints[(int)Joint::R_FOOT].z, rfoot_z, 1e-6f);
     EXPECT_NEAR(pose.joints[(int)Joint::L_TOE].z, lfoot_z, 1e-6f);
@@ -1475,7 +1244,7 @@ DELVE_TEST(root_z_survives_foreshortening) {
     RigPose pose;
     float terrain_z = 4.2f;
     float hips_z = terrain_z + cfg.leg_len + cfg.shin_len;
-    float root_z = terrain_z; // clamped to terrain
+    float root_z = terrain_z;
 
     pose.joints[(int)Joint::ROOT].z = root_z;
     pose.joints[(int)Joint::HIPS].z = hips_z;
@@ -1485,16 +1254,10 @@ DELVE_TEST(root_z_survives_foreshortening) {
     float foot_z_ref = terrain_z;
     apply_foreshortening(pose, foot_z_ref);
 
-    // ROOT must be unchanged
     EXPECT_NEAR(pose.joints[(int)Joint::ROOT].z, root_z, 1e-6f);
-    // HIPS should be compressed
     EXPECT_LT(pose.joints[(int)Joint::HIPS].z, hips_z);
     return true;
 }
-
-// ---- Visual facing / smooth_damp_angle / half-space tests ----
-
-// Test helper: angle-aware smooth_damp (mirrors rig_animation.cpp's static function)
 static float smooth_damp_angle_test(float current, float target, float *velocity,
                                      float smooth_time, float dt) {
     float delta = target - current;
@@ -1504,13 +1267,12 @@ static float smooth_damp_angle_test(float current, float target, float *velocity
 }
 
 DELVE_TEST(smooth_damp_angle_convergence) {
-    // smooth_damp_angle should converge from 0 to π/2 within 5 seconds
     float current = 0.0f;
     float target = glm::half_pi<float>();
     float velocity = 0.0f;
     float dt = 1.0f / 60.0f;
 
-    for (int i = 0; i < 300; ++i)  // 5 seconds at 60 fps
+    for (int i = 0; i < 300; ++i)
         current = smooth_damp_angle_test(current, target, &velocity, 0.15f, dt);
 
     EXPECT_NEAR(current, target, 0.01f);
@@ -1518,7 +1280,6 @@ DELVE_TEST(smooth_damp_angle_convergence) {
 }
 
 DELVE_TEST(smooth_damp_angle_wraps_around) {
-    // From -170° to +170° should take the short path (20°), not the long path (340°)
     float from_deg = -170.0f;
     float to_deg   =  170.0f;
     float current  = glm::radians(from_deg);
@@ -1526,16 +1287,12 @@ DELVE_TEST(smooth_damp_angle_wraps_around) {
     float velocity = 0.0f;
     float dt = 1.0f / 60.0f;
 
-    // After one step, the value should have decreased (going the short way through -180°)
     float after_one = smooth_damp_angle_test(current, target, &velocity, 0.15f, dt);
-    // The shortest path from -170° to +170° is through ±180° (20° gap)
-    // So the value should move toward -180° (decreasing), not toward 0° (increasing)
     EXPECT_LT(after_one, current);
     return true;
 }
 
 DELVE_TEST(visual_facing_lags_behind_facing) {
-    // After 1 frame at a new facing, visual_facing should have moved but not converged
     float visual_facing = 0.0f;
     float visual_facing_rate = 0.0f;
     float target_facing = glm::half_pi<float>();
@@ -1544,11 +1301,9 @@ DELVE_TEST(visual_facing_lags_behind_facing) {
     visual_facing = smooth_damp_angle_test(visual_facing, target_facing,
                                             &visual_facing_rate, 0.15f, dt);
 
-    // Should have moved toward target but not reached it
     EXPECT_GT(visual_facing, 0.01f);
     EXPECT_LT(visual_facing, target_facing * 0.5f);
 
-    // After 1 second (60 more frames), should be very close
     for (int i = 0; i < 60; ++i)
         visual_facing = smooth_damp_angle_test(visual_facing, target_facing,
                                                 &visual_facing_rate, 0.15f, dt);
@@ -1557,7 +1312,6 @@ DELVE_TEST(visual_facing_lags_behind_facing) {
 }
 
 DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
-    // Simulate a 180° turn and verify no foot crosses the character's center line
     LegState legs{};
     ProceduralGait gait{};
     ActorConfig cfg;
@@ -1568,21 +1322,18 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
     float visual_facing = 0.0f;
     float visual_facing_rate = 0.0f;
 
-    // Start feet at neutral under hips
     legs.foot[0] = {-cfg.hip_width, 0.0f, 0.0f};
     legs.foot[1] = { cfg.hip_width, 0.0f, 0.0f};
 
     bool any_crossed = false;
     float hip_sign[2] = {-1.0f, 1.0f};
 
-    // 30 frames right, then 120 frames left
     for (int frame = 0; frame < 150; ++frame) {
         if (frame == 30) { vel_x = -4.0f; }
         pos_x += vel_x * dt;
         float speed = fabsf(vel_x);
         float facing = (vel_x > 0) ? 0.0f : glm::pi<float>();
 
-        // Update visual_facing
         {
             float delta = facing - visual_facing;
             while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
@@ -1598,7 +1349,6 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
         float speed_ratio = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
         float adaptive_duration = gait.step_duration / speed_ratio;
 
-        // Step initiation (simplified, 1D)
         for (int leg = 0; leg < 2; ++leg) {
             float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
             float half_stride = gait.stride_len * 0.5f;
@@ -1614,7 +1364,6 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
                     float step_travel = speed * adaptive_duration;
                     float target_off = (half_stride + step_travel * 0.75f) * speed_factor;
                     float tgt_x = hip_x + vel_dx * target_off;
-                    // Half-space clamp
                     float tgt_lat = (tgt_x - pos_x) * vf_rght_x;
                     if ((hip_sign[leg] < 0 && tgt_lat > 0) || (hip_sign[leg] > 0 && tgt_lat < 0))
                         tgt_x = pos_x + vf_rght_x * hip_sign[leg] * 0.05f;
@@ -1634,7 +1383,6 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
             }
         }
 
-        // Half-space corrective step
         for (int leg = 0; leg < 2; ++leg) {
             if (legs.stepping[leg] || legs.stepping[1 - leg]) continue;
             float lat = (legs.foot[leg].x - pos_x) * vf_rght_x;
@@ -1647,8 +1395,6 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
             }
         }
 
-        // Check: no foot on wrong side when both feet are planted
-        // (during stepping, one foot may temporarily be on wrong side)
         if (!legs.stepping[0] && !legs.stepping[1]) {
             for (int leg = 0; leg < 2; ++leg) {
                 float lat = (legs.foot[leg].x - pos_x) * vf_rght_x;
@@ -1664,14 +1410,10 @@ DELVE_TEST(no_leg_crossing_during_abrupt_turn) {
 }
 
 DELVE_TEST(half_space_corrective_step_triggers) {
-    // Left foot at y=+0.3 when visual_facing=0 (facing +X): rght = (0, 1)
-    // Left hip_sign = -1, so left side is y < 0.
-    // lat = (foot.y - center.y) * rght_y = (0.3 - 0) * 1.0 = 0.3
-    // crossed = (hip_sign < 0) ? (lat > 0.02) = true
-    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;  // facing = 0 → right = (0, 1)
+    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;
     float pos_x = 0.0f, pos_y = 0.0f;
 
-    glm::vec3 left_foot(0.0f, 0.3f, 0.0f);  // on the wrong side
+    glm::vec3 left_foot(0.0f, 0.3f, 0.0f);
     float hip_sign_left = -1.0f;
 
     float lat = (left_foot.x - pos_x) * vf_rght_x + (left_foot.y - pos_y) * vf_rght_y;
@@ -1682,12 +1424,10 @@ DELVE_TEST(half_space_corrective_step_triggers) {
 }
 
 DELVE_TEST(foot_target_clamped_to_correct_side) {
-    // Target on wrong side should be projected back
-    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;  // facing = 0
+    float vf_rght_x = 0.0f, vf_rght_y = 1.0f;
     float pos_x = 0.0f, pos_y = 0.0f;
     float hip_sign_left = -1.0f;
 
-    // Target placed at y=+0.2 (wrong side for left leg)
     float tgt_x = 0.5f, tgt_y = 0.2f;
     float tgt_lat = (tgt_x - pos_x) * vf_rght_x + (tgt_y - pos_y) * vf_rght_y;
 
@@ -1696,15 +1436,10 @@ DELVE_TEST(foot_target_clamped_to_correct_side) {
         tgt_y -= vf_rght_y * tgt_lat - vf_rght_y * hip_sign_left * 0.05f;
     }
 
-    // After clamping, lat should be on correct side (≤ 0 for left leg)
     float new_lat = (tgt_x - pos_x) * vf_rght_x + (tgt_y - pos_y) * vf_rght_y;
     EXPECT_LT(new_lat, 0.0f);
     return true;
 }
-
-// ---- RigTransforms tests ----
-
-// Helper: build a complete T-pose RigPose for transform tests.
 static RigPose make_tpose() {
     RigPose pose;
     ActorConfig cfg;
@@ -1740,7 +1475,6 @@ static RigPose make_tpose() {
     jt[(int)J::R_FOOT]      = {cfg.hip_width, 0, -cfg.leg_len - cfg.shin_len};
     jt[(int)J::R_TOE]       = {cfg.hip_width, cfg.toe_len, -cfg.leg_len - cfg.shin_len};
 
-    // IK virtual joints (just place at end-effectors)
     jt[(int)J::IK_FOOT_L]   = jt[(int)J::L_FOOT];
     jt[(int)J::IK_FOOT_R]   = jt[(int)J::R_FOOT];
     jt[(int)J::IK_HAND_L]   = jt[(int)J::L_HAND];
@@ -1767,13 +1501,11 @@ DELVE_TEST(rig_transforms_default_zero_initialized) {
 DELVE_TEST(rig_transforms_build_bone_basis_degenerate) {
     glm::vec3 right, fwd, up;
 
-    // Zero-length input → identity basis
     build_bone_basis(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), right, fwd, up);
     EXPECT_NEAR(right.x, 1.0f, 1e-5f);
     EXPECT_NEAR(fwd.y,   1.0f, 1e-5f);
     EXPECT_NEAR(up.z,    1.0f, 1e-5f);
 
-    // Parallel input (bone_dir == ref_fwd) → still valid orthonormal
     build_bone_basis(glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f),
                      right, fwd, up);
     float dot_ru = glm::dot(right, up);
@@ -1786,13 +1518,11 @@ DELVE_TEST(rig_transforms_build_bone_basis_degenerate) {
     EXPECT_NEAR(glm::length(fwd),   1.0f, 1e-4f);
     EXPECT_NEAR(glm::length(up),    1.0f, 1e-4f);
 
-    // Standard input → valid orthonormal right-handed
     build_bone_basis(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, 1.0f, 0.0f),
                      right, fwd, up);
     EXPECT_NEAR(glm::length(right), 1.0f, 1e-4f);
     EXPECT_NEAR(glm::length(fwd),   1.0f, 1e-4f);
     EXPECT_NEAR(glm::length(up),    1.0f, 1e-4f);
-    // Right-handed: cross(right, fwd) ≈ up
     glm::vec3 check = glm::cross(right, fwd);
     EXPECT_NEAR(check.x, up.x, 1e-4f);
     EXPECT_NEAR(check.y, up.y, 1e-4f);

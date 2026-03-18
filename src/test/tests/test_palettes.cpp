@@ -46,6 +46,6 @@ DELVE_TEST(stepped_color_returns_valid_palette_color) {
 DELVE_TEST(organic_color_adds_variation) {
   const Palette &p = PALETTES[0];
   uint32_t c = organic_color(0.5f, 100, 200, p);
-  EXPECT_EQ(c & 0xFF000000, (uint32_t)0xFF000000); // alpha = 0xFF
+  EXPECT_EQ(c & 0xFF000000, (uint32_t)0xFF000000);
   return true;
 }

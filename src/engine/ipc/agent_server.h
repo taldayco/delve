@@ -3,10 +3,6 @@
 #include <functional>
 #include <unordered_map>
 
-// JSON-line protocol over Unix domain socket.
-// Each message: {"cmd":"...", "params":{...}}\n
-// Each response: {"ok":true/false, "data":{...}}\n
-
 class AgentServer {
 public:
   using CommandHandler = std::function<std::string(const std::string &params_json)>;
@@ -14,16 +10,9 @@ public:
   explicit AgentServer(const std::string &socket_path);
   ~AgentServer();
 
-  // Register a command handler
   void register_command(const std::string &cmd, CommandHandler handler);
-
-  // Start listening (non-blocking)
   bool start();
-
-  // Poll for incoming connections/data (call each frame)
   void poll();
-
-  // Stop and clean up
   void stop();
 
   bool is_running() const { return running; }

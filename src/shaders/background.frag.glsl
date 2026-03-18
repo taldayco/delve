@@ -23,7 +23,6 @@ float hash21(uvec2 p) {
     return hash11(p.x * 1664525u + p.y * 1013904223u + 12345u);
 }
 
-
 vec3 star_color_from_hash(uvec2 unc) {
     float t = hash21(unc * uvec2(53u, 97u));
 
@@ -57,7 +56,6 @@ float star_layer(vec2 frag_px, float t, float cell_px, float chance, float radiu
             vec2  star_world = nc * cell_px + vec2(sx, sy);
             float dist = length(frag_px - star_world);
 
-
             float r_core = (0.3 + lum * 0.4) * radius_scale;
             float r_glow = r_core * 3.5;
             float core   = exp(-dist * dist / (r_core * r_core + 0.0001));
@@ -79,7 +77,6 @@ void main() {
     vec2 px  = frag_uv * 2048.0 + pan;
 
     vec3 color = vec3(0.0);
-
 
     star_layer(px, time, 120.0, 0.45, 1.5, color);
 

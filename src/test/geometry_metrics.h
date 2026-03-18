@@ -22,7 +22,6 @@ inline int mesh_degenerate_triangles(const TerrainMesh &m) {
       auto &a = layer.vertices[layer.indices[i]];
       auto &b = layer.vertices[layer.indices[i+1]];
       auto &c = layer.vertices[layer.indices[i+2]];
-      // Cross product magnitude
       float abx = b.pos_x - a.pos_x, aby = b.pos_y - a.pos_y, abz = b.pos_z - a.pos_z;
       float acx = c.pos_x - a.pos_x, acy = c.pos_y - a.pos_y, acz = c.pos_z - a.pos_z;
       float cx = aby*acz - abz*acy;

@@ -1,12 +1,3 @@
-// test_mesh_integrity.cpp
-// Tests that catch GPU crashes caused by invalid mesh data:
-//   - out-of-bounds indices (would cause GPU VRAM fault / VK_ERROR_DEVICE_LOST)
-//   - non-finite vertex positions (NaN/Inf corrupt GPU draw calls)
-//   - mesh sizes exceeding practical GPU buffer limits
-//   - lava mesh integrity
-//
-// These tests use Config::HEX_SIZE so any change to the constant is exercised.
-
 #include "test_harness.h"
 #include "geometry_metrics.h"
 #include "terrain_metrics.h"
@@ -52,10 +43,6 @@ static TerrainMesh make_mesh(const MapData &md) {
     return build_terrain_mesh(ts, md, cd);
 }
 
-// ── Index bounds ─────────────────────────────────────────────────────────────
-
-// Every basalt index must be < the vertex count of its layer.
-// An out-of-bounds index causes GPU VRAM fault (address 0x00000000).
 DELVE_TEST(mesh_basalt_indices_in_bounds) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -73,7 +60,6 @@ DELVE_TEST(mesh_basalt_indices_in_bounds) {
     return true;
 }
 
-// Lava indices must be < lava vertex count.
 DELVE_TEST(mesh_lava_indices_in_bounds) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -88,7 +74,6 @@ DELVE_TEST(mesh_lava_indices_in_bounds) {
     return true;
 }
 
-// Triangle lists require index count divisible by 3.
 DELVE_TEST(mesh_index_count_multiple_of_three) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -100,9 +85,6 @@ DELVE_TEST(mesh_index_count_multiple_of_three) {
     return true;
 }
 
-// ── Vertex position sanity ────────────────────────────────────────────────────
-
-// No NaN or Inf in basalt vertex positions.
 DELVE_TEST(mesh_basalt_vertex_positions_finite) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -116,7 +98,6 @@ DELVE_TEST(mesh_basalt_vertex_positions_finite) {
     return true;
 }
 
-// No NaN or Inf in lava vertex positions.
 DELVE_TEST(mesh_lava_vertex_positions_finite) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -128,7 +109,6 @@ DELVE_TEST(mesh_lava_vertex_positions_finite) {
     return true;
 }
 
-// Contour vertex positions must be finite.
 DELVE_TEST(mesh_contour_vertex_positions_finite) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -140,15 +120,11 @@ DELVE_TEST(mesh_contour_vertex_positions_finite) {
     return true;
 }
 
-// Basalt vertex positions should be within reasonable map bounds.
-// Map is MW x MH pixels; world coords = pixel / HEX_SIZE.
-// Allow 10% margin beyond the map edge.
 DELVE_TEST(mesh_basalt_vertex_positions_within_map_bounds) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
     float max_wx = (float)MW / Config::HEX_SIZE * 1.1f;
     float max_wy = (float)MH / Config::HEX_SIZE * 1.1f;
-    // Hex columns can extend below 0 slightly for off-center grids.
     float min_wx = -(float)MW / Config::HEX_SIZE * 0.1f;
     float min_wy = -(float)MH / Config::HEX_SIZE * 0.1f;
     for (auto &layer : mesh.basalt_layers) {
@@ -165,11 +141,6 @@ DELVE_TEST(mesh_basalt_vertex_positions_within_map_bounds) {
     return true;
 }
 
-// ── GPU buffer size limits ────────────────────────────────────────────────────
-
-// Total basalt vertex count must not exceed what GPU can handle in one draw.
-// Vulkan maxVertexInputAttributes typically limits usable verts to ~16M per draw;
-// we use a conservative 4M to catch runaway column generation early.
 DELVE_TEST(mesh_basalt_vertex_count_gpu_safe) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -183,7 +154,6 @@ DELVE_TEST(mesh_basalt_vertex_count_gpu_safe) {
     return true;
 }
 
-// Total basalt index count must not exceed GPU-safe limit.
 DELVE_TEST(mesh_basalt_index_count_gpu_safe) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
@@ -197,26 +167,20 @@ DELVE_TEST(mesh_basalt_index_count_gpu_safe) {
     return true;
 }
 
-// ── Structural consistency ────────────────────────────────────────────────────
-
-// If columns exist, the mesh must have non-zero vertex/index data.
 DELVE_TEST(mesh_non_empty_when_columns_exist) {
     auto md   = make_map();
-    if (md.columns.empty()) return true; // vacuously OK
+    if (md.columns.empty()) return true;
     auto mesh = make_mesh(md);
     EXPECT_GT(mesh_vertex_count(mesh), (size_t)0);
     EXPECT_GT(mesh_index_count(mesh),  (size_t)0);
     return true;
 }
 
-// Each basalt layer's index references a unique range of the combined vertex buffer.
-// Specifically: no layer should have MORE indices than 3 * vertices (triangle list max).
 DELVE_TEST(mesh_index_to_vertex_ratio_sane) {
     auto md   = make_map();
     auto mesh = make_mesh(md);
     for (auto &layer : mesh.basalt_layers) {
         if (layer.vertices.empty()) continue;
-        // Each vertex participates in at most ~6 triangles (hex fan); allow 10x headroom.
         size_t max_reasonable_indices = layer.vertices.size() * 10;
         if (layer.indices.size() > max_reasonable_indices) {
             fprintf(stderr, "  FAIL: %zu indices for %zu vertices (ratio %.1f > 10)\n",

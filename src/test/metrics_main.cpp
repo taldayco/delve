@@ -36,7 +36,6 @@ int main(int argc, char *argv[]) {
   WorleyParams worley;
   CompositionParams comp;
 
-  // Load from config.json if provided
   if (!config_path.empty()) {
     std::ifstream f(config_path);
     if (f.is_open()) {
@@ -75,7 +74,6 @@ int main(int argc, char *argv[]) {
                    md.contour_lines, md.band_map);
   simplify_contours(md.contour_lines, 0.5f);
 
-  // Build mesh
   TerrainState ts;
   ts.current_palette = 0;
   ts.map_scale = 1.0f;
@@ -87,7 +85,6 @@ int main(int argc, char *argv[]) {
 
   TerrainMesh mesh = build_terrain_mesh(ts, md, cd);
 
-  // Compute metrics
   auto elev_stats = elevation_stats(md.final_elevation);
   auto col_stats = hex_column_height_stats(md.columns);
 

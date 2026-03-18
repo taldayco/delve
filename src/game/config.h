@@ -40,11 +40,6 @@ struct Config {
   static constexpr int DEFAULT_NOISE_LEVELS = 8;
 
 
-  // Isometric projection parameters (canonical source of truth).
-  // Camera (engine/camera/camera.cpp) uses matching local copies.
-  //   iso_x = (wx - wy) * ISO_TW
-  //   iso_y = (wx + wy) * ISO_TH - wz * ISO_HS
-  //   depth = (wx + wy) * ISO_TH + wz
   static constexpr float ISO_TW = 2.0f;
   static constexpr float ISO_TH = 1.0f;
   static constexpr float ISO_HS = 12.5f;

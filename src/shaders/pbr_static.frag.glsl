@@ -16,33 +16,25 @@ layout(location = 0) out vec4 out_color;
 void main() {
     vec3 N = normalize(frag_normal);
 
-    // Ortho projection: view direction is constant for all fragments.
     vec3 V = normalize(view_dir_ws.xyz);
 
-    // Dither base color
     float dither = hex_dither(frag_world_pos.xy);
     vec3 albedo = clamp(frag_color * (1.0 + dither), 0.0, 1.0);
 
-    // Material properties derived from vertex data
     float roughness = mix(0.9, 0.3, frag_sheen);
     float metallic  = frag_sheen * 0.1;
 
-    // --- Directional light (Cook-Torrance) ---
     vec3 L_dir = normalize(light_dir.xyz);
     vec3 dir_radiance = light_col.rgb;
     vec3 color = cook_torrance_brdf(albedo, metallic, roughness, N, V, L_dir, dir_radiance);
 
-    // Add ambient
     color += albedo * light_dir.w;
 
-    // --- Point lights (clustered) ---
     uint cluster_idx = cluster_index();
     uvec2 grid_entry = light_grid[cluster_idx];
     uint offset = grid_entry.x;
     uint count  = grid_entry.y;
 
-    // Cluster depth slicing is suboptimal for the isometric view matrix,
-    // so some clusters miss lights. Fall back to brute-force when empty.
     if (count == 0u && LIGHT_COUNT > 0u) {
         count = min(LIGHT_COUNT, 128u);
         for (uint i = 0u; i < count; ++i) {
@@ -77,7 +69,6 @@ void main() {
         }
     }
 
-    // Star ambient (artistic effect, preserved from original)
     float NdotUp   = max(N.z, 0.0);
     float star_int = star_light.w * mix(frag_sheen * 0.2, 1.0, NdotUp);
     color += star_light.rgb * star_int * frag_sheen;

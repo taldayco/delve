@@ -9,6 +9,7 @@ layout(set = 1, binding = 0) uniform SceneUniforms {
     vec4 grid_params;
     vec4 depth_params;
     vec4 cam_world_pos;
+    vec4 view_dir_ws;
 };
 
 #define TIME              params1.x

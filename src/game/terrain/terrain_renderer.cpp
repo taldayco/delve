@@ -916,6 +916,17 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
       !global_index_ssbo || !point_light_ssbo || !cull_counter_ssbo)
     return;
 
+  if (cluster_grid_w == 0 || cluster_grid_y == 0) {
+    static bool warned = false;
+    if (!warned) {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                  "stage_cull_lights: cluster grid not built (grid %ux%u), skipping light culling",
+                  cluster_grid_w, cluster_grid_y);
+      warned = true;
+    }
+    return;
+  }
+
 
 
 
@@ -1055,6 +1066,16 @@ void TerrainRenderer::draw(SDL_GPUCommandBuffer *cmd,
                             const std::vector<GpuPointLight> &lights,
                             UploadManager &uploader) {
   if (!initialized || !has_data) return;
+
+  if (!lights.empty() && cluster_grid_w == 0) {
+    static bool warned = false;
+    if (!warned) {
+      SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                  "TerrainRenderer::draw: %zu lights present but cluster grid not built",
+                  lights.size());
+      warned = true;
+    }
+  }
 
   upload_lights(cmd, uploader, lights);
   stage_cull_lights(cmd, uniforms, lights);

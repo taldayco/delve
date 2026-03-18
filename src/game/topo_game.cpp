@@ -515,7 +515,8 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
         time, ts->contour_opacity,
         (uint32_t)point_lights.size(),
         camera.world_x, camera.world_y, camera.follow_z,
-        24u);
+        24u,
+        camera.near_plane, camera.far_plane);
 
     terrain_renderer.draw(frame.cmd, frame.swapchain,
                           frame.swapchain_w, frame.swapchain_h,

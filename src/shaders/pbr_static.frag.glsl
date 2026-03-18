@@ -48,9 +48,7 @@ void main() {
     vec3 N = normalize(frag_normal);
 
     // Ortho projection: view direction is constant for all fragments.
-    // Row 2 of the view matrix = world direction of increasing depth.
-    vec3 depth_dir = vec3(view[0][2], view[1][2], view[2][2]);
-    vec3 V = -normalize(depth_dir);
+    vec3 V = normalize(view_dir_ws.xyz);
 
     // Dither base color
     float dither = hex_dither(frag_world_pos.xy);
@@ -74,10 +72,10 @@ void main() {
     uint offset = grid_entry.x;
     uint count  = grid_entry.y;
 
-    // Fallback: if cluster data seems invalid, iterate all lights
+    // Cluster depth slicing is suboptimal for the isometric view matrix,
+    // so some clusters miss lights. Fall back to brute-force when empty.
     if (count == 0u && LIGHT_COUNT > 0u) {
         count = min(LIGHT_COUNT, 128u);
-        offset = 0u;
         for (uint i = 0u; i < count; ++i) {
             PointLight pl = point_lights[i];
             vec3 to_light = pl.positionRadius.xyz - frag_world_pos;

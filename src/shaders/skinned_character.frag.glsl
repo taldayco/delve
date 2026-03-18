@@ -82,8 +82,9 @@ void main() {
     uint offset = grid_entry.x;
     uint count  = grid_entry.y;
 
+    // Cluster depth slicing is suboptimal for the isometric view matrix,
+    // so some clusters miss lights. Fall back to brute-force when empty.
     if (count == 0u && LIGHT_COUNT > 0u) {
-        // Fallback: iterate all lights
         uint total = min(LIGHT_COUNT, 128u);
         for (uint i = 0u; i < total; ++i) {
             lit += apply_point_light(point_lights[i], frag_world_pos, N, base_color);

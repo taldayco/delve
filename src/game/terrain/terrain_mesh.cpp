@@ -156,7 +156,8 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                float time, float contour_opacity,
                                uint32_t light_count,
                                float cam_x, float cam_y, float cam_z,
-                               uint32_t num_slices) {
+                               uint32_t num_slices,
+                               float near_plane, float far_plane) {
   SceneUniforms u = {};
 
   u.view       = view;
@@ -189,13 +190,21 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.grid_size_x   = (float)cluster_tiles_x;
   u.grid_size_y   = (float)cluster_tiles_y;
   u.num_slices    = (float)num_slices;
-  u.near_plane    = -150.0f;
-  u.far_plane     =  150.0f;
+  u.near_plane    = near_plane;
+  u.far_plane     = far_plane;
   u.light_count_f = (float)light_count;
 
   u.cam_world_x = cam_x;
   u.cam_world_y = cam_y;
   u.cam_world_z = cam_z;
+
+  // Isometric depth direction is (TH, TH, 1) where TH = tan(30°) ≈ 0.57735.
+  // View direction points from scene toward camera = negative of depth dir.
+  constexpr float TH = 0.57735026919f;
+  constexpr float inv_len = 1.0f / 1.2909944487f; // 1/sqrt(TH^2+TH^2+1)
+  u.view_dir_x = -TH * inv_len;
+  u.view_dir_y = -TH * inv_len;
+  u.view_dir_z = -1.0f * inv_len;
 
   return u;
 }

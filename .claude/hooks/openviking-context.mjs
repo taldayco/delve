@@ -8,12 +8,12 @@ const PROJECT_ROOT = '/home/neto/Projects/delve/';
 const PROJECT_URI = 'viking://resources/delve/';
 
 const DIRECTORY_MAP = [
-  ['src/game/terrain/', 'viking://resources/delve/terrain/'],
-  ['src/game/render/',  'viking://resources/delve/actor/'],
-  ['src/shaders/',      'viking://resources/delve/shader/'],
-  ['src/engine/',       'viking://resources/delve/engine/'],
-  ['src/test/',         'viking://resources/delve/test/'],
-  ['src/game/',         'viking://resources/delve/game/'],
+  ['src/game/terrain/', 'viking://resources/delve/src/game/terrain/'],
+  ['src/game/render/',  'viking://resources/delve/src/game/render/'],
+  ['src/shaders/',      'viking://resources/delve/src/shaders/'],
+  ['src/engine/',       'viking://resources/delve/src/engine/'],
+  ['src/test/',         'viking://resources/delve/src/test/'],
+  ['src/game/',         'viking://resources/delve/src/game/'],
 ];
 
 // --- HTTP helpers ---
@@ -40,11 +40,20 @@ async function contentOverview(uri) {
   return viking('GET', `/api/v1/content/overview?uri=${encodeURIComponent(uri)}`);
 }
 
-// Basic vector similarity search (no session context needed)
+// Semantic similarity search
 async function find(query, limit, targetUri) {
   const body = { query, limit };
   if (targetUri) body.target_uri = targetUri;
   return viking('POST', '/api/v1/search/find', body);
+}
+
+// Extract flat list of MatchedContext from find/search response
+function flattenResults(result) {
+  const out = [];
+  if (result.resources) out.push(...result.resources);
+  if (result.skills) out.push(...result.skills);
+  if (result.memories) out.push(...result.memories);
+  return out;
 }
 
 async function fsLs(uri) {
@@ -83,20 +92,14 @@ function parentUri(uri) {
   return parts.join('/') + '/';
 }
 
-// Extract flat list of MatchedContext from find/search response
-function flattenResults(result) {
-  const out = [];
-  if (result.resources) out.push(...result.resources);
-  if (result.skills) out.push(...result.skills);
-  if (result.memories) out.push(...result.memories);
-  return out;
-}
-
 // --- Event handlers ---
 
 async function handleSessionStart() {
-  const result = await contentOverview('viking://agent/skills/delve-subsystems');
-  return { event: 'SessionStart', context: 'project_taxonomy', data: result };
+  // List top-level project structure as session context
+  const listing = await fsLs(PROJECT_URI);
+  if (!listing || !Array.isArray(listing)) return null;
+  const dirs = listing.filter(i => i.isDir).map(i => ({ uri: i.uri, name: i.name }));
+  return { event: 'SessionStart', context: 'project_structure', dirs };
 }
 
 async function handleUserPrompt(data) {
@@ -141,34 +144,19 @@ async function handlePostRead(data) {
   const listing = await fsLs(parentDir);
   if (!listing || !Array.isArray(listing)) return null;
 
-  // Filter to sibling directories (abstracts are directory-oriented) and files
   const fileUri = uri.replace(/\/$/, '');
-  const siblings = listing.filter((item) => {
-    const itemUri = (item.uri || '').replace(/\/$/, '');
-    return itemUri !== fileUri;
-  }).slice(0, 5);
+  const siblings = listing
+    .filter((item) => (item.uri || '').replace(/\/$/, '') !== fileUri)
+    .slice(0, 10)
+    .map(item => ({ uri: item.uri, name: item.name, isDir: item.isDir, size: item.size }));
 
   if (siblings.length === 0) return null;
-
-  const abstracts = await Promise.all(
-    siblings.map(async (item) => {
-      try {
-        const abs = await contentAbstract(item.uri);
-        return { uri: item.uri, name: item.name, isDir: item.isDir, content: abs };
-      } catch {
-        return null;
-      }
-    })
-  );
-
-  const valid = abstracts.filter(Boolean);
-  if (valid.length === 0) return null;
 
   return {
     event: 'PostToolUse_Read',
     context: 'sibling_files',
     file: filePath,
-    siblings: valid,
+    siblings,
   };
 }
 
@@ -194,8 +182,7 @@ async function handlePostGrep(data) {
   const top5 = remaining.slice(0, 5);
   const enriched = await Promise.all(
     top5.map(async (r, i) => {
-      // Upgrade top result to L1 if high confidence
-      if (i === 0 && r.score > 0.8) {
+      if (i === 0 && r.score > 0.4) {
         try {
           const ov = await contentOverview(r.uri);
           return { uri: r.uri, score: r.score, level: 'L1', content: ov };

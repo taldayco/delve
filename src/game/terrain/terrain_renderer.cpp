@@ -950,7 +950,7 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
   struct CullUniforms {
     float tile_px, grid_size_x, grid_size_y, num_slices;
     float near_plane, far_plane, screen_w, screen_h;
-    float light_count_f, _pad0, _pad1, _pad2;
+    float light_count_f, ndc_radius_scale, _pad1, _pad2;
   } cu;
   static_assert(sizeof(CullUniforms) == 48, "CullUniforms must be 48 bytes");
   cu.tile_px       = u.tile_px;
@@ -962,7 +962,10 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
   cu.screen_w      = u.grid_size_x * u.tile_px;
   cu.screen_h      = u.grid_size_y * u.tile_px;
   cu.light_count_f = (float)current_light_count;
-  cu._pad0 = cu._pad1 = cu._pad2 = 0.0f;
+  // Approximate world-to-NDC scale for light radius: use the smaller ortho axis scale
+  glm::mat4 proj = u.projection;
+  cu.ndc_radius_scale = 0.0f; // unused — AABB-AABB test in shader
+  cu._pad1 = cu._pad2 = 0.0f;
   glm::mat4 view_proj = u.projection * u.view;
 
 
@@ -982,7 +985,7 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
 
   uint32_t dispX = (cluster_grid_w + 15) / 16;
   uint32_t dispY = (cluster_grid_y + 8) / 9;
-  uint32_t dispZ = 24;
+  uint32_t dispZ = (uint32_t)cu.num_slices;
   SDL_DispatchGPUCompute(pass, dispX, dispY, dispZ);
   SDL_EndGPUComputePass(pass);
 }

@@ -26,8 +26,8 @@ struct CameraState {
 
   float base_frustum_half_w = 64.0f;
   float base_frustum_half_h = 64.0f;
-  float near_plane = -500.0f;
-  float far_plane  =  500.0f;
+  float near_plane = -150.0f;
+  float far_plane  =  150.0f;
 };
 
 struct CameraMatrices {

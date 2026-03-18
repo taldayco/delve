@@ -70,4 +70,5 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                uint32_t cluster_tiles_x, uint32_t cluster_tiles_y,
                                float time, float contour_opacity,
                                uint32_t light_count,
-                               float cam_x, float cam_y, float cam_z);
+                               float cam_x, float cam_y, float cam_z,
+                               uint32_t num_slices);

@@ -155,7 +155,8 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                uint32_t cluster_tiles_x, uint32_t cluster_tiles_y,
                                float time, float contour_opacity,
                                uint32_t light_count,
-                               float cam_x, float cam_y, float cam_z) {
+                               float cam_x, float cam_y, float cam_z,
+                               uint32_t num_slices) {
   SceneUniforms u = {};
 
   u.view       = view;
@@ -187,9 +188,9 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.tile_px       = 16.0f;
   u.grid_size_x   = (float)cluster_tiles_x;
   u.grid_size_y   = (float)cluster_tiles_y;
-  u.num_slices    = 24.0f;
-  u.near_plane    = -500.0f;
-  u.far_plane     =  500.0f;
+  u.num_slices    = (float)num_slices;
+  u.near_plane    = -150.0f;
+  u.far_plane     =  150.0f;
   u.light_count_f = (float)light_count;
 
   u.cam_world_x = cam_x;

@@ -163,6 +163,7 @@ private:
 
   uint32_t cluster_grid_w = 0;
   uint32_t cluster_grid_y = 0;
+  uint32_t num_depth_slices = 24;
 
 
   uint32_t current_light_count = 0;

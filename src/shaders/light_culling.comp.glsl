@@ -14,7 +14,7 @@ layout(set = 1, binding = 0) uniform CullUniforms {
     float screen_h;
 
     float light_count_f;
-    float _pad0;
+    float ndc_radius_scale;
     float _pad1;
     float _pad2;
 };
@@ -44,18 +44,10 @@ layout(set = 0, binding = 2) buffer LightGridBuffer { LightGridEntry lightGrid[]
 layout(set = 0, binding = 3) buffer IndexBuffer     { uint globalLightIndexList[];      };
 layout(set = 0, binding = 4) buffer CounterBuffer   { uint globalIndexCount;            };
 
-float sqDistPointAABB(vec3 p, vec3 aabbMin, vec3 aabbMax) {
-    float sqDist = 0.0;
-    for (int i = 0; i < 3; ++i) {
-        float v = p[i];
-        if (v < aabbMin[i]) sqDist += (aabbMin[i] - v) * (aabbMin[i] - v);
-        if (v > aabbMax[i]) sqDist += (v - aabbMax[i]) * (v - aabbMax[i]);
-    }
-    return sqDist;
-}
-
-bool sphereAABB(vec3 center, float radius, vec3 aabbMin, vec3 aabbMax) {
-    return sqDistPointAABB(center, aabbMin, aabbMax) <= radius * radius;
+bool aabbOverlap(vec3 aMin, vec3 aMax, vec3 bMin, vec3 bMax) {
+    return aMin.x <= bMax.x && aMax.x >= bMin.x &&
+           aMin.y <= bMax.y && aMax.y >= bMin.y &&
+           aMin.z <= bMax.z && aMax.z >= bMin.z;
 }
 
 vec3 world_to_cluster_space(vec3 world_pos) {
@@ -82,14 +74,18 @@ void main() {
 
     uint light_count = uint(light_count_f);
     for (uint i = 0; i < light_count && i < 1024u; ++i) {
-        vec3  lpos    = world_to_cluster_space(lights[i].positionRadius.xyz);
-        float lradius = lights[i].positionRadius.w * 0.01;
-
-        vec3 aabbMinZ = vec3(aabbMin.xy, aabbMin.z - 0.5);
-        vec3 aabbMaxZ = vec3(aabbMax.xy, aabbMax.z + 0.5);
-
+        vec3 center = lights[i].positionRadius.xyz;
+        float r = lights[i].positionRadius.w;
+        vec3 ndc_px = world_to_cluster_space(center + vec3(r, 0, 0));
+        vec3 ndc_nx = world_to_cluster_space(center - vec3(r, 0, 0));
+        vec3 ndc_py = world_to_cluster_space(center + vec3(0, r, 0));
+        vec3 ndc_ny = world_to_cluster_space(center - vec3(0, r, 0));
+        vec3 ndc_pz = world_to_cluster_space(center + vec3(0, 0, r));
+        vec3 ndc_nz = world_to_cluster_space(center - vec3(0, 0, r));
+        vec3 light_min = min(min(min(ndc_px, ndc_nx), min(ndc_py, ndc_ny)), min(ndc_pz, ndc_nz));
+        vec3 light_max = max(max(max(ndc_px, ndc_nx), max(ndc_py, ndc_ny)), max(ndc_pz, ndc_nz));
         float intensity = lights[i].colorIntensity.w;
-        if (intensity > 0.0 && sphereAABB(lpos, lradius, aabbMinZ, aabbMaxZ)) {
+        if (intensity > 0.0 && aabbOverlap(light_min, light_max, aabbMin, aabbMax)) {
             if (visibleCount < 128u) {
                 visibleIndices[visibleCount] = i;
                 visibleCount++;

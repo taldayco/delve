@@ -19,6 +19,14 @@ layout(set = 2, binding = 0) readonly buffer LightBuffer {
     PointLight point_lights[];
 };
 
+layout(set = 2, binding = 1) readonly buffer LightGridBuffer {
+    uvec2 light_grid[];  // (offset, count) per cluster
+};
+
+layout(set = 2, binding = 2) readonly buffer IndexBuffer {
+    uint global_light_indices[];
+};
+
 vec3 apply_point_light(PointLight light, vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3  to_light = light.positionRadius.xyz - frag_pos;
     float dist     = length(to_light);
@@ -67,9 +75,23 @@ void main() {
 
     vec3 lit = apply_directional(dithered, frag_normal);
 
-    uint count = LIGHT_COUNT;
-    for (uint i = 0; i < count && i < 128u; ++i) {
-        lit += apply_point_light(point_lights[i], frag_world_pos, frag_normal, dithered);
+    // Clustered point lighting with fallback
+    uint cluster_idx = cluster_index();
+    uvec2 grid_entry = light_grid[cluster_idx];
+    uint offset = grid_entry.x;
+    uint count  = grid_entry.y;
+
+    if (count == 0u && LIGHT_COUNT > 0u) {
+        // Fallback: iterate all lights
+        uint total = min(LIGHT_COUNT, 128u);
+        for (uint i = 0u; i < total; ++i) {
+            lit += apply_point_light(point_lights[i], frag_world_pos, frag_normal, dithered);
+        }
+    } else {
+        for (uint i = 0u; i < count; ++i) {
+            uint light_idx = global_light_indices[offset + i];
+            lit += apply_point_light(point_lights[light_idx], frag_world_pos, frag_normal, dithered);
+        }
     }
 
     vec3 final_color = apply_star_ambient(lit, frag_normal, frag_sheen);

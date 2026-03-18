@@ -65,7 +65,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     pi.target_info.num_color_targets                 = 1;
     pi.target_info.has_depth_stencil_target          = true;
     pi.target_info.depth_stencil_format              = depth_format_;
-    pi.depth_stencil_state.compare_op                = SDL_GPU_COMPAREOP_LESS;
+    pi.depth_stencil_state.compare_op                = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
     pi.depth_stencil_state.enable_depth_test         = true;
     pi.depth_stencil_state.enable_depth_write        = true;
 
@@ -286,10 +286,10 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
         // The mesh's default forward is +Z (Y-up), which maps to -Y in Z-up, so we add
         // a +π/2 facing offset so that facing=0 (velocity along +X) points the mesh to +X.
         constexpr float kCharacterScale = 0.8f; // ~1.4 game units for 1.77m mesh
-        constexpr float kIsoZScale = ISO_VERT_SCALE; // 0.8165 — compress Z for iso
+        constexpr float kIsoZScale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE; // 0.75072 — match rig renderer
         constexpr float kFacingOffset = glm::half_pi<float>();
         float s = kCharacterScale * debug_uniform_scale;
-        glm::vec3 scale_vec(s, s, s * kIsoZScale);
+        glm::vec3 scale_vec(s, s * kIsoZScale, s);
         root = glm::translate(glm::mat4(1.f), player_pos)
              * glm::rotate(glm::mat4(1.f), facing + kFacingOffset, glm::vec3(0.f, 0.f, 1.f))
              * glm::rotate(glm::mat4(1.f), glm::radians(90.0f), glm::vec3(1.f, 0.f, 0.f))

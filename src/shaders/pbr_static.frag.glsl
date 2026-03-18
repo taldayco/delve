@@ -47,8 +47,10 @@ float hex_dither(vec2 world_xy) {
 void main() {
     vec3 N = normalize(frag_normal);
 
-    vec3 cam_pos = cam_world_pos.xyz;
-    vec3 V = normalize(cam_pos - frag_world_pos);
+    // Ortho projection: view direction is constant for all fragments.
+    // Row 2 of the view matrix = world direction of increasing depth.
+    vec3 depth_dir = vec3(view[0][2], view[1][2], view[2][2]);
+    vec3 V = -normalize(depth_dir);
 
     // Dither base color
     float dither = hex_dither(frag_world_pos.xy);

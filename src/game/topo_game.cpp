@@ -300,7 +300,7 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
       if (w > 0 && h > 0) {
         SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(gpu.device);
         if (cmd) {
-          terrain_renderer.rebuild_clusters_if_needed(cmd, w, h, 16.0f, 24, 1.0f, 1000.0f);
+          terrain_renderer.rebuild_clusters_if_needed(cmd, w, h, 16.0f, 24, camera.near_plane, camera.far_plane);
           SDL_SubmitGPUCommandBuffer(cmd);
           SDL_WaitForGPUIdle(gpu.device);
         }
@@ -514,7 +514,8 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
         terrain_renderer.cluster_tiles_x(), terrain_renderer.cluster_tiles_y(),
         time, ts->contour_opacity,
         (uint32_t)point_lights.size(),
-        camera.world_x, camera.world_y, camera.follow_z);
+        camera.world_x, camera.world_y, camera.follow_z,
+        24u);
 
     terrain_renderer.draw(frame.cmd, frame.swapchain,
                           frame.swapchain_w, frame.swapchain_h,

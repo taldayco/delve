@@ -118,3 +118,18 @@ DELVE_TEST(hex_roundtrip_100pct_accuracy) {
   EXPECT_EQ(accurate, total);
   return true;
 }
+
+DELVE_TEST(hex_roundtrip_at_map_extents) {
+  int total = 0, accurate = 0;
+  for (int q = -128; q <= 128; ++q) {
+    for (int r = -128; r <= 128; ++r) {
+      float px, py;
+      hex_to_pixel(q, r, HEX, px, py);
+      HexCoord back = pixel_to_hex(px, py, HEX);
+      ++total;
+      if (back.q == q && back.r == r) ++accurate;
+    }
+  }
+  EXPECT_EQ(accurate, total);
+  return true;
+}

@@ -88,6 +88,36 @@ DELVE_TEST(pipeline_mesh_no_degenerate_triangles) {
   return true;
 }
 
+DELVE_TEST(pipeline_full_resolution_1024) {
+  MapData md;
+  md.allocate(1024, 1024);
+
+  ElevationParams elev;
+  elev.seed = 77;
+  RiverParams river;
+  river.seed = 78;
+  WorleyParams worley;
+  worley.seed = 79;
+  CompositionParams comp;
+
+  compose_layers(md, elev, river, worley, comp, nullptr);
+  md.columns = generate_basalt_columns_v2(md, Config::HEX_SIZE);
+
+  EXPECT_GT((float)md.columns.size(), 0.0f);
+
+  for (float v : md.final_elevation) {
+    EXPECT_FALSE(std::isnan(v));
+    EXPECT_FALSE(std::isinf(v));
+  }
+
+  bool has_positive = false;
+  for (float v : md.basalt_height) {
+    if (v > 0.0f) { has_positive = true; break; }
+  }
+  EXPECT_TRUE(has_positive);
+  return true;
+}
+
 DELVE_TEST(pipeline_mesh_valid_normals) {
   auto md = run_pipeline();
 

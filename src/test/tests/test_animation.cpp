@@ -1,4 +1,5 @@
 #include "rig.h"
+#include "render/rig_math.h"
 #include "animation_metrics.h"
 #include "config.h"
 #include "test_harness.h"
@@ -552,7 +553,7 @@ DELVE_TEST(planted_foot_clamped_to_stride_len) {
 DELVE_TEST(ik_ankle_clamp_prevents_hyperextension) {
   ActorConfig cfg;
   float a = cfg.leg_len, b = cfg.shin_len;
-  float max_D = a + b - 0.005f;
+  float max_D = a + b - 0.001f;
   float stretch_limit = max_D * 1.15f;
 
   glm::vec3 H(0, 0, 0);
@@ -577,19 +578,21 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
   legs.foot[1] = { cfg.hip_width, 0.0f, 0.0f};
 
   float dt = 1.0f / 60.0f;
-  float pos_x = 0.0f;
-  float vel_x = 4.0f;
+  float pos_x = 0.0f, pos_y = 0.0f;
+  float vel_x = 3.0f, vel_y = 2.0f;
   float max_horiz = gait.stride_len * 0.9f;
   float max_observed = 0.0f;
-  float visual_facing = 0.0f;
+  float visual_facing = atan2f(vel_y, vel_x);
   float visual_facing_rate = 0.0f;
 
   for (int frame = 0; frame < 180; ++frame) {
-    if (frame == 60) vel_x = -4.0f;
+    if (frame == 60) { vel_x = -3.0f; vel_y = -2.0f; }
     pos_x += vel_x * dt;
-    float speed = fabsf(vel_x);
+    pos_y += vel_y * dt;
+    float speed = sqrtf(vel_x * vel_x + vel_y * vel_y);
     float vel_dx = vel_x / speed;
-    float facing = (vel_x > 0) ? 0.0f : 3.14159265f;
+    float vel_dy = vel_y / speed;
+    float facing = atan2f(vel_y, vel_x);
 
     {
       float delta = facing - visual_facing;
@@ -599,28 +602,48 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
                                         &visual_facing_rate, 0.15f, dt);
     }
 
-    float vf_rght_x = -sinf(visual_facing);
+    float vf_fwd_x = cosf(visual_facing), vf_fwd_y = sinf(visual_facing);
+    float turn_urgency = 0.0f;
+    {
+      float d = facing - visual_facing;
+      while (d >  glm::pi<float>()) d -= glm::two_pi<float>();
+      while (d < -glm::pi<float>()) d += glm::two_pi<float>();
+      turn_urgency = std::min(1.0f, fabsf(d) / glm::pi<float>());
+    }
+    float turn_blend = turn_urgency * 0.7f;
+    float step_dx = vel_dx * (1.0f - turn_blend) + vf_fwd_x * turn_blend;
+    float step_dy = vel_dy * (1.0f - turn_blend) + vf_fwd_y * turn_blend;
+    float step_len = sqrtf(step_dx * step_dx + step_dy * step_dy);
+    if (step_len > 0.001f) { step_dx /= step_len; step_dy /= step_len; }
+    else { step_dx = vf_fwd_x; step_dy = vf_fwd_y; }
+
+    float step_rght_x = -step_dy, step_rght_y = step_dx;
     float hip_sign[2] = {-1.0f, 1.0f};
 
     float speed_ratio = std::max(0.4f, std::min(1.0f, speed / gait.move_speed));
     float adaptive_duration = gait.step_duration / speed_ratio;
+    float speed_factor = std::min(1.0f, speed / (gait.move_speed * 0.15f));
 
     for (int leg = 0; leg < 2; ++leg) {
       int other = 1 - leg;
-      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_x = pos_x + step_rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_y = pos_y + step_rght_y * hip_sign[leg] * cfg.hip_width;
       float half_stride = gait.stride_len * 0.5f;
-      float center_x = hip_x + vel_dx * half_stride;
+      float center_x = hip_x + step_dx * half_stride;
+      float center_y = hip_y + step_dy * half_stride;
 
       if (!legs.stepping[leg]) {
         float dx = legs.foot[leg].x - center_x;
-        float dist = fabsf(dx);
+        float dy = legs.foot[leg].y - center_y;
+        float dist = sqrtf(dx * dx + dy * dy);
         if (dist > half_stride && !legs.stepping[other]) {
           legs.stepping[leg] = true;
           legs.progress[leg] = 0.0f;
           legs.prev_foot[leg] = legs.foot[leg];
           float step_travel = speed * adaptive_duration;
-          float target_off = half_stride + step_travel * 0.75f;
-          legs.target[leg] = {hip_x + vel_dx * target_off, 0.0f, 0.0f};
+          float target_off = (half_stride + step_travel * 0.75f) * speed_factor;
+          legs.target[leg] = {hip_x + step_dx * target_off,
+                              hip_y + step_dy * target_off, 0.0f};
         }
       }
       if (legs.stepping[leg]) {
@@ -629,6 +652,8 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
         float w = p*p*p*(p*(p*6.0f-15.0f)+10.0f);
         legs.foot[leg].x = legs.prev_foot[leg].x +
             (legs.target[leg].x - legs.prev_foot[leg].x) * w;
+        legs.foot[leg].y = legs.prev_foot[leg].y +
+            (legs.target[leg].y - legs.prev_foot[leg].y) * w;
         if (legs.progress[leg] >= 1.0f) {
           legs.stepping[leg] = false;
           legs.foot[leg] = legs.target[leg];
@@ -637,28 +662,19 @@ DELVE_TEST(no_hyperextension_during_180_turn) {
     }
 
     for (int leg = 0; leg < 2; ++leg) {
-      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_x = pos_x + step_rght_x * hip_sign[leg] * cfg.hip_width;
+      float hip_y = pos_y + step_rght_y * hip_sign[leg] * cfg.hip_width;
+      float dx = legs.foot[leg].x - hip_x;
+      float dy = legs.foot[leg].y - hip_y;
+      float hd = sqrtf(dx * dx + dy * dy);
       if (!legs.stepping[leg]) {
-        float dx = legs.foot[leg].x - hip_x;
-        float hd = fabsf(dx);
         if (hd > max_horiz) {
-          legs.foot[leg].x = hip_x + (dx / hd) * max_horiz;
-        }
-      } else if (legs.progress[leg] < 0.4f) {
-        float tdx = legs.target[leg].x - hip_x;
-        float th = fabsf(tdx);
-        if (th > max_horiz) {
-          float step_travel = speed * adaptive_duration;
-          float target_off = gait.stride_len * 0.5f + step_travel * 0.75f;
-          legs.target[leg].x = hip_x + vel_dx * target_off;
+          float s = max_horiz / hd;
+          legs.foot[leg].x = hip_x + dx * s;
+          legs.foot[leg].y = hip_y + dy * s;
         }
       }
-    }
-
-    for (int leg = 0; leg < 2; ++leg) {
-      float hip_x = pos_x + vf_rght_x * hip_sign[leg] * cfg.hip_width;
-      float d = fabsf(legs.foot[leg].x - hip_x);
-      max_observed = std::max(max_observed, d);
+      max_observed = std::max(max_observed, hd);
     }
   }
 
@@ -943,45 +959,14 @@ DELVE_TEST(look_at_weight_zero_no_offset) {
     EXPECT_NEAR(effective_yaw, 0.0f, 1e-6f);
     return true;
 }
-static void test_solve_two_bone(glm::vec3 H, glm::vec3 target,
-                                float a, float b,
-                                glm::vec3 pole, glm::vec3 fallback_perp,
-                                glm::vec3 &out_mid, glm::vec3 &out_end) {
-    out_end = target;
-    glm::vec3 axis = target - H;
-    float D = glm::length(axis);
-    float min_D = fabsf(a - b) + 0.001f;
-    float max_D = a + b - 0.005f;
-    float stretch_limit = max_D * 1.15f;
-    if (D > stretch_limit && D > 1e-5f)
-        out_end = H + (axis / D) * stretch_limit;
-    D = std::max(min_D, std::min(D, max_D));
-    if (glm::length(axis) > 1e-5f)
-        axis = glm::normalize(axis) * D;
-    else
-        axis = glm::vec3(0, 0, -D);
-    float cos_alpha = (a * a + D * D - b * b) / (2.0f * a * D);
-    cos_alpha = std::max(-1.0f, std::min(1.0f, cos_alpha));
-    float alpha = acosf(cos_alpha);
-    glm::vec3 axis_n = glm::normalize(axis);
-    glm::vec3 pole_off = pole - H;
-    glm::vec3 perp = pole_off - glm::dot(pole_off, axis_n) * axis_n;
-    if (glm::length(perp) > 1e-5f)
-        perp = glm::normalize(perp);
-    else
-        perp = fallback_perp;
-    glm::vec3 dir = axis_n * cosf(alpha) + perp * sinf(alpha);
-    out_mid = H + dir * a;
-}
-
 DELVE_TEST(two_bone_solver_mid_joint_distance) {
     ActorConfig cfg;
     glm::vec3 H(0, 0, 0);
     glm::vec3 target(0, 0, -(cfg.arm_len + cfg.forearm_len) * 0.8f);
     glm::vec3 pole(0, -0.3f, -0.1f);
     glm::vec3 mid, end;
-    test_solve_two_bone(H, target, cfg.arm_len, cfg.forearm_len,
-                        pole, glm::vec3(0, -1, 0), mid, end);
+    solve_two_bone(H, target, cfg.arm_len, cfg.forearm_len,
+                   pole, glm::vec3(0, -1, 0), mid, end);
 
     float mid_dist = glm::length(mid - H);
     EXPECT_NEAR(mid_dist, cfg.arm_len, 0.01f);
@@ -996,11 +981,11 @@ DELVE_TEST(two_bone_solver_over_extension) {
     glm::vec3 H(0, 0, 0);
     glm::vec3 target(0, 0, -2.0f);
     glm::vec3 mid, end;
-    test_solve_two_bone(H, target, a, b, glm::vec3(0, 0.3f, 0),
-                        glm::vec3(0, 1, 0), mid, end);
+    solve_two_bone(H, target, a, b, glm::vec3(0, 0.3f, 0),
+                   glm::vec3(0, 1, 0), mid, end);
 
     float end_dist = glm::length(end - H);
-    float max_reach = (a + b - 0.005f) * 1.15f;
+    float max_reach = (a + b - 0.001f) * 1.15f;
     EXPECT_LT(end_dist, max_reach + 0.01f);
     return true;
 }
@@ -1527,5 +1512,75 @@ DELVE_TEST(rig_transforms_build_bone_basis_degenerate) {
     EXPECT_NEAR(check.x, up.x, 1e-4f);
     EXPECT_NEAR(check.y, up.y, 1e-4f);
     EXPECT_NEAR(check.z, up.z, 1e-4f);
+    return true;
+}
+
+DELVE_TEST(derived_joints_spine02_is_mix) {
+    RigPose pose;
+    ActorConfig cfg;
+    pose.joints[(int)Joint::SPINE_01] = {0.1f, 0.2f, 0.3f};
+    pose.joints[(int)Joint::CHEST]    = {0.4f, 0.5f, 0.6f};
+    pose.joints[(int)Joint::L_FOOT]   = {-0.25f, 0.0f, 0.0f};
+    pose.joints[(int)Joint::R_FOOT]   = { 0.25f, 0.0f, 0.0f};
+    pose.joints[(int)Joint::HEAD]     = {0, 0, 1.0f};
+    compute_derived_joints(pose, cfg, 0.0f, 0.0f, glm::vec3(0.0f));
+    glm::vec3 expected = glm::mix(glm::vec3(0.1f, 0.2f, 0.3f),
+                                   glm::vec3(0.4f, 0.5f, 0.6f), 0.6f);
+    EXPECT_NEAR(pose.joints[(int)Joint::SPINE_02].x, expected.x, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::SPINE_02].y, expected.y, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::SPINE_02].z, expected.z, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(derived_joints_head_end_offset) {
+    RigPose pose;
+    ActorConfig cfg;
+    pose.joints[(int)Joint::HEAD] = {1.0f, 2.0f, 3.0f};
+    compute_derived_joints(pose, cfg, 0.0f, 0.0f, glm::vec3(0.0f));
+    EXPECT_NEAR(pose.joints[(int)Joint::HEAD_END].x, 1.0f, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::HEAD_END].y, 2.0f, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::HEAD_END].z, 3.0f + cfg.head_radius, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(derived_joints_clavicles_interpolated) {
+    RigPose pose;
+    ActorConfig cfg;
+    pose.joints[(int)Joint::CHEST]      = {0.0f, 0.0f, 0.5f};
+    pose.joints[(int)Joint::L_UPPER_ARM] = {-0.4f, 0.0f, 0.5f};
+    pose.joints[(int)Joint::R_UPPER_ARM] = { 0.4f, 0.0f, 0.5f};
+    compute_derived_joints(pose, cfg, 0.0f, 0.0f, glm::vec3(0.0f));
+    glm::vec3 l_expected = glm::mix(glm::vec3(0.0f, 0.0f, 0.5f),
+                                     glm::vec3(-0.4f, 0.0f, 0.5f), 0.25f);
+    glm::vec3 r_expected = glm::mix(glm::vec3(0.0f, 0.0f, 0.5f),
+                                     glm::vec3(0.4f, 0.0f, 0.5f), 0.25f);
+    EXPECT_NEAR(pose.joints[(int)Joint::L_CLAVICLE].x, l_expected.x, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::R_CLAVICLE].x, r_expected.x, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(derived_joints_toes_extend_forward) {
+    RigPose pose;
+    ActorConfig cfg;
+    float facing = glm::radians(45.0f);
+    pose.joints[(int)Joint::L_FOOT] = {1.0f, 2.0f, 0.0f};
+    pose.joints[(int)Joint::R_FOOT] = {3.0f, 4.0f, 0.0f};
+    compute_derived_joints(pose, cfg, facing, 0.0f, glm::vec3(0.0f));
+    float fwd_x = cosf(facing), fwd_y = sinf(facing);
+    EXPECT_NEAR(pose.joints[(int)Joint::L_TOE].x, 1.0f + fwd_x * cfg.toe_len, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::L_TOE].y, 2.0f + fwd_y * cfg.toe_len, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::R_TOE].x, 3.0f + fwd_x * cfg.toe_len, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::R_TOE].y, 4.0f + fwd_y * cfg.toe_len, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(derived_joints_root_at_transform_pos) {
+    RigPose pose;
+    ActorConfig cfg;
+    glm::vec3 root_pos(5.0f, 10.0f, 3.0f);
+    compute_derived_joints(pose, cfg, 0.0f, 0.0f, root_pos);
+    EXPECT_NEAR(pose.joints[(int)Joint::ROOT].x, 5.0f, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::ROOT].y, 10.0f, 1e-5f);
+    EXPECT_NEAR(pose.joints[(int)Joint::ROOT].z, 3.0f, 1e-5f);
     return true;
 }

@@ -1,10 +1,13 @@
 #include "test_harness.h"
 #include "config.h"
+#include "camera/camera.h"
 #include "terrain/hex.h"
 #include "terrain/map_data.h"
+#include "terrain/map_util.h"
 #include "terrain/noise_layers.h"
 #include "terrain/noise_composer.h"
 #include "terrain/basalt.h"
+#include "terrain/lava.h"
 #include "terrain/contour.h"
 #include <cmath>
 #include <vector>
@@ -136,5 +139,99 @@ DELVE_TEST(pixel_in_hex_correctness_at_config_hex_size) {
     EXPECT_TRUE(pixel_in_hex(cx, cy, 3, 2, Config::HEX_SIZE));
     EXPECT_FALSE(pixel_in_hex(cx + Config::HEX_SIZE * 2.0f, cy, 3, 2, Config::HEX_SIZE));
     EXPECT_FALSE(pixel_in_hex(cx, cy + Config::HEX_SIZE * 2.0f, 3, 2, Config::HEX_SIZE));
+    return true;
+}
+
+DELVE_TEST(camera_view_matrix_iso_constants) {
+    CameraSystem sys;
+    CameraState cam;
+    cam.world_x = 0.0f;
+    cam.world_y = 0.0f;
+    cam.follow_z = 0.0f;
+    auto mats = sys.build_matrices(cam, 1.0f);
+    auto &v = mats.view;
+    EXPECT_NEAR(v[0][0], Config::ISO_TW, 1e-5f);
+    EXPECT_NEAR(v[0][1], Config::ISO_TH, 1e-5f);
+    EXPECT_NEAR(v[1][0], -Config::ISO_TW, 1e-5f);
+    EXPECT_NEAR(v[1][1], Config::ISO_TH, 1e-5f);
+    EXPECT_NEAR(v[2][1], -Config::ISO_HS, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(camera_world_origin_maps_to_clip_center) {
+    CameraSystem sys;
+    CameraState cam;
+    cam.world_x = 0.0f;
+    cam.world_y = 0.0f;
+    cam.follow_z = 0.0f;
+    auto mats = sys.build_matrices(cam, 1.0f);
+    glm::vec4 origin(0.0f, 0.0f, 0.0f, 1.0f);
+    glm::vec4 view_pos = mats.view * origin;
+    glm::vec4 clip = mats.projection * view_pos;
+    if (std::abs(clip.w) > 1e-6f) {
+        float ndc_x = clip.x / clip.w;
+        float ndc_y = clip.y / clip.w;
+        EXPECT_NEAR(ndc_x, 0.0f, 0.1f);
+        EXPECT_NEAR(ndc_y, 0.0f, 0.1f);
+    }
+    return true;
+}
+
+DELVE_TEST(camera_z_height_foreshortening) {
+    CameraSystem sys;
+    CameraState cam;
+    cam.world_x = 0.0f;
+    cam.world_y = 0.0f;
+    cam.follow_z = 0.0f;
+    auto mats = sys.build_matrices(cam, 1.0f);
+    glm::vec4 low(5.0f, 5.0f, 0.0f, 1.0f);
+    glm::vec4 high(5.0f, 5.0f, 1.0f, 1.0f);
+    glm::vec4 v_low = mats.view * low;
+    glm::vec4 v_high = mats.view * high;
+    float screen_y_diff = v_high.y - v_low.y;
+    EXPECT_NEAR(screen_y_diff, -Config::ISO_HS, 0.01f);
+    return true;
+}
+
+DELVE_TEST(camera_near_far_encompass_terrain) {
+    CameraSystem sys;
+    CameraState cam;
+    cam.world_x = 64.0f;
+    cam.world_y = 64.0f;
+    float world_extent = Config::MAP_WIDTH_UNITS;
+    float max_height = 10.0f;
+    float worst_z = world_extent * Config::ISO_TH + max_height * Config::ISO_HS;
+    float depth_range = cam.far_plane - cam.near_plane;
+    EXPECT_GT(depth_range, worst_z);
+    return true;
+}
+
+DELVE_TEST(spawn_height_sample_roundtrip) {
+    static constexpr int W = 256, H = 256;
+    MapData md;
+    md.allocate(W, H);
+    ElevationParams elev; elev.seed = 42;
+    RiverParams river;    river.seed = 43;
+    WorleyParams worley;  worley.seed = 44;
+    CompositionParams comp;
+    compose_layers(md, elev, river, worley, comp, nullptr);
+    md.columns = generate_basalt_columns_v2(md, Config::HEX_SIZE);
+    auto fill = generate_lava_and_void(md, comp.void_chance, worley.seed);
+    md.lava_bodies = std::move(fill.lava_bodies);
+    md.void_bodies = std::move(fill.void_bodies);
+
+    if (md.columns.empty()) return true;
+
+    HexColumn spawn = md.columns[md.columns.size() / 2];
+    float px, py;
+    hex_to_pixel(spawn.q, spawn.r, Config::HEX_SIZE, px, py);
+    float wx = px / Config::HEX_SIZE;
+    float wy = py / Config::HEX_SIZE;
+
+    float sampled_h = sample_world_height(md, wx, wy);
+    int ix = std::max(0, std::min((int)(px), W - 1));
+    int iy = std::max(0, std::min((int)(py), H - 1));
+    float direct_h = md.basalt_height[iy * W + ix];
+    EXPECT_NEAR(sampled_h, direct_h, 0.5f);
     return true;
 }

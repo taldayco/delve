@@ -12,6 +12,7 @@
 #include "game_state.h"
 #include <cmath>
 #include <cstdint>
+#include <cstddef>
 
 static constexpr int MW = 256;
 static constexpr int MH = 256;
@@ -173,6 +174,26 @@ DELVE_TEST(mesh_non_empty_when_columns_exist) {
     auto mesh = make_mesh(md);
     EXPECT_GT(mesh_vertex_count(mesh), (size_t)0);
     EXPECT_GT(mesh_index_count(mesh),  (size_t)0);
+    return true;
+}
+
+DELVE_TEST(scene_uniforms_size_matches_gpu) {
+    EXPECT_EQ(sizeof(SceneUniforms), (size_t)272);
+    return true;
+}
+
+DELVE_TEST(scene_uniforms_field_offsets) {
+    EXPECT_EQ(offsetof(SceneUniforms, view),             (size_t)0);
+    EXPECT_EQ(offsetof(SceneUniforms, projection),       (size_t)64);
+    EXPECT_EQ(offsetof(SceneUniforms, time),             (size_t)128);
+    EXPECT_EQ(offsetof(SceneUniforms, lava_color_r),     (size_t)144);
+    EXPECT_EQ(offsetof(SceneUniforms, star_light_r),     (size_t)160);
+    EXPECT_EQ(offsetof(SceneUniforms, light_dir_x),      (size_t)176);
+    EXPECT_EQ(offsetof(SceneUniforms, light_col_r),      (size_t)192);
+    EXPECT_EQ(offsetof(SceneUniforms, grid_size_x),      (size_t)208);
+    EXPECT_EQ(offsetof(SceneUniforms, near_plane),       (size_t)224);
+    EXPECT_EQ(offsetof(SceneUniforms, cam_world_x),      (size_t)240);
+    EXPECT_EQ(offsetof(SceneUniforms, view_dir_x),       (size_t)256);
     return true;
 }
 

@@ -178,6 +178,7 @@ add_executable(topogen
     src/game/terrain/terrain_renderer.cpp
     src/game/terrain/map_util.cpp
     src/game/render/rig_renderer.cpp
+    src/game/render/rig_math.cpp
     src/game/render/rig_animation.cpp
     src/game/render/skeletal_animation.cpp
     src/game/render/skinned_renderer.cpp
@@ -234,7 +235,11 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_coordinate_system.cpp
     src/test/tests/test_skeletal_animation.cpp
     src/test/tests/test_skinned_character.cpp
+    src/test/tests/test_async_terrain.cpp
     src/game/render/skeletal_animation.cpp
+    src/game/render/rig_math.cpp
+    src/engine/camera/camera.cpp
+    src/engine/core/task_system.cpp
     ${TERRAIN_PIPELINE_SOURCES}
 )
 
@@ -250,8 +255,10 @@ target_compile_definitions(delve_tests PRIVATE
     DELVE_HEADLESS=1
 )
 
+find_package(Threads REQUIRED)
 target_link_libraries(delve_tests PRIVATE
     glm::glm
+    Threads::Threads
 )
 
 # ---- delve_metrics (headless metrics binary) ----

@@ -16,10 +16,6 @@ struct Velocity {
     float x = 0, y = 0, z = 0;
 };
 
-// Empirical vertical scale: reduces character world-Z height by ~18% so the
-// actor reads as proportional to hex columns at HEX_SIZE=8.0 and HS=12.5 projection scale.
-inline constexpr float ISO_VERT_SCALE = 0.8165f;
-
 struct ActorConfig {
     float hip_width      = 0.25f;
     float shoulder_width = 0.35f;

@@ -198,13 +198,13 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.cam_world_y = cam_y;
   u.cam_world_z = cam_z;
 
-  // Isometric depth direction is (TH, TH, 1) where TH = tan(30°) ≈ 0.57735.
-  // View direction points from scene toward camera = negative of depth dir.
-  constexpr float TH = 0.57735026919f;
-  constexpr float inv_len = 1.0f / 1.2909944487f; // 1/sqrt(TH^2+TH^2+1)
-  u.view_dir_x = -TH * inv_len;
-  u.view_dir_y = -TH * inv_len;
-  u.view_dir_z = -1.0f * inv_len;
+  // Extract view direction from the view matrix (row 2 = depth axis).
+  // Negate so it points from scene toward camera.
+  glm::vec3 depth_dir(view[0][2], view[1][2], view[2][2]);
+  glm::vec3 vdir = -glm::normalize(depth_dir);
+  u.view_dir_x = vdir.x;
+  u.view_dir_y = vdir.y;
+  u.view_dir_z = vdir.z;
 
   return u;
 }

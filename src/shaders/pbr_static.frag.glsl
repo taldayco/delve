@@ -3,6 +3,8 @@
 #define COORD_FRAGMENT_STAGE
 #include "coord.glsl"
 #include "pbr_common.glsl"
+#define PBR_LIGHTING_ONLY
+#include "lighting_common.glsl"
 
 layout(location = 0) in vec3  frag_color;
 layout(location = 1) in vec3  frag_world_pos;
@@ -10,39 +12,6 @@ layout(location = 2) in float frag_sheen;
 layout(location = 3) in vec3  frag_normal;
 
 layout(location = 0) out vec4 out_color;
-
-struct PointLight {
-    vec4 positionRadius;
-    vec4 colorIntensity;
-};
-
-layout(set = 2, binding = 0) readonly buffer LightBuffer {
-    PointLight point_lights[];
-};
-
-layout(set = 2, binding = 1) readonly buffer LightGridBuffer {
-    uvec2 light_grid[];  // (offset, count) per cluster
-};
-
-layout(set = 2, binding = 2) readonly buffer IndexBuffer {
-    uint global_light_indices[];
-};
-
-float hex_dither(vec2 world_xy) {
-    float sqrt3 = 1.7320508;
-    float q = world_xy.x / sqrt3;
-    float r = world_xy.y - q * 0.5;
-    int iq = int(round(q));
-    int ir = int(round(r));
-    int is_val = int(round(-q - r));
-    float dq = abs(float(iq) - q);
-    float dr = abs(float(ir) - r);
-    float ds = abs(float(is_val) - (-q - r));
-    if (dq > dr && dq > ds) iq = -ir - is_val;
-    else if (dr > ds)        ir = -iq - is_val;
-    uint hash = uint(iq) * 374761393u ^ uint(ir) * 668265263u;
-    return (float(hash & 0xFFu) / 255.0 - 0.5) * 0.25;
-}
 
 void main() {
     vec3 N = normalize(frag_normal);

@@ -63,7 +63,7 @@ CameraMatrices CameraSystem::build_matrices(const CameraState &cam, float aspect
   // We keep iso_x as view-X, iso_y as view-Y, depth as view-Z.
   const float TW = 2.0f;
   const float TH = 1.0f;
-  const float HS = 12.5f;  // ISO_HEIGHT_SCALE(100) / HEX_SIZE(8)
+  const float HS = 12.5f;  // Canonical value in Config::ISO_HS (game/config.h)
 
   // Column-major: col0=where world-X goes, col1=where world-Y goes, col2=where world-Z goes
   // world-X contributes: view_x += TW, view_y += TH, view_z += TH

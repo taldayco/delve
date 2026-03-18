@@ -26,7 +26,7 @@ public:
               SDL_GPUCommandBuffer *cmd,
               const SceneUniforms &uniforms,
               SDL_GPUBuffer *lights_ssbo,
-              SDL_GPUBuffer *clusters_ssbo,
+              SDL_GPUBuffer *light_grid_ssbo,
               SDL_GPUBuffer *light_indices_ssbo);
 
     bool is_initialized() const { return initialized_; }

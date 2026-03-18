@@ -324,7 +324,7 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
                             SDL_GPUCommandBuffer *cmd,
                             const SceneUniforms &uniforms,
                             SDL_GPUBuffer *lights_ssbo,
-                            SDL_GPUBuffer *clusters_ssbo,
+                            SDL_GPUBuffer *light_grid_ssbo,
                             SDL_GPUBuffer *light_indices_ssbo) {
     if (!initialized_ || !char_loaded_ || !vbo_ || !ibo_) return;
     if (!pipeline_) { SDL_Log("SkinnedRenderer: pipeline null, skipping draw"); return; }
@@ -335,7 +335,7 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
     SDL_BindGPUVertexStorageBuffers(pass, 0, &bone_ssbo_, 1);
 
     // Fragment storage slots 0-2: lights, cluster grid, light indices
-    SDL_GPUBuffer *frag_ssbos[3] = { lights_ssbo, clusters_ssbo, light_indices_ssbo };
+    SDL_GPUBuffer *frag_ssbos[3] = { lights_ssbo, light_grid_ssbo, light_indices_ssbo };
     SDL_BindGPUFragmentStorageBuffers(pass, 0, frag_ssbos, 3);
 
     // Uniform slot 0: SceneUniforms (vertex + fragment)

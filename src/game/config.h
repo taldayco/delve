@@ -40,7 +40,14 @@ struct Config {
   static constexpr int DEFAULT_NOISE_LEVELS = 8;
 
 
-  static constexpr float ISO_HEIGHT_SCALE = 0.5f;
+  // Isometric projection parameters (canonical source of truth).
+  // Camera (engine/camera/camera.cpp) uses matching local copies.
+  //   iso_x = (wx - wy) * ISO_TW
+  //   iso_y = (wx + wy) * ISO_TH - wz * ISO_HS
+  //   depth = (wx + wy) * ISO_TH + wz
+  static constexpr float ISO_TW = 2.0f;
+  static constexpr float ISO_TH = 1.0f;
+  static constexpr float ISO_HS = 12.5f;
 
   static constexpr float GRADIENT_SCALE = 2.0f;
   static constexpr uint32_t BACKGROUND_COLOR = 0xFF000000;

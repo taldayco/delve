@@ -38,6 +38,8 @@ void RigRenderer::init(SDL_GPUDevice *device,
                        AssetManager *am) {
     if (initialized) return;
     gpu_device    = device;
+    // TODO(V8): Rig reuses terrain pipeline (LESS_OR_EQUAL depth). If Z-fighting
+    // is observed against terrain, create a dedicated pipeline with LESS compare.
     pipeline      = terrain_pipeline;
     dummy_ssbo_   = dummy_ssbo;
     asset_manager = am;

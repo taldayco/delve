@@ -340,7 +340,8 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                         terrain_renderer.get_dummy_ssbo(),
                         &asset_manager);
 
-    skinned_renderer.init(gpu.device, gpu.game_window, &asset_manager);
+    skinned_renderer.init(gpu.device, gpu.game_window, &asset_manager,
+                          terrain_renderer.get_depth_format());
 
   }
 
@@ -512,7 +513,8 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
         cam_mats.view, cam_mats.projection,
         terrain_renderer.cluster_tiles_x(), terrain_renderer.cluster_tiles_y(),
         time, ts->contour_opacity,
-        (uint32_t)point_lights.size());
+        (uint32_t)point_lights.size(),
+        camera.world_x, camera.world_y, camera.follow_z);
 
     terrain_renderer.draw(frame.cmd, frame.swapchain,
                           frame.swapchain_w, frame.swapchain_h,

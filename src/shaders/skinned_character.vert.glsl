@@ -16,6 +16,7 @@ layout(set = 0, binding = 0) readonly buffer BoneBuffer { mat4 bones[65]; };
 layout(location = 0) out vec3 frag_world_pos;
 layout(location = 1) out vec3 frag_normal;
 layout(location = 2) out vec2 frag_texcoord;
+layout(location = 3) out float frag_sheen;
 
 void main() {
     mat4 skin_mat =
@@ -30,4 +31,5 @@ void main() {
     frag_world_pos = world_pos.xyz;
     frag_normal    = normalize(transpose(inverse(mat3(skin_mat))) * in_normal);
     frag_texcoord  = in_texcoord;
+    frag_sheen     = 0.4;
 }

@@ -11,7 +11,8 @@
 
 class SkinnedRenderer {
 public:
-    void init(SDL_GPUDevice *device, SDL_Window *window, AssetManager *assets);
+    void init(SDL_GPUDevice *device, SDL_Window *window, AssetManager *assets,
+              SDL_GPUTextureFormat depth_format);
     void cleanup();
 
     void load_character(const std::string &path);

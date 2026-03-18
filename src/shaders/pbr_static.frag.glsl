@@ -47,8 +47,7 @@ float hex_dither(vec2 world_xy) {
 void main() {
     vec3 N = normalize(frag_normal);
 
-    // Camera position extracted from view matrix inverse
-    vec3 cam_pos = -transpose(mat3(view)) * view[3].xyz;
+    vec3 cam_pos = cam_world_pos.xyz;
     vec3 V = normalize(cam_pos - frag_world_pos);
 
     // Dither base color

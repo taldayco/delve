@@ -8,10 +8,11 @@ layout(set = 1, binding = 0) uniform SceneUniforms {
     vec4 light_col;
     vec4 grid_params;
     vec4 depth_params;
+    vec4 cam_world_pos;
 };
 
 #define TIME              params1.x
-#define CONTOUR_OPACITY   params0.6.y
+#define CONTOUR_OPACITY   params1.y
 #define HEX_BORDER_WIDTH  params1.z
 #define NEAR_PLANE        depth_params.x
 #define FAR_PLANE         depth_params.y

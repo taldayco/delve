@@ -40,6 +40,8 @@ struct SceneUniforms {
   float grid_size_x, grid_size_y, num_slices, tile_px;
 
   float near_plane, far_plane, light_count_f, _pad4;
+
+  float cam_world_x, cam_world_y, cam_world_z, _pad_cam;
 };
 
 struct GpuPointLight {
@@ -67,4 +69,5 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                const glm::mat4 &view, const glm::mat4 &projection,
                                uint32_t cluster_tiles_x, uint32_t cluster_tiles_y,
                                float time, float contour_opacity,
-                               uint32_t light_count);
+                               uint32_t light_count,
+                               float cam_x, float cam_y, float cam_z);

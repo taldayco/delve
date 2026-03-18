@@ -154,7 +154,8 @@ SceneUniforms compute_uniforms(const MapData &map_data,
                                const glm::mat4 &view, const glm::mat4 &projection,
                                uint32_t cluster_tiles_x, uint32_t cluster_tiles_y,
                                float time, float contour_opacity,
-                               uint32_t light_count) {
+                               uint32_t light_count,
+                               float cam_x, float cam_y, float cam_z) {
   SceneUniforms u = {};
 
   u.view       = view;
@@ -190,6 +191,10 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.near_plane    = -500.0f;
   u.far_plane     =  500.0f;
   u.light_count_f = (float)light_count;
+
+  u.cam_world_x = cam_x;
+  u.cam_world_y = cam_y;
+  u.cam_world_z = cam_z;
 
   return u;
 }

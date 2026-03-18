@@ -6,6 +6,7 @@
 layout(location = 0) in vec3 frag_world_pos;
 layout(location = 1) in vec3 frag_normal;
 layout(location = 2) in vec2 frag_texcoord;
+layout(location = 3) in float frag_sheen;
 
 layout(location = 0) out vec4 out_color;
 
@@ -17,6 +18,30 @@ struct PointLight {
 layout(set = 2, binding = 0) readonly buffer LightBuffer {
     PointLight point_lights[];
 };
+
+layout(set = 2, binding = 1) readonly buffer LightGridBuffer {
+    uvec2 light_grid[];  // (offset, count) per cluster
+};
+
+layout(set = 2, binding = 2) readonly buffer IndexBuffer {
+    uint global_light_indices[];
+};
+
+float hex_dither(vec2 world_xy) {
+    float sqrt3 = 1.7320508;
+    float q = world_xy.x / sqrt3;
+    float r = world_xy.y - q * 0.5;
+    int iq = int(round(q));
+    int ir = int(round(r));
+    int is_val = int(round(-q - r));
+    float dq = abs(float(iq) - q);
+    float dr = abs(float(ir) - r);
+    float ds = abs(float(is_val) - (-q - r));
+    if (dq > dr && dq > ds) iq = -ir - is_val;
+    else if (dr > ds)        ir = -iq - is_val;
+    uint hash = uint(iq) * 374761393u ^ uint(ir) * 668265263u;
+    return (float(hash & 0xFFu) / 255.0 - 0.5) * 0.25;
+}
 
 vec3 apply_point_light(PointLight light, vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3  to_light = light.positionRadius.xyz - frag_pos;
@@ -45,16 +70,31 @@ vec3 apply_star_ambient(vec3 color, vec3 normal, float sheen) {
 }
 
 void main() {
-    vec3 base_color = vec3(0.6, 0.7, 0.8);
-    const float sheen = 0.4;
+    float dither = hex_dither(frag_world_pos.xy);
+    vec3 base_color = clamp(vec3(0.6, 0.7, 0.8) * (1.0 + dither), 0.0, 1.0);
 
-    vec3 lit = apply_directional(base_color, frag_normal);
+    vec3 N = normalize(frag_normal);
+    vec3 lit = apply_directional(base_color, N);
 
-    uint count = LIGHT_COUNT;
-    for (uint i = 0; i < count && i < 128u; ++i) {
-        lit += apply_point_light(point_lights[i], frag_world_pos, frag_normal, base_color);
+    // Clustered point lighting with fallback
+    uint cluster_idx = cluster_index();
+    uvec2 grid_entry = light_grid[cluster_idx];
+    uint offset = grid_entry.x;
+    uint count  = grid_entry.y;
+
+    if (count == 0u && LIGHT_COUNT > 0u) {
+        // Fallback: iterate all lights
+        uint total = min(LIGHT_COUNT, 128u);
+        for (uint i = 0u; i < total; ++i) {
+            lit += apply_point_light(point_lights[i], frag_world_pos, N, base_color);
+        }
+    } else {
+        for (uint i = 0u; i < count; ++i) {
+            uint light_idx = global_light_indices[offset + i];
+            lit += apply_point_light(point_lights[light_idx], frag_world_pos, N, base_color);
+        }
     }
 
-    vec3 final_color = apply_star_ambient(lit, frag_normal, sheen);
+    vec3 final_color = apply_star_ambient(lit, N, frag_sheen);
     out_color = vec4(clamp(final_color, 0.0, 1.0), 1.0);
 }

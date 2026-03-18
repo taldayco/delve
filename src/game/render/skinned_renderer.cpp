@@ -1,4 +1,5 @@
 #include "skinned_renderer.h"
+#include "../rig.h"
 #include "../../engine/gpu/gpu.h"
 #include <SDL3/SDL.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -20,7 +21,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     SDL_GPUTextureFormat sc_fmt = SDL_GetGPUSwapchainTextureFormat(device_, window);
 
     // vert: 1 uniform (SceneUniforms), 1 storage (BoneBuffer)
-    // frag: 1 uniform (SceneUniforms), 1 storage (lights)
+    // frag: 1 uniform (SceneUniforms), 3 storage (lights, grid, indices)
     SDL_GPUShader *vert = assets_->load_shader(
         "skinned_char.vert",
         shader_dir + "/skinned_character.vert.glsl.spv",
@@ -28,7 +29,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     SDL_GPUShader *frag = assets_->load_shader(
         "skinned_char.frag",
         shader_dir + "/skinned_character.frag.glsl.spv",
-        SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+        SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);
 
     if (!vert || !frag) {
         SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "SkinnedRenderer: failed to load shaders");
@@ -84,19 +85,12 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
     return true;
 }
 
-void SkinnedRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManager *assets) {
+void SkinnedRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManager *assets,
+                           SDL_GPUTextureFormat depth_format) {
     if (initialized_) return;
     device_ = device;
     assets_ = assets;
-
-    if (SDL_GPUTextureSupportsFormat(device,
-            SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT,
-            SDL_GPU_TEXTURETYPE_2D,
-            SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET)) {
-        depth_format_ = SDL_GPU_TEXTUREFORMAT_D32_FLOAT_S8_UINT;
-    } else {
-        depth_format_ = SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT;
-    }
+    depth_format_ = depth_format;
 
     if (!build_pipeline(window)) return;
 
@@ -292,11 +286,14 @@ void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing
         // The mesh's default forward is +Z (Y-up), which maps to -Y in Z-up, so we add
         // a +π/2 facing offset so that facing=0 (velocity along +X) points the mesh to +X.
         constexpr float kCharacterScale = 0.8f; // ~1.4 game units for 1.77m mesh
+        constexpr float kIsoZScale = ISO_VERT_SCALE; // 0.8165 — compress Z for iso
         constexpr float kFacingOffset = glm::half_pi<float>();
+        float s = kCharacterScale * debug_uniform_scale;
+        glm::vec3 scale_vec(s, s, s * kIsoZScale);
         root = glm::translate(glm::mat4(1.f), player_pos)
              * glm::rotate(glm::mat4(1.f), facing + kFacingOffset, glm::vec3(0.f, 0.f, 1.f))
              * glm::rotate(glm::mat4(1.f), glm::radians(90.0f), glm::vec3(1.f, 0.f, 0.f))
-             * glm::scale(glm::mat4(1.f), glm::vec3(kCharacterScale * debug_uniform_scale));
+             * glm::scale(glm::mat4(1.f), scale_vec);
         printed_root_ = false;
     }
 
@@ -331,16 +328,15 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass,
                             SDL_GPUBuffer *light_indices_ssbo) {
     if (!initialized_ || !char_loaded_ || !vbo_ || !ibo_) return;
     if (!pipeline_) { SDL_Log("SkinnedRenderer: pipeline null, skipping draw"); return; }
-    (void)clusters_ssbo;
-    (void)light_indices_ssbo;
 
     SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
     // Vertex storage slot 0: bone SSBO
     SDL_BindGPUVertexStorageBuffers(pass, 0, &bone_ssbo_, 1);
 
-    // Fragment storage slot 0: lights
-    SDL_BindGPUFragmentStorageBuffers(pass, 0, &lights_ssbo, 1);
+    // Fragment storage slots 0-2: lights, cluster grid, light indices
+    SDL_GPUBuffer *frag_ssbos[3] = { lights_ssbo, clusters_ssbo, light_indices_ssbo };
+    SDL_BindGPUFragmentStorageBuffers(pass, 0, frag_ssbos, 3);
 
     // Uniform slot 0: SceneUniforms (vertex + fragment)
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(SceneUniforms));

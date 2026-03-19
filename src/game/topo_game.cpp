@@ -1,6 +1,6 @@
 #include "topo_game.h"
 #include "core/gltf_loader.h"
-#include "render/rig_animation.h"
+#include "render/hybrid_animation.h"
 #include "terrain/basalt.h"
 #include "terrain/lava.h"
 #include "terrain/noise_composer.h"
@@ -148,8 +148,8 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
           const auto *t = player_entity.get<Transform>();
           if (t) {
             camera_system.follow(camera, t->x, t->y);
-            const auto *pose = player_entity.get<RigPose>();
-            float chest_z = pose ? pose->joints[(int)Joint::CHEST].z : t->z;
+            const auto *cfg = player_entity.get<ActorConfig>();
+            float chest_z = t->z + (cfg ? cfg->leg_len + cfg->shin_len + cfg->torso_len : 1.0f);
             camera.follow_z = chest_z;
           }
         }
@@ -165,16 +165,14 @@ void TopoGame::on_init(GpuContext &gpu, flecs::world &ecs) {
       .set<ActorConfig>({})
       .set<ProceduralGait>({})
       .set<LegState>({})
-      .set<RigPose>({})
       .set<RigState>({})
       .set<LookAtTarget>({})
       .set<ArmIKGoal>({})
       .set<AnimationOverlay>({})
       .set<GrabState>({})
-      .set<RigTransforms>({})
-      .set<ProceduralMesh>({});
+      .set<SkinnedPose>({});
 
-  register_rig_systems(ecs, input, camera, anim_log, player_entity);
+  register_hybrid_systems(ecs, input, camera, anim_log, skinned_renderer, player_entity);
 }
 
 void TopoGame::on_event(const SDL_Event &event, flecs::world &ecs) {
@@ -329,11 +327,6 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                              SDL_GetGPUSwapchainTextureFormat(gpu.device, gpu.game_window),
                              terrain_renderer.get_depth_format(),
                              asset_manager);
-    rig_renderer.init(gpu.device,
-                        gpu.game_window,
-                        terrain_renderer.get_dummy_ssbo(),
-                        &asset_manager,
-                        terrain_renderer.get_depth_format());
 
     skinned_renderer.init(gpu.device, gpu.game_window, &asset_manager,
                           terrain_renderer.get_depth_format());
@@ -515,47 +508,21 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                           uniforms, point_lights,
                           gpu.upload_manager);
 
-    if (use_skinned) {
-      if (skinned_renderer.is_initialized() && skinned_renderer.has_character() && player_entity.is_alive()) {
-        float speed = 0.0f;
-        glm::vec3 player_pos(0.f);
-        float player_facing = 0.f;
-        const auto *vel = player_entity.get<Velocity>();
-        if (vel) speed = glm::length(glm::vec2(vel->x, vel->y));
-        const auto *t = player_entity.get<Transform>();
-        if (t) { player_pos = glm::vec3(t->x, t->y, t->z); player_facing = t->facing; }
+    if (skinned_renderer.is_initialized() && skinned_renderer.has_character() && player_entity.is_alive()) {
+      skinned_renderer.prepare(frame.cmd);
 
-        skinned_renderer.update(ecs.delta_time(), player_pos, player_facing, speed);
-        skinned_renderer.prepare(frame.cmd);
-
-        if (t) {
-          SDL_GPURenderPass *actor_pass =
-              terrain_renderer.begin_render_pass_load_preserve_depth(
-                  frame.cmd, frame.swapchain,
-                  frame.swapchain_w, frame.swapchain_h);
-          if (actor_pass) {
-            skinned_renderer.draw(actor_pass, frame.cmd, uniforms,
-                                  terrain_renderer.get_point_light_ssbo(),
-                                  terrain_renderer.get_light_grid_ssbo(),
-                                  terrain_renderer.get_global_index_ssbo());
-            SDL_EndGPURenderPass(actor_pass);
-          }
-        }
-      }
-    } else {
-      if (rig_renderer.is_initialized()) {
-        uint32_t actor_vert_count = rig_renderer.prepare(frame.cmd, ecs);
-        if (actor_vert_count > 0) {
-          SDL_GPURenderPass *actor_pass =
-              terrain_renderer.begin_render_pass_load_preserve_depth(
-                  frame.cmd, frame.swapchain,
-                  frame.swapchain_w, frame.swapchain_h);
-          if (actor_pass) {
-            rig_renderer.draw(actor_pass, frame.cmd, uniforms,
+      const auto *t = player_entity.get<Transform>();
+      if (t) {
+        SDL_GPURenderPass *actor_pass =
+            terrain_renderer.begin_render_pass_load_preserve_depth(
+                frame.cmd, frame.swapchain,
+                frame.swapchain_w, frame.swapchain_h);
+        if (actor_pass) {
+          skinned_renderer.draw(actor_pass, frame.cmd, uniforms,
                                 terrain_renderer.get_point_light_ssbo(),
-                                actor_vert_count);
-            SDL_EndGPURenderPass(actor_pass);
-          }
+                                terrain_renderer.get_light_grid_ssbo(),
+                                terrain_renderer.get_global_index_ssbo());
+          SDL_EndGPURenderPass(actor_pass);
         }
       }
     }
@@ -570,7 +537,6 @@ void TopoGame::on_cleanup(flecs::world &ecs) {
   instanced_terrain.cleanup(gpu_ctx.device);
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
-  rig_renderer.cleanup(gpu_ctx.device);
   skinned_renderer.cleanup();
 }
 
@@ -683,9 +649,7 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   ImGui::Text("Rendering Mode");
   ImGui::Checkbox("Use Instanced Terrain", &terrain_renderer.use_instanced);
   ImGui::Checkbox("Use PBR Shading", &terrain_renderer.use_pbr);
-  ImGui::Checkbox("Use Skinned Character", &use_skinned);
-  ImGui::SliderFloat("Skinned Scale", &skinned_renderer.debug_uniform_scale, 0.01f, 100.0f);
-  ImGui::Checkbox("Raw Transform", &skinned_renderer.debug_raw_transform);
+  ImGui::SliderFloat("Character Scale", &skinned_renderer.debug_uniform_scale, 0.01f, 100.0f);
   ImGui::Separator();
   if (ImGui::Button("Regenerate", {-1, 40})) ts->need_regenerate = true;
   if (ImGui::Button("Reset", {-1, 40})) {

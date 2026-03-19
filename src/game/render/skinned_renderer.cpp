@@ -174,13 +174,17 @@ void SkinnedRenderer::load_character(const std::string &path) {
         clips_[clip.name] = std::move(clip);
 
     if (clips_.count("idle")) {
-        player_.set_clip(&clips_["idle"]);
+        mixer_.set_clip(&clips_["idle"]);
         current_clip_ = "idle";
     } else if (!clips_.empty()) {
         auto it = clips_.begin();
-        player_.set_clip(&it->second);
+        mixer_.set_clip(&it->second);
         current_clip_ = it->first;
     }
+
+    bone_map_ = BoneMap::build_from_skeleton(skeleton_);
+    SDL_Log("SkinnedRenderer: BoneMap — hips=%d spine=%d chest=%d neck=%d head=%d",
+            bone_map_.hips, bone_map_.spine, bone_map_.chest, bone_map_.neck, bone_map_.head);
 
     char_loaded_ = true;
     SDL_Log("SkinnedRenderer: loaded '%s' (%u verts, %u indices, %zu bones)",
@@ -230,66 +234,38 @@ void SkinnedRenderer::set_animation(const std::string &name) {
         return;
     }
     if (current_clip_ != name) {
-        player_.set_clip(&it->second);
+        mixer_.set_clip(&it->second);
         current_clip_ = name;
     }
 }
 
-void SkinnedRenderer::update(float dt, const glm::vec3 &player_pos, float facing, float speed) {
+void SkinnedRenderer::select_clip(const std::string &name, float crossfade_duration) {
+    auto it = clips_.find(name);
+    if (it == clips_.end()) return;
+    if (current_clip_ != name) {
+        mixer_.set_clip(&it->second, crossfade_duration);
+        current_clip_ = name;
+    }
+}
+
+void SkinnedRenderer::update_mixer(float dt) {
     if (!initialized_ || !char_loaded_) return;
+    mixer_.update(dt);
+}
 
-    if (speed < 0.1f)      set_animation("idle");
-    else if (speed < 5.0f) set_animation("walk");
-    else                    set_animation("run");
-
-    player_.update(dt);
-
+void SkinnedRenderer::sample_pose(SkinnedPose &out) const {
+    if (!initialized_ || !char_loaded_) return;
     int num_bones = std::min((int)skeleton_.bones.size(), 65);
-    std::vector<BoneLocalTransform> locals(num_bones);
-    for (int i = 0; i < num_bones; ++i) {
-        const glm::mat4 &m = skeleton_.bones[i].local_rest_transform;
-        locals[i].translation = glm::vec3(m[3]);
-        glm::vec3 sx(m[0]), sy(m[1]), sz(m[2]);
-        locals[i].scale = glm::vec3(glm::length(sx), glm::length(sy), glm::length(sz));
-        if (locals[i].scale.x > 1e-6f && locals[i].scale.y > 1e-6f && locals[i].scale.z > 1e-6f) {
-            glm::mat3 rot(sx / locals[i].scale.x, sy / locals[i].scale.y, sz / locals[i].scale.z);
-            locals[i].rotation = glm::quat_cast(rot);
-        }
-    }
-    player_.sample(locals);
+    out.local_transforms.resize(num_bones);
+    mixer_.sample(skeleton_, out.local_transforms);
+}
 
-    // Strip root motion: keep root bone at rest-pose translation
-    // to prevent animation displacement from stacking on top of game-driven position.
-    if (num_bones > 0) {
-        locals[0].translation = glm::vec3(skeleton_.bones[0].local_rest_transform[3]);
-    }
+void SkinnedRenderer::set_playback_speed(float speed) {
+    mixer_.set_playback_speed(speed);
+}
 
-    glm::mat4 root;
-    if (debug_raw_transform) {
-        root = glm::translate(glm::mat4(1.f), player_pos)
-             * glm::scale(glm::mat4(1.f), glm::vec3(debug_uniform_scale));
-        if (!printed_root_) {
-            SDL_Log("SkinnedRenderer root (raw): [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f] [%.3f %.3f %.3f %.3f]",
-                    root[0][0], root[1][0], root[2][0], root[3][0],
-                    root[0][1], root[1][1], root[2][1], root[3][1],
-                    root[0][2], root[1][2], root[2][2], root[3][2],
-                    root[0][3], root[1][3], root[2][3], root[3][3]);
-            printed_root_ = true;
-        }
-    } else {
-        constexpr float kCharacterScale = 0.8f;
-        constexpr float kIsoZScale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
-        constexpr float kFacingOffset = glm::half_pi<float>();
-        float s = kCharacterScale * debug_uniform_scale;
-        glm::vec3 scale_vec(s, s * kIsoZScale, s);
-        root = glm::translate(glm::mat4(1.f), player_pos)
-             * glm::rotate(glm::mat4(1.f), facing + kFacingOffset, glm::vec3(0.f, 0.f, 1.f))
-             * glm::rotate(glm::mat4(1.f), glm::radians(90.0f), glm::vec3(1.f, 0.f, 0.f))
-             * glm::scale(glm::mat4(1.f), scale_vec);
-        printed_root_ = false;
-    }
-
-    palette_ = compute_bone_palette(skeleton_, locals, root);
+void SkinnedRenderer::set_bone_palette(const BonePalette &palette) {
+    palette_ = palette;
 }
 
 void SkinnedRenderer::prepare(SDL_GPUCommandBuffer *cmd) {

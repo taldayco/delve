@@ -104,6 +104,148 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
     return palette;
 }
 
+// --- AnimationMixer ---
+
+void AnimationMixer::set_clip(const GltfAnimationClip *clip, float crossfade_duration) {
+    if (clip == current_clip_) return;
+    if (current_clip_) {
+        outgoing_clip_ = current_clip_;
+        outgoing_time_ = current_time_;
+    }
+    current_clip_   = clip;
+    current_time_   = 0.f;
+    blend_alpha_    = 0.f;
+    blend_duration_ = crossfade_duration;
+    if (!outgoing_clip_) blend_alpha_ = 1.f;
+}
+
+void AnimationMixer::update(float dt) {
+    float scaled_dt = dt * playback_speed_;
+
+    if (current_clip_ && current_clip_->duration > 0.f) {
+        current_time_ += scaled_dt;
+        while (current_time_ >= current_clip_->duration)
+            current_time_ -= current_clip_->duration;
+        if (current_time_ < 0.f) current_time_ = 0.f;
+    }
+
+    if (outgoing_clip_ && outgoing_clip_->duration > 0.f) {
+        outgoing_time_ += scaled_dt;
+        while (outgoing_time_ >= outgoing_clip_->duration)
+            outgoing_time_ -= outgoing_clip_->duration;
+        if (outgoing_time_ < 0.f) outgoing_time_ = 0.f;
+    }
+
+    if (blend_duration_ > 0.f && blend_alpha_ < 1.f) {
+        blend_alpha_ += dt / blend_duration_;
+        if (blend_alpha_ >= 1.f) {
+            blend_alpha_ = 1.f;
+            outgoing_clip_ = nullptr;
+        }
+    }
+}
+
+void AnimationMixer::sample_clip(const GltfAnimationClip *clip, float time,
+                                  const GltfSkeleton &skel,
+                                  std::vector<BoneLocalTransform> &out) const {
+    if (!clip) return;
+    // Use a temporary AnimationPlayer-style sample
+    for (const auto &ch : clip->channels) {
+        if (ch.bone_index < 0 || ch.bone_index >= (int)out.size()) continue;
+        BoneLocalTransform &xf = out[ch.bone_index];
+
+        if (ch.path == "translation" && !ch.times.empty()) {
+            int n = (int)ch.times.size();
+            if (n == 1 || time <= ch.times[0]) {
+                xf.translation = ch.translations[0];
+            } else if (time >= ch.times[n - 1]) {
+                xf.translation = ch.translations[n - 1];
+            } else {
+                int hi = 1;
+                while (hi < n && ch.times[hi] < time) ++hi;
+                int lo = hi - 1;
+                float t = (ch.times[hi] - ch.times[lo]) > 0.f
+                    ? (time - ch.times[lo]) / (ch.times[hi] - ch.times[lo]) : 0.f;
+                xf.translation = glm::mix(ch.translations[lo], ch.translations[hi], t);
+            }
+        } else if (ch.path == "rotation" && !ch.times.empty()) {
+            int n = (int)ch.times.size();
+            if (n == 1 || time <= ch.times[0]) {
+                xf.rotation = ch.rotations[0];
+            } else if (time >= ch.times[n - 1]) {
+                xf.rotation = ch.rotations[n - 1];
+            } else {
+                int hi = 1;
+                while (hi < n && ch.times[hi] < time) ++hi;
+                int lo = hi - 1;
+                float t = (ch.times[hi] - ch.times[lo]) > 0.f
+                    ? (time - ch.times[lo]) / (ch.times[hi] - ch.times[lo]) : 0.f;
+                xf.rotation = glm::slerp(ch.rotations[lo], ch.rotations[hi], t);
+            }
+        } else if (ch.path == "scale" && !ch.times.empty()) {
+            int n = (int)ch.times.size();
+            if (n == 1 || time <= ch.times[0]) {
+                xf.scale = ch.scales[0];
+            } else if (time >= ch.times[n - 1]) {
+                xf.scale = ch.scales[n - 1];
+            } else {
+                int hi = 1;
+                while (hi < n && ch.times[hi] < time) ++hi;
+                int lo = hi - 1;
+                float t = (ch.times[hi] - ch.times[lo]) > 0.f
+                    ? (time - ch.times[lo]) / (ch.times[hi] - ch.times[lo]) : 0.f;
+                xf.scale = glm::mix(ch.scales[lo], ch.scales[hi], t);
+            }
+        }
+    }
+}
+
+void AnimationMixer::sample(const GltfSkeleton &skel, std::vector<BoneLocalTransform> &out) const {
+    int num_bones = std::min((int)skel.bones.size(), (int)out.size());
+
+    // Initialize to rest pose
+    for (int i = 0; i < num_bones; ++i) {
+        const glm::mat4 &m = skel.bones[i].local_rest_transform;
+        out[i].translation = glm::vec3(m[3]);
+        glm::vec3 sx(m[0]), sy(m[1]), sz(m[2]);
+        out[i].scale = glm::vec3(glm::length(sx), glm::length(sy), glm::length(sz));
+        if (out[i].scale.x > 1e-6f && out[i].scale.y > 1e-6f && out[i].scale.z > 1e-6f) {
+            glm::mat3 rot(sx / out[i].scale.x, sy / out[i].scale.y, sz / out[i].scale.z);
+            out[i].rotation = glm::quat_cast(rot);
+        }
+    }
+
+    if (!current_clip_ && !outgoing_clip_) return;
+
+    if (blend_alpha_ >= 1.f || !outgoing_clip_) {
+        // Only current clip
+        sample_clip(current_clip_, current_time_, skel, out);
+    } else {
+        // Blend outgoing → current
+        std::vector<BoneLocalTransform> outgoing_pose(out);
+        std::vector<BoneLocalTransform> current_pose(out);
+
+        sample_clip(outgoing_clip_, outgoing_time_, skel, outgoing_pose);
+        sample_clip(current_clip_, current_time_, skel, current_pose);
+
+        for (int i = 0; i < num_bones; ++i) {
+            out[i].translation = glm::mix(outgoing_pose[i].translation,
+                                           current_pose[i].translation, blend_alpha_);
+            out[i].rotation    = glm::slerp(outgoing_pose[i].rotation,
+                                              current_pose[i].rotation, blend_alpha_);
+            out[i].scale       = glm::mix(outgoing_pose[i].scale,
+                                           current_pose[i].scale, blend_alpha_);
+        }
+    }
+}
+
+float AnimationMixer::get_normalized_time() const {
+    if (!current_clip_ || current_clip_->duration <= 0.f) return 0.f;
+    return current_time_ / current_clip_->duration;
+}
+
+// --- SkeletalAnimation ---
+
 void SkeletalAnimation::init(const GltfSkinnedAsset &asset) {
     skeleton_              = asset.skeleton;
     inverse_bind_matrices_ = asset.inverse_bind_matrices;

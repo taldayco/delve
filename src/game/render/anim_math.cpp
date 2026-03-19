@@ -1,7 +1,28 @@
-#include "render/rig_math.h"
+#include "render/anim_math.h"
+#include "rig.h"
 #include <algorithm>
 #include <cmath>
 #include <glm/gtc/constants.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+float smooth_damp(float current, float target, float *velocity,
+                  float smooth_time, float dt) {
+    float omega = 2.0f / smooth_time;
+    float x     = omega * dt;
+    float exp_f = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+    float delta = current - target;
+    float temp  = (*velocity + omega * delta) * dt;
+    *velocity   = (*velocity - omega * temp) * exp_f;
+    return target + (delta + temp) * exp_f;
+}
+
+float smooth_damp_angle(float current, float target, float *velocity,
+                        float smooth_time, float dt) {
+    float delta = target - current;
+    while (delta >  glm::pi<float>()) delta -= glm::two_pi<float>();
+    while (delta < -glm::pi<float>()) delta += glm::two_pi<float>();
+    return smooth_damp(current, current + delta, velocity, smooth_time, dt);
+}
 
 void solve_two_bone(glm::vec3 H, glm::vec3 target,
                     float a, float b,
@@ -39,6 +60,27 @@ void solve_two_bone(glm::vec3 H, glm::vec3 target,
 
     glm::vec3 dir_to_mid = axis_n * cosf(alpha) + perp * sinf(alpha);
     out_mid = H + dir_to_mid * a;
+}
+
+void blend_local_transforms(const BoneLocalTransform *a,
+                            const BoneLocalTransform *b,
+                            float alpha,
+                            BoneLocalTransform *out,
+                            int count) {
+    for (int i = 0; i < count; ++i) {
+        out[i].translation = glm::mix(a[i].translation, b[i].translation, alpha);
+        out[i].rotation    = glm::slerp(a[i].rotation, b[i].rotation, alpha);
+        out[i].scale       = glm::mix(a[i].scale, b[i].scale, alpha);
+    }
+}
+
+void additive_rotation(BoneLocalTransform &base, const glm::quat &delta, float weight) {
+    glm::quat weighted = glm::slerp(glm::quat(1.f, 0.f, 0.f, 0.f), delta, weight);
+    base.rotation = weighted * base.rotation;
+}
+
+void additive_translation(BoneLocalTransform &base, const glm::vec3 &offset, float weight) {
+    base.translation += offset * weight;
 }
 
 void compute_derived_joints(RigPose &pose, const ActorConfig &cfg,

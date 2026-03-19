@@ -1,5 +1,5 @@
 #include "rig.h"
-#include "render/rig_math.h"
+#include "render/anim_math.h"
 #include "animation_metrics.h"
 #include "config.h"
 #include "test_harness.h"
@@ -1472,11 +1472,11 @@ static RigPose make_tpose() {
 }
 
 DELVE_TEST(rig_transforms_default_zero_initialized) {
-    RigTransforms xf;
+    glm::mat4 bones[(int)Joint::COUNT] = {};
     for (int i = 0; i < (int)Joint::COUNT; ++i) {
         for (int c = 0; c < 4; ++c) {
             for (int r = 0; r < 4; ++r) {
-                EXPECT_NEAR(xf.bones[i][c][r], 0.0f, 1e-6f);
+                EXPECT_NEAR(bones[i][c][r], 0.0f, 1e-6f);
             }
         }
     }

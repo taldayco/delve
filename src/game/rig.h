@@ -1,8 +1,11 @@
 #pragma once
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <cstdint>
-#include "terrain/terrain_mesh.h"
+#include "render/skeletal_animation.h"
 #include <vector>
+#include <string>
+#include <algorithm>
 
 struct Player  {};
 struct ActorTag {};
@@ -43,6 +46,7 @@ struct ProceduralGait {
     float move_speed    = 4.0f;
 };
 
+// Legacy joint enum — retained for animation tests and telemetry
 enum class Joint : uint8_t {
     ROOT = 0,
     HIPS,
@@ -87,54 +91,6 @@ enum class Joint : uint8_t {
 
 struct RigPose {
     glm::vec3 joints[(int)Joint::COUNT] = {};
-};
-
-struct RigTransforms {
-    glm::mat4 bones[(int)Joint::COUNT] = {};
-};
-
-inline glm::mat4 make_bone_mat4(const glm::vec3 &right,
-                                 const glm::vec3 &fwd,
-                                 const glm::vec3 &up,
-                                 const glm::vec3 &pos) {
-    return glm::mat4(
-        glm::vec4(right, 0.0f),
-        glm::vec4(fwd,   0.0f),
-        glm::vec4(up,    0.0f),
-        glm::vec4(pos,   1.0f)
-    );
-}
-
-inline void build_bone_basis(const glm::vec3 &bone_dir,
-                              const glm::vec3 &ref_fwd,
-                              glm::vec3 &out_right,
-                              glm::vec3 &out_fwd,
-                              glm::vec3 &out_up) {
-    float len = glm::length(bone_dir);
-    if (len < 1e-5f) {
-        out_right = glm::vec3(1.0f, 0.0f, 0.0f);
-        out_fwd   = glm::vec3(0.0f, 1.0f, 0.0f);
-        out_up    = glm::vec3(0.0f, 0.0f, 1.0f);
-        return;
-    }
-    out_up = bone_dir / len;
-
-    out_right = glm::cross(ref_fwd, out_up);
-    float right_len = glm::length(out_right);
-    if (right_len < 1e-5f) {
-        glm::vec3 alt = (std::abs(out_up.z) < 0.9f)
-                            ? glm::vec3(0.0f, 0.0f, 1.0f)
-                            : glm::vec3(1.0f, 0.0f, 0.0f);
-        out_right = glm::normalize(glm::cross(alt, out_up));
-    } else {
-        out_right /= right_len;
-    }
-
-    out_fwd = glm::cross(out_up, out_right);
-}
-
-struct ProceduralMesh {
-    std::vector<BasaltVertex> vertices;
 };
 
 struct LegState {
@@ -276,3 +232,82 @@ inline void compute_rig_hip_state(RigHipState &state,
     state.hip_drop_fraction = cfg.hip_drop_max      * (1.0f - std::abs(std::cos(two_pi_phase)));
     state.hip_bob_y         = cfg.hip_bob_amplitude * std::abs(std::sin(two_pi_phase));
 }
+
+struct BoneMap {
+    int hips = -1, spine = -1, spine1 = -1, chest = -1;
+    int neck = -1, head = -1;
+    int l_upper_leg = -1, l_lower_leg = -1, l_foot = -1, l_toe = -1;
+    int r_upper_leg = -1, r_lower_leg = -1, r_foot = -1, r_toe = -1;
+    int l_upper_arm = -1, l_lower_arm = -1, l_hand = -1;
+    int r_upper_arm = -1, r_lower_arm = -1, r_hand = -1;
+    int l_shoulder = -1, r_shoulder = -1;
+
+    static BoneMap build_from_skeleton(const GltfSkeleton &skel) {
+        BoneMap m;
+        auto lower = [](const std::string &s) {
+            std::string out = s;
+            std::transform(out.begin(), out.end(), out.begin(),
+                           [](unsigned char c) { return std::tolower(c); });
+            return out;
+        };
+        auto has = [](const std::string &s, const std::string &sub) {
+            return s.find(sub) != std::string::npos;
+        };
+        auto is_left = [&](const std::string &s) {
+            return has(s, "left") || has(s, ".l") || has(s, "_l") || has(s, "l_")
+                || has(s, ":left");
+        };
+        auto is_right = [&](const std::string &s) {
+            return has(s, "right") || has(s, ".r") || has(s, "_r") || has(s, "r_")
+                || has(s, ":right");
+        };
+
+        for (int i = 0; i < (int)skel.bones.size(); ++i) {
+            std::string name = lower(skel.bones[i].name);
+
+            if (has(name, "hips") || has(name, "pelvis")) {
+                m.hips = i;
+            } else if ((has(name, "shoulder") || has(name, "clavicle"))) {
+                if (is_left(name))  m.l_shoulder = i;
+                else if (is_right(name)) m.r_shoulder = i;
+            } else if (has(name, "spine")) {
+                if (has(name, "1") || has(name, "spine1")) m.spine1 = i;
+                else if (m.spine < 0) m.spine = i;
+                else m.spine1 = i;
+            } else if (has(name, "chest") || has(name, "spine2")) {
+                m.chest = i;
+            } else if (has(name, "neck")) {
+                m.neck = i;
+            } else if (has(name, "head")) {
+                m.head = i;
+            } else if (has(name, "upleg") || has(name, "thigh") || has(name, "upperleg") || has(name, "upper_leg")) {
+                if (is_left(name))  m.l_upper_leg = i;
+                else if (is_right(name)) m.r_upper_leg = i;
+            } else if ((has(name, "leg") || has(name, "shin") || has(name, "lowerleg") || has(name, "lower_leg"))
+                       && !has(name, "up")) {
+                if (is_left(name))  m.l_lower_leg = i;
+                else if (is_right(name)) m.r_lower_leg = i;
+            } else if (has(name, "foot") && !has(name, "toe")) {
+                if (is_left(name))  m.l_foot = i;
+                else if (is_right(name)) m.r_foot = i;
+            } else if (has(name, "toe")) {
+                if (is_left(name))  m.l_toe = i;
+                else if (is_right(name)) m.r_toe = i;
+            } else if (has(name, "uparm") || has(name, "upperarm") || has(name, "upper_arm")) {
+                if (is_left(name))  m.l_upper_arm = i;
+                else if (is_right(name)) m.r_upper_arm = i;
+            } else if (has(name, "forearm") || has(name, "lowerarm") || has(name, "lower_arm")) {
+                if (is_left(name))  m.l_lower_arm = i;
+                else if (is_right(name)) m.r_lower_arm = i;
+            } else if (has(name, "hand") && !has(name, "thumb") && !has(name, "index") && !has(name, "middle") && !has(name, "ring") && !has(name, "pinky")) {
+                if (is_left(name))  m.l_hand = i;
+                else if (is_right(name)) m.r_hand = i;
+            }
+        }
+        return m;
+    }
+};
+
+struct SkinnedPose {
+    std::vector<BoneLocalTransform> local_transforms;
+};

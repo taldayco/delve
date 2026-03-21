@@ -497,8 +497,8 @@ void register_hybrid_systems(flecs::world &ecs,
                     -max_tilt, max_tilt);
                 anim->hip_tilt = smooth_damp(anim->hip_tilt, hip_tilt_target,
                                               &anim->hip_tilt_rate, 0.06f, dt);
-                // Additive X-rotation on hips (roll around forward axis)
-                glm::quat tilt_rot = glm::angleAxis(anim->hip_tilt, glm::vec3(1.f, 0.f, 0.f));
+                // Additive Z-rotation on hips (lateral roll from foot height difference)
+                glm::quat tilt_rot = glm::angleAxis(anim->hip_tilt, glm::vec3(0.f, 0.f, 1.f));
                 additive_rotation(pose->local_transforms[bm.hips], tilt_rot, 1.0f);
             }
 

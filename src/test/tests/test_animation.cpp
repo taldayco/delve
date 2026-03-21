@@ -1,5 +1,6 @@
 #include "rig.h"
 #include "render/anim_math.h"
+#include "render/skeletal_animation.h"
 #include "animation_metrics.h"
 #include "config.h"
 #include "test_harness.h"
@@ -1582,5 +1583,63 @@ DELVE_TEST(derived_joints_root_at_transform_pos) {
     EXPECT_NEAR(pose.joints[(int)Joint::ROOT].x, 5.0f, 1e-5f);
     EXPECT_NEAR(pose.joints[(int)Joint::ROOT].y, 10.0f, 1e-5f);
     EXPECT_NEAR(pose.joints[(int)Joint::ROOT].z, 3.0f, 1e-5f);
+    return true;
+}
+
+DELVE_TEST(hip_tilt_rotation_axis_is_z_not_x) {
+    float angle = glm::radians(5.0f);
+    glm::quat tilt = glm::angleAxis(angle, glm::vec3(0.f, 0.f, 1.f));
+    EXPECT_NEAR(tilt.x, 0.0f, 1e-6f);
+    EXPECT_NEAR(tilt.y, 0.0f, 1e-6f);
+    EXPECT_TRUE(std::abs(tilt.z) > 1e-6f);
+    return true;
+}
+
+DELVE_TEST(hip_tilt_positive_foot_diff_produces_correct_roll) {
+    float foot_diff = 0.1f;
+    float hip_width = 0.18f;
+    float max_tilt = glm::radians(8.0f);
+    float hip_tilt = std::clamp(atan2f(foot_diff, hip_width * 2.0f),
+                                -max_tilt, max_tilt);
+    glm::quat tilt = glm::angleAxis(hip_tilt, glm::vec3(0.f, 0.f, 1.f));
+    EXPECT_TRUE(tilt.z > 0.0f);
+    EXPECT_NEAR(tilt.x, 0.0f, 1e-6f);
+    EXPECT_NEAR(tilt.y, 0.0f, 1e-6f);
+    return true;
+}
+
+DELVE_TEST(hip_tilt_zero_foot_diff_produces_identity) {
+    float hip_tilt = 0.0f;
+    glm::quat tilt = glm::angleAxis(hip_tilt, glm::vec3(0.f, 0.f, 1.f));
+    EXPECT_NEAR(tilt.w, 1.0f, 1e-6f);
+    EXPECT_NEAR(tilt.x, 0.0f, 1e-6f);
+    EXPECT_NEAR(tilt.y, 0.0f, 1e-6f);
+    EXPECT_NEAR(tilt.z, 0.0f, 1e-6f);
+    return true;
+}
+
+DELVE_TEST(additive_rotation_preserves_axis_on_identity_base) {
+    BoneLocalTransform base;
+    float angle = glm::radians(10.0f);
+    glm::quat delta = glm::angleAxis(angle, glm::vec3(0.f, 0.f, 1.f));
+    additive_rotation(base, delta, 1.0f);
+    EXPECT_NEAR(base.rotation.x, delta.x, 1e-6f);
+    EXPECT_NEAR(base.rotation.y, delta.y, 1e-6f);
+    EXPECT_NEAR(base.rotation.z, delta.z, 1e-6f);
+    EXPECT_NEAR(base.rotation.w, delta.w, 1e-6f);
+    return true;
+}
+
+DELVE_TEST(hip_tilt_atan2_clamp_produces_pure_roll) {
+    float hip_width = 0.18f;
+    float max_tilt = glm::radians(8.0f);
+    float diffs[] = {-0.2f, -0.05f, 0.0f, 0.05f, 0.2f};
+    for (float fd : diffs) {
+        float angle = std::clamp(atan2f(fd, hip_width * 2.0f),
+                                 -max_tilt, max_tilt);
+        glm::quat tilt = glm::angleAxis(angle, glm::vec3(0.f, 0.f, 1.f));
+        EXPECT_NEAR(tilt.x, 0.0f, 1e-6f);
+        EXPECT_NEAR(tilt.y, 0.0f, 1e-6f);
+    }
     return true;
 }

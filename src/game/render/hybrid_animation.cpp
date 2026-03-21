@@ -47,6 +47,10 @@ void register_hybrid_systems(flecs::world &ecs,
             if (in.held[(int)Action::MoveLeft])  raw_x -= 1.0f;
             if (in.held[(int)Action::MoveRight]) raw_x += 1.0f;
 
+            // Normalize so diagonal input has the same magnitude as cardinal
+            float raw_len = sqrtf(raw_x * raw_x + raw_y * raw_y);
+            if (raw_len > 1e-6f) { raw_x /= raw_len; raw_y /= raw_len; }
+
             static constexpr float COS_ISO = 0.70710678118f;
             static constexpr float SIN_ISO = 0.70710678118f;
             float desired_x = ( raw_x * COS_ISO + raw_y * SIN_ISO) * gait->move_speed;

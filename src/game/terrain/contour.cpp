@@ -21,7 +21,8 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
     for (int y = 0; y < height - 1; ++y) {
       for (int x = 0; x < width - 1; ++x) {
         if (out_lines.size() >= MAX_CONTOUR_LINES) {
-          SDL_Log("extract_contours: hit %zu line cap, truncating", MAX_CONTOUR_LINES);
+          SDL_Log("extract_contours: hit %zu line cap, truncating",
+                  MAX_CONTOUR_LINES);
           return;
         }
 
@@ -93,7 +94,7 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
 std::vector<Plateau> detect_plateaus(std::span<const int> band_map,
                                      std::span<const float> heightmap,
                                      int width, int height,
-                                     std::vector<int16_t>& terrain_map) {
+                                     std::vector<int16_t> &terrain_map) {
 
   std::vector<bool> visited(width * height, false);
   std::vector<Plateau> plateaus;
@@ -172,11 +173,13 @@ std::vector<Plateau> detect_plateaus(std::span<const int> band_map,
 void simplify_contours(std::vector<Line> &lines, float epsilon) {
   float eps2 = epsilon * epsilon;
   size_t before = lines.size();
-  lines.erase(std::remove_if(lines.begin(), lines.end(), [eps2](const Line &l) {
-    float dx = l.x2 - l.x1;
-    float dy = l.y2 - l.y1;
-    return (dx * dx + dy * dy) < eps2;
-  }), lines.end());
-  SDL_Log("simplify_contours: %zu -> %zu segments (epsilon=%.2f)",
-          before, lines.size(), epsilon);
+  lines.erase(std::remove_if(lines.begin(), lines.end(),
+                             [eps2](const Line &l) {
+                               float dx = l.x2 - l.x1;
+                               float dy = l.y2 - l.y1;
+                               return (dx * dx + dy * dy) < eps2;
+                             }),
+              lines.end());
+  SDL_Log("simplify_contours: %zu -> %zu segments (epsilon=%.2f)", before,
+          lines.size(), epsilon);
 }

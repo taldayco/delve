@@ -13,22 +13,12 @@ struct TerrainMesh;
 struct MapData;
 struct ContourData;
 
-struct PointLightComponent {
-    float pos_x, pos_y, pos_z;
-    float radius;
-    float color_r, color_g, color_b;
-    float intensity;
-};
-
-constexpr bool DEFAULT_ISOMETRIC = true;
-
 struct GamePhase {
-  enum Phase { Menu, Playing, Paused };
+  enum Phase { Playing, Paused };
   Phase current = Playing;
 };
 
 struct TerrainState {
-  bool  use_isometric   = DEFAULT_ISOMETRIC;
   int   current_palette = 0;
   int   master_seed     = 1337;
   float map_scale       = Config::DEFAULT_MAP_SCALE;

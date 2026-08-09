@@ -3,7 +3,6 @@
 #define COORD_FRAGMENT_STAGE
 #include "coord.glsl"
 #include "pbr_common.glsl"
-#define PBR_LIGHTING_ONLY
 #include "lighting_common.glsl"
 
 layout(location = 0) in vec3  frag_color;
@@ -30,20 +29,11 @@ void main() {
 
     color += albedo * light_dir.w;
 
-    uint cluster_idx = cluster_index();
-    uvec2 grid_entry = light_grid[cluster_idx];
-    uint offset = grid_entry.x;
-    uint count  = grid_entry.y;
-
-    if (count == 0u && LIGHT_COUNT > 0u) {
-        count = min(LIGHT_COUNT, 128u);
-        for (uint i = 0u; i < count; ++i) {
-            PointLight pl = point_lights[i];
-            vec3 to_light = pl.positionRadius.xyz - frag_world_pos;
-            float dist = length(to_light);
-            float radius = pl.positionRadius.w;
-            if (dist >= radius) continue;
-
+    FOREACH_CLUSTER_LIGHT({
+        vec3 to_light = pl.positionRadius.xyz - frag_world_pos;
+        float dist = length(to_light);
+        float radius = pl.positionRadius.w;
+        if (dist < radius) {
             float atten = 1.0 - clamp(dist / radius, 0.0, 1.0);
             atten = atten * atten;
 
@@ -51,27 +41,9 @@ void main() {
             vec3 radiance = pl.colorIntensity.rgb * pl.colorIntensity.w * atten;
             color += cook_torrance_brdf(albedo, metallic, roughness, N, V, L, radiance);
         }
-    } else {
-        for (uint i = 0u; i < count; ++i) {
-            uint light_idx = global_light_indices[offset + i];
-            PointLight pl = point_lights[light_idx];
-            vec3 to_light = pl.positionRadius.xyz - frag_world_pos;
-            float dist = length(to_light);
-            float radius = pl.positionRadius.w;
-            if (dist >= radius) continue;
+    })
 
-            float atten = 1.0 - clamp(dist / radius, 0.0, 1.0);
-            atten = atten * atten;
-
-            vec3 L = normalize(to_light);
-            vec3 radiance = pl.colorIntensity.rgb * pl.colorIntensity.w * atten;
-            color += cook_torrance_brdf(albedo, metallic, roughness, N, V, L, radiance);
-        }
-    }
-
-    float NdotUp   = max(N.z, 0.0);
-    float star_int = star_light.w * mix(frag_sheen * 0.2, 1.0, NdotUp);
-    color += star_light.rgb * star_int * frag_sheen;
+    color = apply_star_ambient(color, N, frag_sheen);
 
     out_color = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

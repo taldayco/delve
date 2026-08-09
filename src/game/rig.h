@@ -46,53 +46,6 @@ struct ProceduralGait {
     float move_speed    = 4.0f;
 };
 
-// Legacy joint enum — retained for animation tests and telemetry
-enum class Joint : uint8_t {
-    ROOT = 0,
-    HIPS,
-    SPINE_01,
-    SPINE_02,
-    CHEST,
-    NECK,
-    HEAD,
-    HEAD_END,
-
-    L_CLAVICLE,
-    L_UPPER_ARM,
-    L_LOWER_ARM,
-    L_HAND,
-
-    R_CLAVICLE,
-    R_UPPER_ARM,
-    R_LOWER_ARM,
-    R_HAND,
-
-    L_UPPER_LEG,
-    L_LOWER_LEG,
-    L_FOOT,
-    L_TOE,
-
-    R_UPPER_LEG,
-    R_LOWER_LEG,
-    R_FOOT,
-    R_TOE,
-
-    POLE_KNEE_L,
-    POLE_KNEE_R,
-    POLE_ELBOW_L,
-    POLE_ELBOW_R,
-    IK_FOOT_L,
-    IK_FOOT_R,
-    IK_HAND_L,
-    IK_HAND_R,
-
-    COUNT
-};
-
-struct RigPose {
-    glm::vec3 joints[(int)Joint::COUNT] = {};
-};
-
 struct LegState {
     glm::vec3 foot[2]      = {};
     glm::vec3 prev_foot[2] = {};
@@ -112,11 +65,6 @@ struct RigState {
     glm::vec3 smooth_velocity{0.0f};
     glm::vec3 velocity_rate{0.0f};
 
-    float support_balance      = 0.0f;
-    float support_balance_rate = 0.0f;
-
-    float lean_x = 0.0f;
-    float lean_y = 0.0f;
     float chest_lean_x_rate = 0.0f;
     float chest_lean_y_rate = 0.0f;
     float neck_lean_x_rate  = 0.0f;
@@ -130,26 +78,9 @@ struct RigState {
     float head_lean_x  = 0.0f;
     float head_lean_y  = 0.0f;
 
-    float l_arm_target      = 0.0f;
-    float r_arm_target      = 0.0f;
-    float l_shoulder_smooth = 0.0f;
-    float l_elbow_smooth    = 0.0f;
-    float l_wrist_smooth    = 0.0f;
-    float r_shoulder_smooth = 0.0f;
-    float r_elbow_smooth    = 0.0f;
-    float r_wrist_smooth    = 0.0f;
-    float l_shoulder_rate   = 0.0f;
-    float l_elbow_rate      = 0.0f;
-    float l_wrist_rate      = 0.0f;
-    float r_shoulder_rate   = 0.0f;
-    float r_elbow_rate      = 0.0f;
-    float r_wrist_rate      = 0.0f;
-
     float breath_phase    = 0.0f;
     float idle_sway_phase = 0.0f;
     float idle_weight_phase = 0.0f;
-
-    float foot_contact_velocity[2] = {0.0f, 0.0f};
 
     glm::vec3 prev_velocity{0.0f};
 
@@ -181,22 +112,12 @@ struct RigState {
     float chest_facing_rate = 0.0f;
 };
 
-struct RigHipState {
-    float stride_phase      = 0.0f;
-    float hip_rotation_deg  = 0.0f;
-    float hip_drop_fraction = 0.0f;
-    float hip_bob_y         = 0.0f;
-};
-
 struct AnimationConfig {
     static constexpr float ISO_CHAR_HEIGHT_SCALE = 0.816f * 0.92f;
 
     static constexpr float DIRECTIONAL_SPEED_SCALE = 0.41f;
 
     float directional_speed_scale = DIRECTIONAL_SPEED_SCALE;
-    float hip_sway_deg      = 5.0f;
-    float hip_drop_max      = 0.03f;
-    float hip_bob_amplitude = 0.02f;
 };
 
 struct LookAtTarget {
@@ -204,34 +125,6 @@ struct LookAtTarget {
     float weight = 0.0f;
     bool active = false;
 };
-
-struct ArmIKGoal {
-    glm::vec3 target_l{0.0f}, target_r{0.0f};
-    float weight_l = 0.0f, weight_r = 0.0f;
-};
-
-struct AnimationOverlay {
-    enum class Type : uint8_t { None, Limp, Fatigue, HeavyCarry };
-    Type active = Type::None;
-    float intensity = 0.0f;
-    float phase = 0.0f;
-};
-
-struct GrabState {
-    glm::vec3 grab_point{0.0f};
-    float weight = 0.0f;
-    bool active_l = false, active_r = false;
-};
-
-inline void compute_rig_hip_state(RigHipState &state,
-                                   const AnimationConfig &cfg) {
-    constexpr float TWO_PI = 2.0f * 3.14159265358979323846f;
-    float two_pi_phase = state.stride_phase * TWO_PI;
-
-    state.hip_rotation_deg  = cfg.hip_sway_deg      * std::sin(two_pi_phase);
-    state.hip_drop_fraction = cfg.hip_drop_max      * (1.0f - std::abs(std::cos(two_pi_phase)));
-    state.hip_bob_y         = cfg.hip_bob_amplitude * std::abs(std::sin(two_pi_phase));
-}
 
 struct BoneMap {
     int hips = -1, spine = -1, spine1 = -1, chest = -1;

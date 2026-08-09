@@ -84,51 +84,51 @@ DELVE_TEST(bone_local_transform_default_values) {
     return true;
 }
 
-DELVE_TEST(animation_player_advances_time) {
+DELVE_TEST(animation_mixer_advances_time) {
     GltfAnimationClip clip{};
     clip.name = "idle";
     clip.duration = 2.0f;
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(0.5f);
-    EXPECT_NEAR(player.get_time(), 0.5f, 1e-4f);
-    player.update(0.5f);
-    EXPECT_NEAR(player.get_time(), 1.0f, 1e-4f);
+    AnimationMixer mixer;
+    mixer.set_clip(&clip, 0.0f);
+    mixer.update(0.5f);
+    EXPECT_NEAR(mixer.get_normalized_time(), 0.25f, 1e-4f);
+    mixer.update(0.5f);
+    EXPECT_NEAR(mixer.get_normalized_time(), 0.5f, 1e-4f);
     return true;
 }
 
-DELVE_TEST(animation_player_loops_at_duration) {
+DELVE_TEST(animation_mixer_loops_at_duration) {
     GltfAnimationClip clip{};
     clip.name = "walk";
     clip.duration = 1.0f;
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(0.8f);
-    player.update(0.4f);
-    EXPECT_NEAR(player.get_time(), 0.2f, 1e-3f);
+    AnimationMixer mixer;
+    mixer.set_clip(&clip, 0.0f);
+    mixer.update(0.8f);
+    mixer.update(0.4f);
+    EXPECT_NEAR(mixer.get_normalized_time(), 0.2f, 1e-3f);
     return true;
 }
 
-DELVE_TEST(animation_player_zero_duration_clip_stable) {
+DELVE_TEST(animation_mixer_zero_duration_clip_stable) {
     GltfAnimationClip clip{};
     clip.name = "empty";
     clip.duration = 0.0f;
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(0.1f);
-    float t = player.get_time();
+    AnimationMixer mixer;
+    mixer.set_clip(&clip, 0.0f);
+    mixer.update(0.1f);
+    float t = mixer.get_normalized_time();
     EXPECT_FALSE(std::isnan(t));
     return true;
 }
 
-DELVE_TEST(animation_player_null_clip_safe) {
-    AnimationPlayer player;
-    player.set_clip(nullptr);
-    player.update(0.016f);
-    EXPECT_FALSE(player.has_clip());
+DELVE_TEST(animation_mixer_null_clip_safe) {
+    AnimationMixer mixer;
+    mixer.set_clip(nullptr, 0.0f);
+    mixer.update(0.016f);
+    EXPECT_FALSE(mixer.has_clip());
     return true;
 }
 
@@ -188,7 +188,7 @@ DELVE_TEST(compute_bone_palette_translation_propagates) {
     return true;
 }
 
-DELVE_TEST(animation_player_sample_single_keyframe) {
+DELVE_TEST(animation_sample_single_keyframe) {
     GltfAnimationClip clip{};
     clip.name = "test";
     clip.duration = 1.0f;
@@ -200,19 +200,15 @@ DELVE_TEST(animation_player_sample_single_keyframe) {
     ch.translations = {glm::vec3(1.0f, 2.0f, 3.0f)};
     clip.channels.push_back(ch);
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(0.0f);
-
     std::vector<BoneLocalTransform> locals(1);
-    player.sample(locals);
+    AnimationMixer::sample_clip(&clip, 0.0f, locals);
     EXPECT_NEAR(locals[0].translation.x, 1.0f, 1e-4f);
     EXPECT_NEAR(locals[0].translation.y, 2.0f, 1e-4f);
     EXPECT_NEAR(locals[0].translation.z, 3.0f, 1e-4f);
     return true;
 }
 
-DELVE_TEST(animation_player_sample_lerps_translation) {
+DELVE_TEST(animation_sample_lerps_translation) {
     GltfAnimationClip clip{};
     clip.name = "test";
     clip.duration = 2.0f;
@@ -224,12 +220,8 @@ DELVE_TEST(animation_player_sample_lerps_translation) {
     ch.translations = {glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(4.0f, 0.0f, 0.0f)};
     clip.channels.push_back(ch);
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(1.0f);
-
     std::vector<BoneLocalTransform> locals(1);
-    player.sample(locals);
+    AnimationMixer::sample_clip(&clip, 1.0f, locals);
     EXPECT_NEAR(locals[0].translation.x, 2.0f, 1e-3f);
     return true;
 }

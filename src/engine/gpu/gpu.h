@@ -2,13 +2,6 @@
 #include <SDL3/SDL.h>
 #include <cstdint>
 
-struct TextureHandle {
-  SDL_GPUTexture *texture = nullptr;
-  SDL_GPUSampler *sampler = nullptr;
-  int width = 0;
-  int height = 0;
-};
-
 struct UploadManager {
   SDL_GPUTransferBuffer *buffer   = nullptr;
   uint8_t               *mapped   = nullptr;
@@ -45,13 +38,6 @@ bool gpu_begin_render_pass(GpuContext &ctx, FrameContext &frame);
 void gpu_end_frame(FrameContext &frame);
 void gpu_cleanup(GpuContext &ctx);
 
-void release_texture(SDL_GPUDevice *device, const TextureHandle &handle);
-TextureHandle upload_pixels_to_texture(SDL_GPUDevice *device,
-                                       const uint32_t *pixels, int width,
-                                       int height);
-TextureHandle upload_rgba_texture(SDL_GPUDevice *device,
-                                  const uint8_t *pixels, int width,
-                                  int height, bool srgb);
 
 SDL_GPUBuffer *gpu_create_buffer(SDL_GPUDevice *device, uint32_t size,
                                   SDL_GPUBufferUsageFlags usage);

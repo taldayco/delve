@@ -40,19 +40,11 @@ public:
 
   SDL_GPURenderPass *begin_render_pass(SDL_GPUCommandBuffer *cmd,
                                        SDL_GPUTexture *swapchain,
-                                       uint32_t w, uint32_t h);
-
-  SDL_GPURenderPass *begin_render_pass_load(SDL_GPUCommandBuffer *cmd,
-                                            SDL_GPUTexture *swapchain,
-                                            uint32_t w, uint32_t h);
-
-  SDL_GPURenderPass *begin_render_pass_load_preserve_depth(SDL_GPUCommandBuffer *cmd,
-                                                           SDL_GPUTexture *swapchain,
-                                                           uint32_t w, uint32_t h);
+                                       uint32_t w, uint32_t h,
+                                       SDL_GPULoadOp color_load = SDL_GPU_LOADOP_CLEAR,
+                                       SDL_GPULoadOp depth_load = SDL_GPU_LOADOP_CLEAR);
 
   SDL_GPUBuffer           *get_point_light_ssbo()  const { return point_light_ssbo;  }
-  SDL_GPUGraphicsPipeline *get_terrain_pipeline()  const { return terrain_pipeline;  }
-  SDL_GPUBuffer           *get_dummy_ssbo()        const { return dummy_ssbo;        }
   SDL_GPUBuffer           *get_light_grid_ssbo()   const { return light_grid_ssbo;   }
   SDL_GPUBuffer           *get_global_index_ssbo() const { return global_index_ssbo; }
 
@@ -81,22 +73,25 @@ public:
 private:
 
   void init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window *window);
-  void init_instanced_pipeline(SDL_GPUDevice *device, SDL_Window *window);
-  void init_pbr_pipeline(SDL_GPUDevice *device, SDL_Window *window);
   void init_compute_pipelines(SDL_GPUDevice *device);
   void init_cluster_buffers(SDL_GPUDevice *device, uint32_t tilesX, uint32_t tilesY, uint32_t num_slices);
+
+  SDL_GPUGraphicsPipeline *make_terrain_pipeline(SDL_GPUTextureFormat swapchain_format, bool pbr);
+  SDL_GPUGraphicsPipeline *make_lava_pipeline(SDL_GPUTextureFormat swapchain_format);
+  SDL_GPUGraphicsPipeline *make_contour_pipeline(SDL_GPUTextureFormat swapchain_format);
+  SDL_GPUGraphicsPipeline *make_instanced_pipeline(SDL_GPUTextureFormat swapchain_format);
 
 
 
   void stage_cull_lights(SDL_GPUCommandBuffer *cmd,
-                         const SceneUniforms &uniforms,
-                         const std::vector<GpuPointLight> &lights);
+                         const SceneUniforms &uniforms);
   void stage_shaded_draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
                          const SceneUniforms &uniforms);
   void stage_instanced_draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
                              const SceneUniforms &uniforms);
 
 
+  void release_registered_buffer(SDL_GPUDevice *device, SDL_GPUBuffer *&buf, const char *key);
   void release_buffers(SDL_GPUDevice *device);
   void release_cluster_buffers(SDL_GPUDevice *device);
   void upload_lights(SDL_GPUCommandBuffer *cmd,
@@ -157,7 +152,6 @@ private:
 
   uint32_t cluster_grid_w = 0;
   uint32_t cluster_grid_y = 0;
-  uint32_t num_depth_slices = 24;
 
 
   uint32_t current_light_count = 0;

@@ -63,7 +63,6 @@ SDL_GPUShader *AssetManager::load_shader(const std::string &key,
     meta.num_storage_buffers = num_storage_buffers;
     meta.num_sampler_textures = num_sampler_textures;
     meta.last_mtime          = get_mtime(path);
-    meta.dirty               = false;
     meta.shader              = create_shader_internal(meta);
 
     shader_cache[key] = meta;
@@ -82,13 +81,11 @@ SDL_GPUShader *AssetManager::load_compute_shader(const std::string &key,
     ShaderAsset meta;
     meta.path                = path;
     meta.stage               = SDL_GPU_SHADERSTAGE_VERTEX;
+    meta.is_compute          = true;
     meta.num_uniform_buffers = num_uniform_buffers;
     meta.num_storage_buffers = num_rw_storage_buffers + num_ro_storage_buffers;
     meta.num_sampler_textures = 0;
     meta.last_mtime          = get_mtime(path);
-    meta.dirty               = false;
-
-    meta.shader = nullptr;
 
     shader_cache[key] = meta;
     return nullptr;
@@ -121,11 +118,11 @@ void AssetManager::check_for_updates() {
             asset.shader = nullptr;
         }
         asset.last_mtime = mtime;
-        asset.dirty      = true;
 
-        if (asset.stage != SDL_GPU_SHADERSTAGE_VERTEX || asset.num_storage_buffers >= 0) {
-        }
-        asset.shader = create_shader_internal(asset);
+        // Compute pipelines are rebuilt from the file directly; only graphics
+        // shaders keep a live SDL_GPUShader in the cache.
+        if (!asset.is_compute)
+            asset.shader = create_shader_internal(asset);
 
         SDL_Log("AssetManager: Hot-reloaded shader '%s' (%s)", key.c_str(), asset.path.c_str());
 
@@ -136,9 +133,6 @@ void AssetManager::check_for_updates() {
             }
         }
     }
-
-    for (auto &[key, asset] : shader_cache)
-        asset.dirty = false;
 }
 
 bool AssetManager::pipeline_needs_rebuild(const std::string &key) const {
@@ -158,11 +152,6 @@ void AssetManager::register_buffer(const std::string &key, SDL_GPUBuffer *buffer
         SDL_ReleaseGPUBuffer(device, it->second);
     }
     buffer_registry[key] = buffer;
-}
-
-SDL_GPUBuffer *AssetManager::get_buffer(const std::string &key) const {
-    auto it = buffer_registry.find(key);
-    return it != buffer_registry.end() ? it->second : nullptr;
 }
 
 void AssetManager::release_buffer(const std::string &key) {
@@ -202,8 +191,7 @@ void AssetManager::render_debug_ui() const {
             ImGui::TableSetColumnIndex(1); ImGui::TextUnformatted(asset.path.c_str());
             ImGui::TableSetColumnIndex(2); ImGui::Text("%llu", (unsigned long long)asset.last_mtime);
             ImGui::TableSetColumnIndex(3);
-            if (asset.shader == nullptr && asset.stage == SDL_GPU_SHADERSTAGE_VERTEX
-                    && asset.num_storage_buffers > 0)
+            if (asset.is_compute)
                 ImGui::TextUnformatted("compute");
             else if (!asset.shader)
                 ImGui::TextColored({1,0.3f,0.3f,1}, "ERROR");

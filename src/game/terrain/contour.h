@@ -14,14 +14,3 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
 
 void simplify_contours(std::vector<Line> &lines, float epsilon);
 
-struct Plateau {
-  float height;
-  std::vector<int> pixels;
-  float center_x, center_y;
-  float min_x, max_x, min_y, max_y;
-};
-
-std::vector<Plateau> detect_plateaus(std::span<const int> band_map,
-                                     std::span<const float> heightmap,
-                                     int width, int height,
-                                     std::vector<int16_t>& terrain_map);

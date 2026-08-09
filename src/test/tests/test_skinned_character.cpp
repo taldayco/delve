@@ -79,12 +79,8 @@ DELVE_TEST(skinned_bone_palette_after_update) {
     ch2.translations = {glm::vec3(0.f, 5.f, 0.f)};
     clip.channels.push_back(ch2);
 
-    AnimationPlayer player;
-    player.set_clip(&clip);
-    player.update(0.f);
-
     std::vector<BoneLocalTransform> locals(2);
-    player.sample(locals);
+    AnimationMixer::sample_clip(&clip, 0.f, locals);
 
     BonePalette palette = compute_bone_palette(skel, locals);
 

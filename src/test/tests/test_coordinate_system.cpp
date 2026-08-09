@@ -18,7 +18,7 @@ DELVE_TEST(config_hex_size_large_enough) {
 }
 
 DELVE_TEST(config_map_width_units_cluster_safe) {
-    float map_width_units = (float)Config::MAP_COLS / Config::HEX_SIZE;
+    float map_width_units = (float)Config::MAP_WIDTH / Config::HEX_SIZE;
     if (map_width_units > 256.0f) {
         fprintf(stderr, "  FAIL: MAP_WIDTH_UNITS=%.1f > 256; "
                 "cluster shader will read OOB (HEX_SIZE=%.1f is too small)\n",
@@ -54,8 +54,8 @@ DELVE_TEST(hex_roundtrip_with_config_hex_size) {
 }
 
 DELVE_TEST(hex_to_pixel_finite_for_map_range) {
-    int q_max = (int)(Config::MAP_COLS / Config::HEX_SIZE) + 5;
-    int r_max = (int)(Config::MAP_ROWS / Config::HEX_SIZE) + 5;
+    int q_max = (int)(Config::MAP_WIDTH / Config::HEX_SIZE) + 5;
+    int r_max = (int)(Config::MAP_HEIGHT / Config::HEX_SIZE) + 5;
     for (int q = -2; q <= q_max; q += (q_max / 10 + 1)) {
         for (int r = -2; r <= r_max; r += (r_max / 10 + 1)) {
             float px, py;
@@ -71,11 +71,11 @@ DELVE_TEST(hex_to_pixel_finite_for_map_range) {
 }
 
 DELVE_TEST(pixel_to_hex_valid_for_all_map_pixels) {
-    int step = std::max(1, Config::MAP_COLS / 32);
-    for (int y = 0; y < Config::MAP_ROWS; y += step) {
-        for (int x = 0; x < Config::MAP_COLS; x += step) {
+    int step = std::max(1, Config::MAP_WIDTH / 32);
+    for (int y = 0; y < Config::MAP_HEIGHT; y += step) {
+        for (int x = 0; x < Config::MAP_WIDTH; x += step) {
             HexCoord h = pixel_to_hex((float)x, (float)y, Config::HEX_SIZE);
-            int range = Config::MAP_COLS + Config::MAP_ROWS;
+            int range = Config::MAP_WIDTH + Config::MAP_HEIGHT;
             if (std::abs(h.q) > range || std::abs(h.r) > range) {
                 fprintf(stderr, "  FAIL: pixel_to_hex(%d,%d) → (%d,%d) out of range\n",
                         x, y, h.q, h.r);

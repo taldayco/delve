@@ -12,7 +12,7 @@ struct ShaderAsset {
     int                 num_uniform_buffers  = 0;
     int                 num_storage_buffers  = 0;
     int                 num_sampler_textures = 0;
-    bool                dirty                = false;
+    bool                is_compute           = false;
 };
 
 struct PipelineRecord {
@@ -51,7 +51,6 @@ public:
     void clear_rebuild_flag(const std::string &key);
 
     void register_buffer(const std::string &key, SDL_GPUBuffer *buffer);
-    SDL_GPUBuffer *get_buffer(const std::string &key) const;
     void release_buffer(const std::string &key);
 
     void clear();

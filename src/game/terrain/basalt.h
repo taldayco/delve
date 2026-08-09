@@ -6,13 +6,6 @@
 
 struct MapData;
 
-std::vector<HexColumn>
-generate_basalt_columns(std::span<const float> heightmap, int width, int height,
-                        float hex_size,
-                        const std::vector<Plateau> &plateaus,
-                        std::vector<int> &plateaus_with_columns_out,
-                        std::vector<int16_t> &terrain_map);
-
 struct WorleyBasaltParams {
   float density_threshold = 0.2f;
   float jitter_scale = 0.05f;

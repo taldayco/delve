@@ -2,11 +2,7 @@
 #include <SDL3/SDL.h>
 #include <string>
 
-#ifdef SHADER_DIR
 static const std::string s_shader_dir = SHADER_DIR;
-#else
-static const std::string s_shader_dir = "shaders";
-#endif
 
 bool BackgroundRenderer::build_pipeline(SDL_GPUTextureFormat swapchain_format,
                                          SDL_GPUTextureFormat depth_format) {

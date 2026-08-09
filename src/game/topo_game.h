@@ -13,7 +13,6 @@
 #include "camera/camera.h"
 #include "render/background.h"
 #include "render/skinned_renderer.h"
-#include "animation_log.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -30,7 +29,6 @@ public:
   AsyncTerrainState   async_terrain;
   flecs::entity       player_entity;
   bool                player_spawned = false;
-  AnimationLogger     anim_log;
   SkinnedRenderer     skinned_renderer;
   bool                skinned_char_loaded = false;
 

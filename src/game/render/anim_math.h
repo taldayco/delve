@@ -9,65 +9,24 @@ float smooth_damp(float current, float target, float *velocity,
 float smooth_damp_angle(float current, float target, float *velocity,
                         float smooth_time, float dt);
 
-void solve_two_bone(glm::vec3 H, glm::vec3 target,
-                    float a, float b,
-                    glm::vec3 pole, glm::vec3 fallback_perp,
-                    glm::vec3 &out_mid, glm::vec3 &out_end);
-
-void blend_local_transforms(const BoneLocalTransform *a,
-                            const BoneLocalTransform *b,
-                            float alpha,
-                            BoneLocalTransform *out,
-                            int count);
-
 void additive_rotation(BoneLocalTransform &base, const glm::quat &delta, float weight);
 
 void additive_translation(BoneLocalTransform &base, const glm::vec3 &offset, float weight);
 
-// Legacy utilities — retained for animation tests
-struct RigPose;
-struct ActorConfig;
+// Pure gait math — shared by GaitSyncSystem and the unit tests.
 
-inline glm::mat4 make_bone_mat4(const glm::vec3 &right,
-                                 const glm::vec3 &fwd,
-                                 const glm::vec3 &up,
-                                 const glm::vec3 &pos) {
-    return glm::mat4(
-        glm::vec4(right, 0.0f),
-        glm::vec4(fwd,   0.0f),
-        glm::vec4(up,    0.0f),
-        glm::vec4(pos,   1.0f)
-    );
-}
+struct StepTiming {
+    float adaptive_duration;  // seconds a step takes at this speed/turn state
+    float speed_factor;       // 0..1 scale applied to stride offsets
+};
 
-inline void build_bone_basis(const glm::vec3 &bone_dir,
-                              const glm::vec3 &ref_fwd,
-                              glm::vec3 &out_right,
-                              glm::vec3 &out_fwd,
-                              glm::vec3 &out_up) {
-    float len = glm::length(bone_dir);
-    if (len < 1e-5f) {
-        out_right = glm::vec3(1.0f, 0.0f, 0.0f);
-        out_fwd   = glm::vec3(0.0f, 1.0f, 0.0f);
-        out_up    = glm::vec3(0.0f, 0.0f, 1.0f);
-        return;
-    }
-    out_up = bone_dir / len;
+StepTiming gait_step_timing(float speed, float move_speed, float step_duration,
+                            float turn_urgency);
 
-    out_right = glm::cross(ref_fwd, out_up);
-    float right_len = glm::length(out_right);
-    if (right_len < 1e-5f) {
-        glm::vec3 alt = (std::abs(out_up.z) < 0.9f)
-                            ? glm::vec3(0.0f, 0.0f, 1.0f)
-                            : glm::vec3(1.0f, 0.0f, 0.0f);
-        out_right = glm::normalize(glm::cross(alt, out_up));
-    } else {
-        out_right /= right_len;
-    }
+// Distance from the stride center at which a new step is triggered.
+float gait_trigger_distance(float half_stride, float speed_factor);
 
-    out_fwd = glm::cross(out_up, out_right);
-}
-
-void compute_derived_joints(RigPose &pose, const ActorConfig &cfg,
-                            float visual_facing, float chest_facing,
-                            const glm::vec3 &root_pos);
+// Position of a swinging foot at `progress` in [0,1]: smootherstep in the
+// plane, smoothstep in height, plus a sine arc of `step_height`.
+glm::vec3 gait_foot_arc(const glm::vec3 &from, const glm::vec3 &to,
+                        float progress, float step_height);

@@ -1,6 +1,5 @@
 #include "test_harness.h"
 #include "terrain_metrics.h"
-#include "terrain/noise.h"
 #include "terrain/noise_layers.h"
 #include <vector>
 
@@ -9,9 +8,9 @@ static constexpr int H = 128;
 
 DELVE_TEST(elevation_output_in_valid_range) {
   std::vector<float> out(W * H);
-  NoiseParams params;
+  ElevationParams params;
   params.seed = 42;
-  generate_heightmap(out, W, H, params);
+  generate_elevation_layer(out, W, H, params);
   for (float v : out) {
     EXPECT_RANGE(v, -0.1f, 1.1f);
   }
@@ -20,10 +19,10 @@ DELVE_TEST(elevation_output_in_valid_range) {
 
 DELVE_TEST(elevation_deterministic_with_same_seed) {
   std::vector<float> a(W * H), b(W * H);
-  NoiseParams params;
+  ElevationParams params;
   params.seed = 42;
-  generate_heightmap(a, W, H, params);
-  generate_heightmap(b, W, H, params);
+  generate_elevation_layer(a, W, H, params);
+  generate_elevation_layer(b, W, H, params);
   for (int i = 0; i < W * H; ++i) {
     EXPECT_NEAR(a[i], b[i], 1e-6f);
   }
@@ -32,10 +31,10 @@ DELVE_TEST(elevation_deterministic_with_same_seed) {
 
 DELVE_TEST(different_seeds_produce_different_output) {
   std::vector<float> a(W * H), b(W * H);
-  NoiseParams pa, pb;
+  ElevationParams pa, pb;
   pa.seed = 42; pb.seed = 999;
-  generate_heightmap(a, W, H, pa);
-  generate_heightmap(b, W, H, pb);
+  generate_elevation_layer(a, W, H, pa);
+  generate_elevation_layer(b, W, H, pb);
   int differ = 0;
   for (int i = 0; i < W * H; ++i)
     if (std::abs(a[i] - b[i]) > 0.001f) ++differ;
@@ -45,9 +44,9 @@ DELVE_TEST(different_seeds_produce_different_output) {
 
 DELVE_TEST(elevation_has_variance) {
   std::vector<float> out(W * H);
-  NoiseParams params;
+  ElevationParams params;
   params.seed = 42;
-  generate_heightmap(out, W, H, params);
+  generate_elevation_layer(out, W, H, params);
   auto stats = elevation_stats(out);
   EXPECT_GT(stats.stddev, 0.01f);
   EXPECT_GT(stats.max - stats.min, 0.1f);

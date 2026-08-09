@@ -34,7 +34,26 @@ float hex_dither(vec2 world_xy) {
     return (float(hash & 0xFFu) / 255.0 - 0.5) * 0.25;
 }
 
-#ifndef PBR_LIGHTING_ONLY
+// Iterate the lights affecting this fragment's cluster, with brute-force
+// fallback when the grid entry is empty. BODY sees `PointLight pl`.
+#define FOREACH_CLUSTER_LIGHT(BODY) {                                          \
+    uint cluster_idx = cluster_index();                                        \
+    uvec2 grid_entry = light_grid[cluster_idx];                                \
+    uint offset = grid_entry.x;                                                \
+    uint count  = grid_entry.y;                                                \
+    if (count == 0u && LIGHT_COUNT > 0u) {                                     \
+        uint total = min(LIGHT_COUNT, 128u);                                   \
+        for (uint i = 0u; i < total; ++i) {                                    \
+            PointLight pl = point_lights[i];                                   \
+            BODY                                                               \
+        }                                                                      \
+    } else {                                                                   \
+        for (uint i = 0u; i < count; ++i) {                                    \
+            PointLight pl = point_lights[global_light_indices[offset + i]];    \
+            BODY                                                               \
+        }                                                                      \
+    }                                                                          \
+}
 
 vec3 apply_point_light(PointLight light, vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3  to_light = light.positionRadius.xyz - frag_pos;
@@ -68,27 +87,10 @@ vec3 apply_star_ambient(vec3 color, vec3 normal, float sheen) {
 // fallback path below. Deferred until light counts exceed ~128.
 vec3 clustered_point_lighting(vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3 result = vec3(0.0);
-
-    uint cluster_idx = cluster_index();
-    uvec2 grid_entry = light_grid[cluster_idx];
-    uint offset = grid_entry.x;
-    uint count  = grid_entry.y;
-
-    if (count == 0u && LIGHT_COUNT > 0u) {
-        uint total = min(LIGHT_COUNT, 128u);
-        for (uint i = 0u; i < total; ++i) {
-            result += apply_point_light(point_lights[i], frag_pos, normal, base_color);
-        }
-    } else {
-        for (uint i = 0u; i < count; ++i) {
-            uint light_idx = global_light_indices[offset + i];
-            result += apply_point_light(point_lights[light_idx], frag_pos, normal, base_color);
-        }
-    }
-
+    FOREACH_CLUSTER_LIGHT({
+        result += apply_point_light(pl, frag_pos, normal, base_color);
+    })
     return result;
 }
-
-#endif
 
 #endif

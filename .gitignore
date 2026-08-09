@@ -50,9 +50,6 @@ topogen
 *~
 .DS_Store
 
-# ImGui (downloaded/symlinked)
-imgui/
-
 # Neovim
 *.un~
 .netrwhist
@@ -64,6 +61,10 @@ imgui/
 
 # Log files
 *.log
+
+# Build/runtime artifacts
+*.spv
+imgui.ini
 
 # Cache
 .cache/

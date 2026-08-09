@@ -39,8 +39,11 @@ FetchContent_MakeAvailable(flecs json glm)
 
 if(NOT DELVE_HEADLESS_ONLY)
 
-# ImGui
-set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui)
+# ImGui (git submodule)
+set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
+if(NOT EXISTS ${IMGUI_DIR}/imgui.cpp)
+    message(FATAL_ERROR "imgui submodule missing — run: git submodule update --init")
+endif()
 add_library(imgui STATIC
     ${IMGUI_DIR}/imgui.cpp
     ${IMGUI_DIR}/imgui_draw.cpp
@@ -69,7 +72,6 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/background.vert.glsl
     ${SHADER_DIR}/background.frag.glsl
     ${SHADER_DIR}/instanced_terrain.vert.glsl
-    ${SHADER_DIR}/instanced_terrain.frag.glsl
     ${SHADER_DIR}/pbr_static.vert.glsl
     ${SHADER_DIR}/pbr_static.frag.glsl
     ${SHADER_DIR}/skinned_character.vert.glsl
@@ -128,18 +130,12 @@ add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 # ---- topo_engine (static library) ----
 add_library(topo_engine STATIC
     src/engine/app.cpp
-    src/engine/agent_mode.cpp
     src/engine/core/asset_manager.cpp
     src/engine/core/task_system.cpp
-    src/engine/core/watchdog.cpp
     src/engine/gpu/gpu.cpp
-    src/engine/gpu/frame_capture.cpp
-    src/engine/ipc/agent_server.cpp
     src/engine/input/input.cpp
     src/engine/camera/camera.cpp
     src/engine/ui/imgui_ui.cpp
-    src/engine/render/sprite.cpp
-    src/engine/render/render_system.cpp
     src/engine/render/background.cpp
     src/engine/core/cgltf_impl.cpp
     src/engine/core/stb_image_impl.cpp
@@ -163,17 +159,12 @@ target_link_libraries(topo_engine PUBLIC
 add_executable(topogen
     src/game/main.cpp
     src/game/topo_game.cpp
-    src/game/terrain/noise.cpp
     src/game/terrain/noise_layers.cpp
     src/game/terrain/noise_composer.cpp
     src/game/terrain/contour.cpp
     src/game/terrain/hex.cpp
-    src/game/terrain/isometric.cpp
     src/game/terrain/basalt.cpp
     src/game/terrain/lava.cpp
-    src/game/terrain/detail.cpp
-    src/game/terrain/delve_render.cpp
-    src/game/terrain/map_gen.cpp
     src/game/terrain/terrain_mesh.cpp
     src/game/terrain/terrain_renderer.cpp
     src/game/terrain/map_util.cpp
@@ -196,6 +187,7 @@ target_compile_definitions(topogen PRIVATE
 )
 
 target_compile_definitions(topo_engine PRIVATE
+    SHADER_DIR="${SHADER_OUT_DIR}"
     GLM_FORCE_DEPTH_ZERO_TO_ONE
 )
 
@@ -211,7 +203,6 @@ endif() # NOT DELVE_HEADLESS_ONLY
 
 # ---- Headless terrain pipeline sources (shared by test + metrics targets) ----
 set(TERRAIN_PIPELINE_SOURCES
-    src/game/terrain/noise.cpp
     src/game/terrain/noise_layers.cpp
     src/game/terrain/noise_composer.cpp
     src/game/terrain/contour.cpp
@@ -260,25 +251,3 @@ target_link_libraries(delve_tests PRIVATE
     Threads::Threads
 )
 
-# ---- delve_metrics (headless metrics binary) ----
-add_executable(delve_metrics EXCLUDE_FROM_ALL
-    src/test/metrics_main.cpp
-    ${TERRAIN_PIPELINE_SOURCES}
-)
-
-target_include_directories(delve_metrics PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/test/sdl_override
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/test
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
-)
-
-target_compile_definitions(delve_metrics PRIVATE
-    GLM_FORCE_DEPTH_ZERO_TO_ONE
-    DELVE_HEADLESS=1
-)
-
-target_link_libraries(delve_metrics PRIVATE
-    glm::glm
-    nlohmann_json::nlohmann_json
-)

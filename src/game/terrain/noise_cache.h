@@ -37,17 +37,6 @@ struct NoiseCache {
     return false;
   }
 
-  bool get2(Slot slot, uint64_t param_hash, std::vector<float> &out1,
-            std::vector<float> &out2) const {
-    const auto &e = entries[slot];
-    if (e.valid && e.param_hash == param_hash) {
-      out1 = e.data;
-      out2 = e.data2;
-      return true;
-    }
-    return false;
-  }
-
   bool get3(Slot slot, uint64_t param_hash, std::vector<float> &out1,
             std::vector<float> &out2, std::vector<float> &out3) const {
     const auto &e = entries[slot];
@@ -64,15 +53,6 @@ struct NoiseCache {
     auto &e = entries[slot];
     e.param_hash = param_hash;
     e.data = std::move(data);
-    e.valid = true;
-  }
-
-  void put2(Slot slot, uint64_t param_hash, std::vector<float> data1,
-            std::vector<float> data2) {
-    auto &e = entries[slot];
-    e.param_hash = param_hash;
-    e.data = std::move(data1);
-    e.data2 = std::move(data2);
     e.valid = true;
   }
 

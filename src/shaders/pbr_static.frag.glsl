@@ -4,6 +4,7 @@
 #include "coord.glsl"
 #include "pbr_common.glsl"
 #include "lighting_common.glsl"
+#include "tone.glsl"
 
 layout(location = 0) in vec3  frag_color;
 layout(location = 1) in vec3  frag_world_pos;
@@ -18,14 +19,16 @@ void main() {
     vec3 V = normalize(view_dir_ws.xyz);
 
     float dither = hex_dither(frag_world_pos.xy);
-    vec3 albedo = clamp(frag_color * (1.0 + dither), 0.0, 1.0);
+    vec3 albedo = to_linear(clamp(frag_color * (1.0 + dither), 0.0, 1.0));
 
     float roughness = mix(0.9, 0.3, frag_sheen);
     float metallic  = frag_sheen * 0.1;
 
+    vec2 tl = sample_terrain_light(frag_world_pos.xy);
+
     vec3 L_dir = normalize(light_dir.xyz);
     vec3 dir_radiance = light_col.rgb;
-    vec3 color = cook_torrance_brdf(albedo, metallic, roughness, N, V, L_dir, dir_radiance);
+    vec3 color = cook_torrance_brdf(albedo, metallic, roughness, N, V, L_dir, dir_radiance) * tl.r;
 
     color += albedo * light_dir.w;
 
@@ -43,7 +46,7 @@ void main() {
         }
     })
 
-    color = apply_star_ambient(color, N, frag_sheen);
+    color = apply_sky_ambient(color, albedo, N, tl.g);
 
-    out_color = vec4(clamp(color, 0.0, 1.0), 1.0);
+    out_color = vec4(encode_output_exp(color, EXPOSURE), 1.0);
 }

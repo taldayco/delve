@@ -1,5 +1,7 @@
 #version 450
 
+#include "tone.glsl"
+
 layout(location = 0) in vec2 frag_uv;
 layout(location = 0) out vec4 out_color;
 
@@ -84,5 +86,5 @@ void main() {
 
     star_layer(px, time,  28.0, 0.30, 0.5, color);
 
-    out_color = vec4(clamp(color, 0.0, 1.0), 1.0);
+    out_color = vec4(encode_output(color), 1.0);
 }

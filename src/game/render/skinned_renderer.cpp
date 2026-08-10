@@ -27,7 +27,7 @@ bool SkinnedRenderer::build_pipeline(SDL_Window *window) {
       SDL_GPU_SHADERSTAGE_VERTEX, 1, 1);
   SDL_GPUShader *frag = assets_->load_shader(
       "skinned_char.frag", shader_dir + "/skinned_character.frag.glsl.spv",
-      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);
+      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 1);
 
   if (!vert || !frag) {
     SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
@@ -343,7 +343,9 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
                            const SceneUniforms &uniforms,
                            SDL_GPUBuffer *lights_ssbo,
                            SDL_GPUBuffer *light_grid_ssbo,
-                           SDL_GPUBuffer *light_indices_ssbo) {
+                           SDL_GPUBuffer *light_indices_ssbo,
+                           SDL_GPUTexture *light_tex,
+                           SDL_GPUSampler *light_smp) {
   if (!initialized_ || !char_loaded_ || !vbo_ || !ibo_)
     return;
   if (!pipeline_) {
@@ -354,6 +356,9 @@ void SkinnedRenderer::draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
   SDL_BindGPUGraphicsPipeline(pass, pipeline_);
 
   SDL_BindGPUVertexStorageBuffers(pass, 0, &bone_ssbo_, 1);
+
+  SDL_GPUTextureSamplerBinding tsb = {light_tex, light_smp};
+  SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
 
   SDL_GPUBuffer *frag_ssbos[3] = {lights_ssbo, light_grid_ssbo,
                                   light_indices_ssbo};

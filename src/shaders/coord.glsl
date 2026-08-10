@@ -15,6 +15,8 @@ layout(set = 1, binding = 0) uniform SceneUniforms {
 #define TIME              params1.x
 #define CONTOUR_OPACITY   params1.y
 #define HEX_BORDER_WIDTH  params1.z
+#define INV_MAP_UNITS     params1.w
+#define EXPOSURE          light_col.w
 #define NEAR_PLANE        depth_params.x
 #define FAR_PLANE         depth_params.y
 #define LIGHT_COUNT       uint(depth_params.z)

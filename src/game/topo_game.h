@@ -51,5 +51,11 @@ private:
   std::shared_ptr<ContourData> ready_contours_pending;
 
   float regen_cooldown = 0.0f;
+
+  // Lighting look knobs (ImGui "Lighting" panel)
+  TerrainLightParams light_params;
+  float light_exposure = 1.6f;
+  float sky_intensity  = 0.75f;
+  float sun_ambient    = 0.25f;
   bool  gltf_column_loaded = false;
 };

@@ -45,3 +45,6 @@ SDL_GPUBuffer *gpu_upload_buffer(SDL_GPUDevice *device, const void *data,
                                   uint32_t size, SDL_GPUBufferUsageFlags usage);
 SDL_GPUBuffer *gpu_create_zeroed_buffer(SDL_GPUDevice *device, uint32_t size,
                                          SDL_GPUBufferUsageFlags usage);
+SDL_GPUTexture *gpu_upload_texture_rg8(SDL_GPUDevice *device, const uint8_t *rg,
+                                        uint32_t w, uint32_t h);
+SDL_GPUSampler *gpu_create_linear_clamp_sampler(SDL_GPUDevice *device);

@@ -166,13 +166,14 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.time             = time;
   u.contour_opacity  = contour_opacity;
   u.hex_border_width = 0.05f;
+  u.inv_map_units    = 1.0f / Config::MAP_WIDTH_UNITS;
 
   color_to_float(Config::LAVA_COLOR, u.lava_color_r, u.lava_color_g, u.lava_color_b);
 
   u.star_light_r         = 0.55f;
   u.star_light_g         = 0.70f;
   u.star_light_b         = 1.00f;
-  u.star_light_intensity = 0.12f;
+  u.star_light_intensity = 0.75f;
 
   {
     float lx = -1.0f, ly = -1.0f, lz = 2.0f;
@@ -185,6 +186,7 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.light_col_r = 1.00f;
   u.light_col_g = 0.95f;
   u.light_col_b = 0.85f;
+  u.exposure    = 1.6f;
 
   u.tile_px       = 16.0f;
   u.grid_size_x   = (float)cluster_tiles_x;
@@ -199,7 +201,10 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.cam_world_z = cam_z;
 
   glm::vec3 depth_dir(view[0][2], view[1][2], view[2][2]);
-  glm::vec3 vdir = -glm::normalize(depth_dir);
+  // Eye direction for the orthographic iso view is the +(1,1,1) depth
+  // gradient: larger view_z = nearer the camera, so +depth_dir points
+  // surface -> eye.
+  glm::vec3 vdir = glm::normalize(depth_dir);
   u.view_dir_x = vdir.x;
   u.view_dir_y = vdir.y;
   u.view_dir_z = vdir.z;

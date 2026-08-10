@@ -1,6 +1,7 @@
 #pragma once
 #include "terrain/terrain_mesh.h"
 #include "terrain/instanced_terrain.h"
+#include "terrain/terrain_lighting.h"
 #include "core/asset_manager.h"
 #include "gpu/gpu.h"
 #include <SDL3/SDL.h>
@@ -19,6 +20,7 @@ public:
                                 const void *index_data, uint32_t index_bytes,
                                 uint32_t index_count);
   void rebuild_dirty_pipelines(SDL_Window *window);
+  void upload_light_bake(SDL_GPUDevice *device, const TerrainLightBake &bake);
 
 
 
@@ -47,6 +49,9 @@ public:
   SDL_GPUBuffer           *get_point_light_ssbo()  const { return point_light_ssbo;  }
   SDL_GPUBuffer           *get_light_grid_ssbo()   const { return light_grid_ssbo;   }
   SDL_GPUBuffer           *get_global_index_ssbo() const { return global_index_ssbo; }
+
+  SDL_GPUTexture *light_texture() const { return light_bake_tex ? light_bake_tex : light_fallback_tex; }
+  SDL_GPUSampler *light_sampler() const { return light_bake_smp; }
 
   void prepare_frame_resources(SDL_GPUDevice *device);
 
@@ -147,6 +152,10 @@ private:
 
 
   SDL_GPUTransferBuffer *counter_reset_transfer = nullptr;
+
+  SDL_GPUTexture *light_bake_tex     = nullptr;
+  SDL_GPUTexture *light_fallback_tex = nullptr;
+  SDL_GPUSampler *light_bake_smp     = nullptr;
 
   AssetManager *asset_manager = nullptr;
 

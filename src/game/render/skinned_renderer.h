@@ -26,7 +26,9 @@ public:
               const SceneUniforms &uniforms,
               SDL_GPUBuffer *lights_ssbo,
               SDL_GPUBuffer *light_grid_ssbo,
-              SDL_GPUBuffer *light_indices_ssbo);
+              SDL_GPUBuffer *light_indices_ssbo,
+              SDL_GPUTexture *light_tex,
+              SDL_GPUSampler *light_smp);
 
     bool is_initialized() const { return initialized_; }
     bool has_character()  const { return char_loaded_; }

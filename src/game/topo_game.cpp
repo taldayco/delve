@@ -3,6 +3,7 @@
 #include "render/hybrid_animation.h"
 #include "terrain/basalt.h"
 #include "terrain/lava.h"
+#include "terrain/terrain_lighting.h"
 #include "terrain/noise_composer.h"
 #include "terrain/contour.h"
 #include "terrain/palettes.h"
@@ -204,6 +205,16 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (ready_mesh_pending) {
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
+    // The bake stays in async_terrain until its adopted mesh is uploaded
+    // (adoption site can't carry it — see on_render_game).
+    std::shared_ptr<TerrainLightBake> ready_light_bake;
+    {
+      std::lock_guard<std::mutex> lk(async_terrain.pending_mtx);
+      ready_light_bake = std::move(async_terrain.pending_light_bake);
+    }
+    if (ready_light_bake)
+      terrain_renderer.upload_light_bake(gpu.device, *ready_light_bake);
+
     if (ready_map_pending && !ready_map_pending->columns.empty()) {
       auto *ts = ecs.get<TerrainState>();
       if (ts) {
@@ -362,9 +373,10 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     auto comp_snap   = *comp;
 
     TerrainState ts_snap = *ts;
+    TerrainLightParams lp_snap = light_params;
     ts_snap.need_regenerate = false;
 
-    task_system.enqueue([this, elev_snap, river_snap, worley_snap, comp_snap, ts_snap]() {
+    task_system.enqueue([this, elev_snap, river_snap, worley_snap, comp_snap, ts_snap, lp_snap]() {
       SDL_Log("Async regen: started");
       auto t0 = SDL_GetTicks();
 
@@ -386,6 +398,9 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       md->lava_bodies = std::move(fill.lava_bodies);
       md->void_bodies = std::move(fill.void_bodies);
 
+      auto light_bake = std::make_shared<TerrainLightBake>(bake_terrain_lighting(*md, lp_snap));
+      if (should_abort()) { async_terrain.is_generating = false; return; }
+
       auto cd = std::make_shared<ContourData>();
       int n = Config::MAP_WIDTH * Config::MAP_HEIGHT;
       cd->heightmap.resize(n);
@@ -401,9 +416,10 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 
       {
         std::lock_guard<std::mutex> lk(async_terrain.pending_mtx);
-        async_terrain.pending_mesh     = std::move(mesh);
-        async_terrain.pending_map      = std::move(md);
-        async_terrain.pending_contours = std::move(cd);
+        async_terrain.pending_mesh       = std::move(mesh);
+        async_terrain.pending_map        = std::move(md);
+        async_terrain.pending_contours   = std::move(cd);
+        async_terrain.pending_light_bake = std::move(light_bake);
       }
       async_terrain.is_generating = false;
 
@@ -433,11 +449,13 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     for (const auto &lava : map_data->lava_bodies) {
       float cx = (lava.min_x + lava.max_x) * 0.5f * inv;
       float cy = (lava.min_y + lava.max_y) * 0.5f * inv;
+      float area_units = (float)lava.pixels.size() / (Config::HEX_SIZE * Config::HEX_SIZE);
+      float radius = std::clamp(std::sqrt(area_units) * 1.5f, 6.0f, 16.0f);
       GpuPointLight pl;
       pl.pos_x     = cx;
       pl.pos_y     = cy;
-      pl.pos_z     = lava.height + 1.0f;
-      pl.radius    = 40.0f;
+      pl.pos_z     = lava.height + 0.3f;   // hug the lava surface so walls catch a base-up gradient
+      pl.radius    = radius;
       pl.color_r   = 1.0f;
       pl.color_g   = 0.35f;
       pl.color_b   = 0.05f;
@@ -466,6 +484,9 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
         camera.world_x, camera.world_y, camera.follow_z,
         24u,
         camera.near_plane, camera.far_plane);
+    uniforms.exposure             = light_exposure;
+    uniforms.star_light_intensity = sky_intensity;
+    uniforms.ambient              = sun_ambient;
 
     terrain_renderer.draw(frame.cmd, frame.swapchain,
                           frame.swapchain_w, frame.swapchain_h,
@@ -486,7 +507,9 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
           skinned_renderer.draw(actor_pass, frame.cmd, uniforms,
                                 terrain_renderer.get_point_light_ssbo(),
                                 terrain_renderer.get_light_grid_ssbo(),
-                                terrain_renderer.get_global_index_ssbo());
+                                terrain_renderer.get_global_index_ssbo(),
+                                terrain_renderer.light_texture(),
+                                terrain_renderer.light_sampler());
           SDL_EndGPURenderPass(actor_pass);
         }
       }
@@ -648,6 +671,24 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
   }
   if (save_status_timer > 0)       { ImGui::SameLine(); ImGui::Text("Saved!");  save_status_timer--; }
   else if (save_status_timer < -1) { ImGui::SameLine(); ImGui::Text("Loaded!"); save_status_timer++; }
+
+  ImGui::Separator();
+  if (ImGui::CollapsingHeader("Lighting")) {
+    ImGui::SliderFloat("Exposure",        &light_exposure, 0.5f, 4.0f);
+    ImGui::SliderFloat("Sky Ambient",     &sky_intensity,  0.0f, 2.0f);
+    ImGui::SliderFloat("Sun Ambient",     &sun_ambient,    0.0f, 1.0f);
+    ImGui::SliderFloat("Sun Elevation",   &light_params.sun_elevation_deg, 20.0f, 80.0f, "%.0f deg");
+    ImGui::SliderFloat("Shadow Softness", &light_params.penumbra_deg,       0.0f, 15.0f, "%.1f deg");
+    ImGui::BeginDisabled(async_terrain.is_generating);
+    if (ImGui::Button("Rebake Shadows", {-1, 0})) {
+      const auto *md_live = ecs.get<MapData>();
+      if (md_live && !md_live->basalt_height.empty()) {
+        terrain_renderer.upload_light_bake(
+            gpu_ctx.device, bake_terrain_lighting(*md_live, light_params));
+      }
+    }
+    ImGui::EndDisabled();
+  }
 
   ImGui::Separator();
   ImGui::Text("Stats");

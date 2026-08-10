@@ -79,6 +79,11 @@ void TerrainRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
 
+  // 1x1 fully-lit fallback so draws before the first bake are correct.
+  const uint8_t fully_lit_rg[2] = { 0xFF, 0xFF };
+  light_fallback_tex = gpu_upload_texture_rg8(device, fully_lit_rg, 1, 1);
+  light_bake_smp     = gpu_create_linear_clamp_sampler(device);
+
   initialized = true;
   SDL_Log("TerrainRenderer: Initialized (graphics + compute pipelines)");
 }
@@ -97,7 +102,7 @@ SDL_GPUGraphicsPipeline *TerrainRenderer::make_terrain_pipeline(
   SDL_GPUShader *vert = asset_manager->load_shader(
       vk, shader_dir + "/" + vk + ".glsl.spv", SDL_GPU_SHADERSTAGE_VERTEX, 1, 0);
   SDL_GPUShader *frag = asset_manager->load_shader(
-      fk, shader_dir + "/" + fk + ".glsl.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);
+      fk, shader_dir + "/" + fk + ".glsl.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 1);
   if (!vert || !frag) return nullptr;
 
   SDL_GPUVertexBufferDescription vbuf_desc = {};
@@ -227,7 +232,7 @@ SDL_GPUGraphicsPipeline *TerrainRenderer::make_instanced_pipeline(
       SDL_GPU_SHADERSTAGE_VERTEX, 1, 1);
   SDL_GPUShader *frag = asset_manager->load_shader(
       "terrain.frag", shader_dir + "/terrain.frag.glsl.spv",
-      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3);
+      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 1);
   if (!vert || !frag) return nullptr;
 
   SDL_GPUVertexBufferDescription vbuf_desc = {};
@@ -563,6 +568,18 @@ void TerrainRenderer::upload_gltf_column_mesh(SDL_GPUDevice *device,
           index_count, vertex_bytes, index_bytes);
 }
 
+void TerrainRenderer::upload_light_bake(SDL_GPUDevice *device, const TerrainLightBake &bake) {
+  if (bake.width <= 0 || bake.height <= 0 || bake.rg.empty()) return;
+
+  SDL_WaitForGPUIdle(device);
+  if (light_bake_tex) { SDL_ReleaseGPUTexture(device, light_bake_tex); light_bake_tex = nullptr; }
+
+  light_bake_tex = gpu_upload_texture_rg8(device, bake.rg.data(),
+                                          (uint32_t)bake.width, (uint32_t)bake.height);
+
+  SDL_Log("TerrainRenderer: Light bake uploaded (%dx%d)", bake.width, bake.height);
+}
+
 void TerrainRenderer::stage_instanced_draw(SDL_GPURenderPass *pass,
                                              SDL_GPUCommandBuffer *cmd,
                                              const SceneUniforms &uniforms) {
@@ -575,6 +592,9 @@ void TerrainRenderer::stage_instanced_draw(SDL_GPURenderPass *pass,
 
   SDL_GPUBuffer *vert_storage[1] = { instanced_terrain->get_instance_ssbo() };
   SDL_BindGPUVertexStorageBuffers(pass, 0, vert_storage, 1);
+
+  SDL_GPUTextureSamplerBinding tsb = { light_texture(), light_sampler() };
+  SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
 
   SDL_GPUBuffer *frag_storage[3] = {
     point_light_ssbo  ? point_light_ssbo  : dummy_ssbo,
@@ -800,6 +820,9 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
     SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
 
     {
+      SDL_GPUTextureSamplerBinding tsb = { light_texture(), light_sampler() };
+      SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+
       SDL_GPUBuffer *frag_storage[3] = {
         point_light_ssbo  ? point_light_ssbo  : dummy_ssbo,
         light_grid_ssbo   ? light_grid_ssbo   : dummy_ssbo,
@@ -962,6 +985,9 @@ void TerrainRenderer::cleanup(SDL_GPUDevice *device) {
 
   if (dummy_ssbo)               { SDL_ReleaseGPUBuffer(device, dummy_ssbo);                           dummy_ssbo               = nullptr; }
   if (depth_texture)            { SDL_ReleaseGPUTexture(device, depth_texture);                        depth_texture            = nullptr; }
+  if (light_bake_tex)           { SDL_ReleaseGPUTexture(device, light_bake_tex);                       light_bake_tex           = nullptr; }
+  if (light_fallback_tex)       { SDL_ReleaseGPUTexture(device, light_fallback_tex);                   light_fallback_tex       = nullptr; }
+  if (light_bake_smp)           { SDL_ReleaseGPUSampler(device, light_bake_smp);                       light_bake_smp           = nullptr; }
   if (terrain_pipeline)              { SDL_ReleaseGPUGraphicsPipeline(device, terrain_pipeline);              terrain_pipeline              = nullptr; }
   if (lava_pipeline)                 { SDL_ReleaseGPUGraphicsPipeline(device, lava_pipeline);                 lava_pipeline                 = nullptr; }
   if (contour_pipeline)              { SDL_ReleaseGPUGraphicsPipeline(device, contour_pipeline);              contour_pipeline              = nullptr; }

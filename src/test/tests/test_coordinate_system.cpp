@@ -194,15 +194,12 @@ DELVE_TEST(camera_z_height_foreshortening) {
 }
 
 DELVE_TEST(camera_near_far_encompass_terrain) {
-    CameraSystem sys;
+    // view_z = (x+y)+z; visible iff -far_plane <= view_z <= -near_plane.
+    // Worst case: far corner (x+y = 2*MAP_WIDTH_UNITS) + max feature height ~2.
+    float worst_view_z = 2.0f * Config::MAP_WIDTH_UNITS + 2.0f;
     CameraState cam;
-    cam.world_x = 64.0f;
-    cam.world_y = 64.0f;
-    float world_extent = Config::MAP_WIDTH_UNITS;
-    float max_height = 10.0f;
-    float worst_z = world_extent * Config::ISO_TH + max_height * Config::ISO_HS;
-    float depth_range = cam.far_plane - cam.near_plane;
-    EXPECT_GT(depth_range, worst_z);
+    EXPECT_GE(-cam.near_plane, worst_view_z);  // far corner not clipped by near plane
+    EXPECT_GE(0.0f, -cam.far_plane - 0.001f);  // view_z = 0 (map origin at ground) not clipped
     return true;
 }
 

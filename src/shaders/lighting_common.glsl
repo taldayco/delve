@@ -6,17 +6,26 @@ struct PointLight {
     vec4 colorIntensity;
 };
 
-layout(set = 2, binding = 0) readonly buffer LightBuffer {
+// Baked terrain lighting: r = sun visibility, g = sky visibility (0..1).
+layout(set = 2, binding = 0) uniform sampler2D terrain_light_tex;
+
+layout(set = 2, binding = 1) readonly buffer LightBuffer {
     PointLight point_lights[];
 };
 
-layout(set = 2, binding = 1) readonly buffer LightGridBuffer {
+layout(set = 2, binding = 2) readonly buffer LightGridBuffer {
     uvec2 light_grid[];
 };
 
-layout(set = 2, binding = 2) readonly buffer IndexBuffer {
+layout(set = 2, binding = 3) readonly buffer IndexBuffer {
     uint global_light_indices[];
 };
+
+// Uses INV_MAP_UNITS from coord.glsl; every includer includes coord.glsl
+// before this file — keep that ordering.
+vec2 sample_terrain_light(vec2 world_xy) {
+    return texture(terrain_light_tex, world_xy * INV_MAP_UNITS).rg;
+}
 
 float hex_dither(vec2 world_xy) {
     float sqrt3 = 1.7320508;
@@ -70,15 +79,14 @@ vec3 apply_point_light(PointLight light, vec3 frag_pos, vec3 normal, vec3 base_c
     return base_color * light.colorIntensity.rgb * light.colorIntensity.w * atten * NdotL;
 }
 
-vec3 apply_directional(vec3 color, vec3 normal) {
+vec3 apply_directional(vec3 color, vec3 normal, float sun_vis) {
     float diffuse = max(dot(normalize(normal), light_dir.xyz), 0.0);
-    return color * (light_dir.w + diffuse * light_col.rgb);
+    return color * (light_dir.w + diffuse * sun_vis * light_col.rgb);
 }
 
-vec3 apply_star_ambient(vec3 color, vec3 normal, float sheen) {
-    float NdotUp   = max(normal.z, 0.0);
-    float star_int = star_light.w * mix(sheen * 0.2, 1.0, NdotUp);
-    return color + star_light.rgb * star_int * sheen;
+vec3 apply_sky_ambient(vec3 lit, vec3 albedo, vec3 normal, float sky_vis) {
+    return lit + albedo * star_light.rgb * star_light.a * sky_vis
+                 * (0.5 + 0.5 * normal.z);
 }
 
 // TODO(V12): Linear depth slicing is suboptimal under isometric projection.

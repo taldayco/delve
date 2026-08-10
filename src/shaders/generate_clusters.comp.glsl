@@ -26,12 +26,15 @@ layout(set = 0, binding = 0) buffer ClusterBuffer {
 
 // NOTE: Linear depth slicing (sliceNear) is suboptimal for the non-standard
 // isometric view matrix. A logarithmic or custom depth distribution would
-// improve culling efficiency. The fallback in pbr_static.frag.glsl (iterate
-// all lights when cluster is empty) covers gaps from suboptimal slicing.
+// improve culling efficiency. The fallback in FOREACH_CLUSTER_LIGHT in
+// lighting_common.glsl (iterate all lights when cluster is empty) covers
+// gaps from suboptimal slicing.
 
+// Tile row 0 = TOP of the screen, matching gl_FragCoord in cluster_index().
 vec3 screenToView(vec2 screenPos) {
-    vec2 ndc = (screenPos / vec2(screen_w, screen_h)) * 2.0 - 1.0;
-    return vec3(ndc, 0.0);
+    float ndc_x = (screenPos.x / screen_w) * 2.0 - 1.0;
+    float ndc_y = 1.0 - (screenPos.y / screen_h) * 2.0;
+    return vec3(ndc_x, ndc_y, 0.0);
 }
 
 float sliceNear(float k) {

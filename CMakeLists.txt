@@ -88,6 +88,7 @@ set(SHADER_INCLUDES
     ${SHADER_DIR}/coord.glsl
     ${SHADER_DIR}/lighting_common.glsl
     ${SHADER_DIR}/pbr_common.glsl
+    ${SHADER_DIR}/tone.glsl
 )
 
 set(SHADER_OUTPUTS)
@@ -165,6 +166,7 @@ add_executable(topogen
     src/game/terrain/hex.cpp
     src/game/terrain/basalt.cpp
     src/game/terrain/lava.cpp
+    src/game/terrain/terrain_lighting.cpp
     src/game/terrain/terrain_mesh.cpp
     src/game/terrain/terrain_renderer.cpp
     src/game/terrain/map_util.cpp
@@ -209,6 +211,7 @@ set(TERRAIN_PIPELINE_SOURCES
     src/game/terrain/hex.cpp
     src/game/terrain/basalt.cpp
     src/game/terrain/lava.cpp
+    src/game/terrain/terrain_lighting.cpp
     src/game/terrain/terrain_mesh.cpp
     src/game/terrain/map_util.cpp
 )
@@ -226,6 +229,7 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/tests/test_skeletal_animation.cpp
     src/test/tests/test_skinned_character.cpp
     src/test/tests/test_async_terrain.cpp
+    src/test/tests/test_terrain_lighting.cpp
     src/game/render/skeletal_animation.cpp
     src/game/render/anim_math.cpp
     src/engine/camera/camera.cpp

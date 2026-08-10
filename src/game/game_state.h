@@ -12,6 +12,7 @@
 struct TerrainMesh;
 struct MapData;
 struct ContourData;
+struct TerrainLightBake;
 
 struct GamePhase {
   enum Phase { Playing, Paused };
@@ -29,9 +30,10 @@ struct TerrainState {
 struct AsyncTerrainState {
   std::atomic<bool>            is_generating{false};
   std::atomic<bool>            cancel_requested{false};
-  std::shared_ptr<TerrainMesh> pending_mesh;
-  std::shared_ptr<MapData>     pending_map;
-  std::shared_ptr<ContourData> pending_contours;
+  std::shared_ptr<TerrainMesh>      pending_mesh;
+  std::shared_ptr<MapData>          pending_map;
+  std::shared_ptr<ContourData>      pending_contours;
+  std::shared_ptr<TerrainLightBake> pending_light_bake;
   std::mutex                   pending_mtx;
   NoiseCache                   async_cache;
 };

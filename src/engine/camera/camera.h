@@ -26,8 +26,10 @@ struct CameraState {
 
   float base_frustum_half_w = 64.0f;
   float base_frustum_half_h = 64.0f;
-  float near_plane = -150.0f;
-  float far_plane  =  150.0f;
+  // Depth convention: view_z = (x+y)+z, visible iff -far <= (x+y)+z <= -near.
+  // Map worst case ~258 (far corner 128+128 + feature height ~2).
+  float near_plane = -280.0f;
+  float far_plane  =    8.0f;
 };
 
 struct CameraMatrices {

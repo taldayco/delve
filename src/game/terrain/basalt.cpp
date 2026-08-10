@@ -10,7 +10,6 @@
 #include <unordered_map>
 #include <vector>
 
-
 static float sample_bilinear(const std::vector<float> &map, int width,
                              int height, float fx, float fy) {
   float x = std::max(0.0f, std::min(fx, (float)(width - 1)));
@@ -64,9 +63,6 @@ generate_basalt_columns_v2(MapData &data, float hex_size,
   int height = data.height;
   std::vector<HexColumn> columns;
 
-
-
-
   HexCoord c0 = pixel_to_hex(0, 0, hex_size);
   HexCoord c1 = pixel_to_hex(width, 0, hex_size);
   HexCoord c2 = pixel_to_hex(0, height, hex_size);
@@ -82,7 +78,6 @@ generate_basalt_columns_v2(MapData &data, float hex_size,
       float cx, cy;
       hex_to_pixel(q, r, hex_size, cx, cy);
 
-
       uint32_t hv = hash2d(q, r);
       float jx = ((hv & 0xFF) / 255.0f - 0.5f) * hex_size * 0.3f;
       float jy = (((hv >> 8) & 0xFF) / 255.0f - 0.5f) * hex_size * 0.3f;
@@ -97,11 +92,9 @@ generate_basalt_columns_v2(MapData &data, float hex_size,
       if (px < 0 || px >= width || py < 0 || py >= height)
         continue;
 
-
       float cell_val = sample_bilinear(data.worley_cell_value, width, height, sx, sy);
       if (cell_val < params.density_threshold)
         continue;
-
 
       int lx = std::clamp((int)sx, 0, width - 1);
       int ly = std::clamp((int)sy, 0, height - 1);
@@ -111,11 +104,9 @@ generate_basalt_columns_v2(MapData &data, float hex_size,
       float base_h = sample_bilinear(data.basalt_height, width, height, sx, sy);
       float h = base_h;
 
-
       h += cell_val * params.jitter_scale;
 
       columns.push_back({q, r, h, base_h});
-
 
       Vec2 corners[6];
       get_hex_corners(q, r, hex_size, corners);
@@ -151,5 +142,3 @@ generate_basalt_columns_v2(MapData &data, float hex_size,
   compute_visible_edges(columns);
   return columns;
 }
-
-

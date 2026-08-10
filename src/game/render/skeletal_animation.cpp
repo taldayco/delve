@@ -52,7 +52,6 @@ BoneLocalTransform rest_pose_local(const glm::mat4 &m) {
     return xf;
 }
 
-// Clamp-and-lerp between the keyframe pair bracketing `time`.
 template <typename T, typename Mix>
 static T sample_keyframes(const std::vector<float> &times, const std::vector<T> &values,
                           float time, Mix mix) {

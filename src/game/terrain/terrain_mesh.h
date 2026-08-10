@@ -29,7 +29,7 @@ struct SceneUniforms {
 
   float time, contour_opacity, hex_border_width, inv_map_units;
 
-  float lava_color_r, lava_color_g, lava_color_b, _pad1;
+  float lava_color_r, lava_color_g, lava_color_b, rc_intensity;
 
   float star_light_r, star_light_g, star_light_b, star_light_intensity;
 

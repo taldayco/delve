@@ -46,6 +46,8 @@ void main() {
         }
     })
 
+    color += albedo * sample_rc_fluence(N, frag_world_pos.z) * RC_INTENSITY;
+
     color = apply_sky_ambient(color, albedo, N, tl.g);
 
     out_color = vec4(encode_output_exp(color, EXPOSURE), 1.0);

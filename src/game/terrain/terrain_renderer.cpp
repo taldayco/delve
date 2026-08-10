@@ -9,10 +9,6 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-
-
-
-
 static SDL_GPUComputePipeline *build_compute_pipeline(SDL_GPUDevice *device,
                                                        const char *path,
                                                        int num_uniform_buffers,
@@ -49,11 +45,6 @@ static SDL_GPUComputePipeline *build_compute_pipeline(SDL_GPUDevice *device,
   return pipeline;
 }
 
-
-
-
-
-
 void TerrainRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManager &am) {
   if (initialized) return;
   if (!device) {
@@ -79,20 +70,16 @@ void TerrainRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
 
-  // 1x1 fully-lit fallback so draws before the first bake are correct.
   const uint8_t fully_lit_rg[2] = { 0xFF, 0xFF };
   light_fallback_tex = gpu_upload_texture_rg8(device, fully_lit_rg, 1, 1);
   light_bake_smp     = gpu_create_linear_clamp_sampler(device);
 
+  const uint8_t black_rgba[4] = { 0x00, 0x00, 0x00, 0xFF };
+  fluence_fallback_tex = gpu_upload_texture_rgba8(device, black_rgba, 1, 1);
+
   initialized = true;
   SDL_Log("TerrainRenderer: Initialized (graphics + compute pipelines)");
 }
-
-
-
-
-// Each pipeline has exactly one construction recipe, shared by init and
-// hot-reload rebuild.
 
 SDL_GPUGraphicsPipeline *TerrainRenderer::make_terrain_pipeline(
     SDL_GPUTextureFormat swapchain_format, bool pbr) {
@@ -102,7 +89,7 @@ SDL_GPUGraphicsPipeline *TerrainRenderer::make_terrain_pipeline(
   SDL_GPUShader *vert = asset_manager->load_shader(
       vk, shader_dir + "/" + vk + ".glsl.spv", SDL_GPU_SHADERSTAGE_VERTEX, 1, 0);
   SDL_GPUShader *frag = asset_manager->load_shader(
-      fk, shader_dir + "/" + fk + ".glsl.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 1);
+      fk, shader_dir + "/" + fk + ".glsl.spv", SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 2);
   if (!vert || !frag) return nullptr;
 
   SDL_GPUVertexBufferDescription vbuf_desc = {};
@@ -232,7 +219,7 @@ SDL_GPUGraphicsPipeline *TerrainRenderer::make_instanced_pipeline(
       SDL_GPU_SHADERSTAGE_VERTEX, 1, 1);
   SDL_GPUShader *frag = asset_manager->load_shader(
       "terrain.frag", shader_dir + "/terrain.frag.glsl.spv",
-      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 1);
+      SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 3, 2);
   if (!vert || !frag) return nullptr;
 
   SDL_GPUVertexBufferDescription vbuf_desc = {};
@@ -266,6 +253,73 @@ SDL_GPUGraphicsPipeline *TerrainRenderer::make_instanced_pipeline(
   return SDL_CreateGPUGraphicsPipeline(gpu_device, &pi);
 }
 
+SDL_GPUGraphicsPipeline *TerrainRenderer::make_capture_pipeline(
+    const char *vert_key, const char *frag_key, CaptureLayout layout,
+    SDL_GPUTextureFormat color_format, SDL_GPUTextureFormat depth_format) {
+  std::string shader_dir = SHADER_DIR;
+  int vert_storage = (layout == CaptureLayout::Instanced) ? 1 : 0;
+  SDL_GPUShader *vert = asset_manager->load_shader(
+      vert_key, shader_dir + "/" + vert_key + ".glsl.spv",
+      SDL_GPU_SHADERSTAGE_VERTEX, 1, vert_storage);
+  SDL_GPUShader *frag = asset_manager->load_shader(
+      frag_key, shader_dir + "/" + frag_key + ".glsl.spv",
+      SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0, 0);
+  if (!vert || !frag) return nullptr;
+
+  SDL_GPUVertexBufferDescription vbuf_desc = {};
+  vbuf_desc.slot       = 0;
+  vbuf_desc.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+  SDL_GPUVertexAttribute attrs[4] = {};
+  Uint32 num_attrs = 0;
+  SDL_GPUCompareOp depth_compare = SDL_GPU_COMPAREOP_LESS_OR_EQUAL;
+
+  switch (layout) {
+    case CaptureLayout::Basalt:
+      vbuf_desc.pitch = sizeof(BasaltVertex);
+      attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(BasaltVertex, pos_x)   };
+      attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(BasaltVertex, color_r) };
+      attrs[2] = { 2, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,  (Uint32)offsetof(BasaltVertex, sheen)   };
+      attrs[3] = { 3, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(BasaltVertex, nx)      };
+      num_attrs = 4;
+      break;
+    case CaptureLayout::Instanced:
+      vbuf_desc.pitch = 48;
+      attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 0  };
+      attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, 12 };
+      num_attrs = 2;
+      break;
+    case CaptureLayout::Lava:
+      vbuf_desc.pitch = sizeof(GpuLavaVertex);
+      attrs[0] = { 0, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3, (Uint32)offsetof(GpuLavaVertex, pos_x)       };
+      attrs[1] = { 1, 0, SDL_GPU_VERTEXELEMENTFORMAT_FLOAT,  (Uint32)offsetof(GpuLavaVertex, time_offset) };
+      num_attrs = 2;
+      depth_compare = SDL_GPU_COMPAREOP_LESS;
+      break;
+  }
+
+  SDL_GPUColorTargetDescription color_desc = {};
+  color_desc.format = color_format;
+
+  SDL_GPUGraphicsPipelineCreateInfo pi = {};
+  pi.vertex_shader   = vert;
+  pi.fragment_shader = frag;
+  pi.vertex_input_state.vertex_buffer_descriptions = &vbuf_desc;
+  pi.vertex_input_state.num_vertex_buffers         = 1;
+  pi.vertex_input_state.vertex_attributes          = attrs;
+  pi.vertex_input_state.num_vertex_attributes      = num_attrs;
+  pi.primitive_type  = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+  pi.target_info.color_target_descriptions         = &color_desc;
+  pi.target_info.num_color_targets                 = 1;
+  pi.target_info.has_depth_stencil_target          = true;
+  pi.target_info.depth_stencil_format              = depth_format;
+  pi.depth_stencil_state.compare_op                = depth_compare;
+  pi.depth_stencil_state.enable_depth_test         = true;
+  pi.depth_stencil_state.enable_depth_write        = true;
+
+  return SDL_CreateGPUGraphicsPipeline(gpu_device, &pi);
+}
+
 void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window *window) {
   SDL_GPUTextureFormat swapchain_format =
       SDL_GetGPUSwapchainTextureFormat(device, window);
@@ -275,6 +329,16 @@ void TerrainRenderer::init_graphics_pipelines(SDL_GPUDevice *device, SDL_Window 
   contour_pipeline           = make_contour_pipeline(swapchain_format);
   instanced_terrain_pipeline = make_instanced_pipeline(swapchain_format);
   pbr_terrain_pipeline       = make_terrain_pipeline(swapchain_format, true);
+
+  capture_terrain_pipeline   = make_capture_pipeline(
+      "terrain.vert",           "rc_capture_occluder.frag", CaptureLayout::Basalt,
+      SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, SDL_GPU_TEXTUREFORMAT_D16_UNORM);
+  capture_instanced_pipeline = make_capture_pipeline(
+      "instanced_terrain.vert", "rc_capture_occluder.frag", CaptureLayout::Instanced,
+      SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, SDL_GPU_TEXTUREFORMAT_D16_UNORM);
+  capture_lava_pipeline      = make_capture_pipeline(
+      "lava.vert",              "rc_capture_emissive.frag", CaptureLayout::Lava,
+      SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT, SDL_GPU_TEXTUREFORMAT_D16_UNORM);
 
   asset_manager->register_pipeline("terrain",           "terrain.vert",           "terrain.frag");
   asset_manager->register_pipeline("lava",              "lava.vert",              "lava.frag");
@@ -359,14 +423,11 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
 
   uint32_t num_clusters = tilesX * tilesY * num_slices;
 
-
   cluster_aabb_ssbo = gpu_create_buffer(
       device,
       num_clusters * 32,
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE);
-
-
 
   light_grid_ssbo = gpu_create_zeroed_buffer(
       device,
@@ -375,7 +436,6 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE |
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
 
-
   global_index_ssbo = gpu_create_buffer(
       device,
       MAX_LIGHT_INDICES * sizeof(uint32_t),
@@ -383,13 +443,11 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE |
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
 
-
   cull_counter_ssbo = gpu_create_zeroed_buffer(
       device,
       sizeof(uint32_t),
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE);
-
 
   point_light_ssbo = gpu_create_buffer(
       device,
@@ -412,9 +470,6 @@ void TerrainRenderer::init_cluster_buffers(SDL_GPUDevice *device,
   SDL_Log("TerrainRenderer: Cluster buffers created (%u×%u×%u clusters)",
           tilesX, tilesY, num_slices);
 }
-
-
-
 
 void TerrainRenderer::upload_mesh(SDL_GPUDevice *device, const TerrainMesh &mesh) {
   release_buffers(device);
@@ -593,8 +648,11 @@ void TerrainRenderer::stage_instanced_draw(SDL_GPURenderPass *pass,
   SDL_GPUBuffer *vert_storage[1] = { instanced_terrain->get_instance_ssbo() };
   SDL_BindGPUVertexStorageBuffers(pass, 0, vert_storage, 1);
 
-  SDL_GPUTextureSamplerBinding tsb = { light_texture(), light_sampler() };
-  SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+  SDL_GPUTextureSamplerBinding tsb[2] = {
+    { light_texture(),   light_sampler()   },
+    { fluence_texture(), fluence_sampler() },
+  };
+  SDL_BindGPUFragmentSamplers(pass, 0, tsb, 2);
 
   SDL_GPUBuffer *frag_storage[3] = {
     point_light_ssbo  ? point_light_ssbo  : dummy_ssbo,
@@ -658,9 +716,6 @@ void TerrainRenderer::upload_lights(SDL_GPUCommandBuffer *cmd,
   }
 }
 
-
-
-
 void TerrainRenderer::rebuild_clusters_if_needed(SDL_GPUCommandBuffer *cmd,
                                                   uint32_t w, uint32_t h,
                                                   float tile_px, uint32_t num_slices,
@@ -670,11 +725,9 @@ void TerrainRenderer::rebuild_clusters_if_needed(SDL_GPUCommandBuffer *cmd,
 
   if (tilesX == cluster_grid_w && tilesY == cluster_grid_y) return;
 
-
   init_cluster_buffers(gpu_device, tilesX, tilesY, num_slices);
 
   if (!cluster_gen_pipeline || !cluster_aabb_ssbo) return;
-
 
   struct ClusterGenUniforms {
     float tile_px, grid_size_x, grid_size_y, num_slices;
@@ -694,24 +747,15 @@ void TerrainRenderer::rebuild_clusters_if_needed(SDL_GPUCommandBuffer *cmd,
   SDL_GPUStorageBufferReadWriteBinding rw_binds[1] = {};
   rw_binds[0].buffer = cluster_aabb_ssbo;
 
-
   SDL_GPUComputePass *pass = SDL_BeginGPUComputePass(cmd, nullptr, 0, rw_binds, 1);
   SDL_BindGPUComputePipeline(pass, cluster_gen_pipeline);
   SDL_PushGPUComputeUniformData(cmd, 0, &cu, sizeof(cu));
-
-
 
   uint32_t dispX = (tilesX + 15) / 16;
   uint32_t dispY = (tilesY + 8) / 9;
   SDL_DispatchGPUCompute(pass, dispX, dispY, num_slices);
   SDL_EndGPUComputePass(pass);
 }
-
-
-
-
-
-
 
 void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
                                          const SceneUniforms &u) {
@@ -729,12 +773,6 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
     }
     return;
   }
-
-
-
-
-
-
 
   {
 
@@ -760,7 +798,6 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
     }
   }
 
-
   struct CullUniforms {
     float tile_px, grid_size_x, grid_size_y, num_slices;
     float near_plane, far_plane, screen_w, screen_h;
@@ -780,8 +817,6 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
   cu._pad1 = cu._pad2 = 0.0f;
   glm::mat4 view_proj = u.projection * u.view;
 
-
-
   SDL_GPUStorageBufferReadWriteBinding rw[5] = {};
   rw[0].buffer = point_light_ssbo;
   rw[1].buffer = cluster_aabb_ssbo;
@@ -794,16 +829,12 @@ void TerrainRenderer::stage_cull_lights(SDL_GPUCommandBuffer *cmd,
   SDL_PushGPUComputeUniformData(cmd, 0, &cu, sizeof(cu));
   SDL_PushGPUComputeUniformData(cmd, 1, &view_proj, sizeof(view_proj));
 
-
   uint32_t dispX = (cluster_grid_w + 15) / 16;
   uint32_t dispY = (cluster_grid_y + 8) / 9;
   uint32_t dispZ = (uint32_t)cu.num_slices;
   SDL_DispatchGPUCompute(pass, dispX, dispY, dispZ);
   SDL_EndGPUComputePass(pass);
 }
-
-
-
 
 void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
                                          SDL_GPUCommandBuffer *cmd,
@@ -820,8 +851,11 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
     SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
 
     {
-      SDL_GPUTextureSamplerBinding tsb = { light_texture(), light_sampler() };
-      SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+      SDL_GPUTextureSamplerBinding tsb[2] = {
+        { light_texture(),   light_sampler()   },
+        { fluence_texture(), fluence_sampler() },
+      };
+      SDL_BindGPUFragmentSamplers(pass, 0, tsb, 2);
 
       SDL_GPUBuffer *frag_storage[3] = {
         point_light_ssbo  ? point_light_ssbo  : dummy_ssbo,
@@ -838,7 +872,6 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
     SDL_DrawGPUIndexedPrimitives(pass, basalt_total_index_count, 1, 0, 0, 0);
   }
 
-
   if (lava_vbo && lava_ibo && lava_index_count > 0 && lava_pipeline) {
     SDL_BindGPUGraphicsPipeline(pass, lava_pipeline);
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
@@ -849,7 +882,6 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
     SDL_DrawGPUIndexedPrimitives(pass, lava_index_count, 1, 0, 0, 0);
   }
 
-
   if (contour_vbo && contour_vertex_count > 0 && contour_pipeline) {
     SDL_BindGPUGraphicsPipeline(pass, contour_pipeline);
     SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
@@ -859,8 +891,46 @@ void TerrainRenderer::stage_shaded_draw(SDL_GPURenderPass *pass,
   }
 }
 
+void TerrainRenderer::draw_capture(SDL_GPURenderPass *pass,
+                                    SDL_GPUCommandBuffer *cmd,
+                                    const SceneUniforms &uniforms) {
+  if (!initialized || !has_data) return;
 
+  if (use_instanced && capture_instanced_pipeline && instanced_terrain && instanced_terrain->has_data()
+      && gltf_column_vbo && gltf_column_ibo && gltf_column_index_count > 0) {
+    SDL_BindGPUGraphicsPipeline(pass, capture_instanced_pipeline);
+    SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
 
+    SDL_GPUBuffer *vert_storage[1] = { instanced_terrain->get_instance_ssbo() };
+    SDL_BindGPUVertexStorageBuffers(pass, 0, vert_storage, 1);
+
+    SDL_GPUBufferBinding vbind = { gltf_column_vbo, 0 };
+    SDL_GPUBufferBinding ibind = { gltf_column_ibo, 0 };
+    SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);
+    SDL_BindGPUIndexBuffer(pass, &ibind, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+    SDL_DrawGPUIndexedPrimitives(pass, gltf_column_index_count,
+                                  instanced_terrain->instance_count(), 0, 0, 0);
+  } else if (basalt_vbo && basalt_ibo && basalt_total_index_count > 0 && capture_terrain_pipeline) {
+    SDL_BindGPUGraphicsPipeline(pass, capture_terrain_pipeline);
+    SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
+
+    SDL_GPUBufferBinding vbind = { basalt_vbo, 0 };
+    SDL_GPUBufferBinding ibind = { basalt_ibo, 0 };
+    SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);
+    SDL_BindGPUIndexBuffer(pass, &ibind, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+    SDL_DrawGPUIndexedPrimitives(pass, basalt_total_index_count, 1, 0, 0, 0);
+  }
+
+  if (lava_vbo && lava_ibo && lava_index_count > 0 && capture_lava_pipeline) {
+    SDL_BindGPUGraphicsPipeline(pass, capture_lava_pipeline);
+    SDL_PushGPUVertexUniformData(cmd, 0, &uniforms, sizeof(uniforms));
+    SDL_GPUBufferBinding vbind = { lava_vbo, 0 };
+    SDL_GPUBufferBinding ibind = { lava_ibo, 0 };
+    SDL_BindGPUVertexBuffers(pass, 0, &vbind, 1);
+    SDL_BindGPUIndexBuffer(pass, &ibind, SDL_GPU_INDEXELEMENTSIZE_32BIT);
+    SDL_DrawGPUIndexedPrimitives(pass, lava_index_count, 1, 0, 0, 0);
+  }
+}
 
 void TerrainRenderer::draw(SDL_GPUCommandBuffer *cmd,
                             SDL_GPUTexture *swapchain,
@@ -889,9 +959,6 @@ void TerrainRenderer::draw(SDL_GPUCommandBuffer *cmd,
   stage_shaded_draw(pass, cmd, uniforms);
   SDL_EndGPURenderPass(pass);
 }
-
-
-
 
 SDL_GPURenderPass *TerrainRenderer::begin_render_pass(SDL_GPUCommandBuffer *cmd,
                                                        SDL_GPUTexture *swapchain,
@@ -988,11 +1055,17 @@ void TerrainRenderer::cleanup(SDL_GPUDevice *device) {
   if (light_bake_tex)           { SDL_ReleaseGPUTexture(device, light_bake_tex);                       light_bake_tex           = nullptr; }
   if (light_fallback_tex)       { SDL_ReleaseGPUTexture(device, light_fallback_tex);                   light_fallback_tex       = nullptr; }
   if (light_bake_smp)           { SDL_ReleaseGPUSampler(device, light_bake_smp);                       light_bake_smp           = nullptr; }
+  if (fluence_fallback_tex)     { SDL_ReleaseGPUTexture(device, fluence_fallback_tex);                 fluence_fallback_tex     = nullptr; }
+  rc_fluence_tex = nullptr;
+  rc_fluence_smp = nullptr;
   if (terrain_pipeline)              { SDL_ReleaseGPUGraphicsPipeline(device, terrain_pipeline);              terrain_pipeline              = nullptr; }
   if (lava_pipeline)                 { SDL_ReleaseGPUGraphicsPipeline(device, lava_pipeline);                 lava_pipeline                 = nullptr; }
   if (contour_pipeline)              { SDL_ReleaseGPUGraphicsPipeline(device, contour_pipeline);              contour_pipeline              = nullptr; }
   if (instanced_terrain_pipeline)    { SDL_ReleaseGPUGraphicsPipeline(device, instanced_terrain_pipeline);    instanced_terrain_pipeline    = nullptr; }
   if (pbr_terrain_pipeline)          { SDL_ReleaseGPUGraphicsPipeline(device, pbr_terrain_pipeline);          pbr_terrain_pipeline          = nullptr; }
+  if (capture_terrain_pipeline)      { SDL_ReleaseGPUGraphicsPipeline(device, capture_terrain_pipeline);      capture_terrain_pipeline      = nullptr; }
+  if (capture_instanced_pipeline)    { SDL_ReleaseGPUGraphicsPipeline(device, capture_instanced_pipeline);    capture_instanced_pipeline    = nullptr; }
+  if (capture_lava_pipeline)         { SDL_ReleaseGPUGraphicsPipeline(device, capture_lava_pipeline);         capture_lava_pipeline         = nullptr; }
   if (cluster_gen_pipeline)     { SDL_ReleaseGPUComputePipeline(device, cluster_gen_pipeline);         cluster_gen_pipeline     = nullptr; }
   if (light_culling_pipeline)   { SDL_ReleaseGPUComputePipeline(device, light_culling_pipeline);       light_culling_pipeline   = nullptr; }
   initialized = false;

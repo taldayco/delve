@@ -76,7 +76,7 @@ void main() {
     for (uint i = 0; i < light_count && i < 1024u; ++i) {
         vec3 center = lights[i].positionRadius.xyz;
         float r = lights[i].positionRadius.w;
-        float r_aabb = r * 1.7321; // sqrt(3): conservative bound for the axis-probe AABB under the iso shear
+        float r_aabb = r * 1.7321;
         vec3 ndc_px = world_to_cluster_space(center + vec3(r_aabb, 0, 0));
         vec3 ndc_nx = world_to_cluster_space(center - vec3(r_aabb, 0, 0));
         vec3 ndc_py = world_to_cluster_space(center + vec3(0, r_aabb, 0));

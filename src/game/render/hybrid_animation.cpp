@@ -15,7 +15,6 @@
 
 static const AnimationConfig s_anim_cfg{};
 
-// ---- 1. Player movement: input → velocity, facing, turn state ----
 static void player_movement(flecs::world &ecs, InputSystem &input,
                             flecs::entity player) {
     auto *phase = ecs.get<GamePhase>();
@@ -37,7 +36,6 @@ static void player_movement(flecs::world &ecs, InputSystem &input,
     if (in.held[(int)Action::MoveLeft])  raw_x -= 1.0f;
     if (in.held[(int)Action::MoveRight]) raw_x += 1.0f;
 
-    // Normalize so diagonal input has the same magnitude as cardinal
     float raw_len = sqrtf(raw_x * raw_x + raw_y * raw_y);
     if (raw_len > 1e-6f) { raw_x /= raw_len; raw_y /= raw_len; }
 
@@ -113,7 +111,6 @@ static void player_movement(flecs::world &ecs, InputSystem &input,
     }
 }
 
-// ---- 2. Actor grounding: snap actors to terrain height ----
 static void actor_grounding(flecs::world &ecs) {
     const auto *map_data = ecs.get<MapData>();
     if (!map_data || map_data->basalt_height.empty()) return;
@@ -124,7 +121,6 @@ static void actor_grounding(flecs::world &ecs) {
     });
 }
 
-// ---- 3. Clip selection: speed → idle/walk/run ----
 static void clip_selection(SkinnedRenderer &skinned_renderer, flecs::entity player) {
     if (!player.is_alive()) return;
     const auto *vel = player.get<Velocity>();
@@ -137,7 +133,6 @@ static void clip_selection(SkinnedRenderer &skinned_renderer, flecs::entity play
     else                    skinned_renderer.select_clip("run",  0.3f);
 }
 
-// ---- 4. Gait sync: sample blended pose, drive procedural foot placement ----
 static void gait_sync(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
                       flecs::entity player) {
     const auto *map_data = ecs.get<MapData>();
@@ -155,13 +150,11 @@ static void gait_sync(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     auto *pose  = player.get_mut<SkinnedPose>();
     if (!t || !vel || !gait || !legs || !anim || !cfg || !pose) return;
 
-    // Update mixer and sample blended pose
     skinned_renderer.update_mixer(dt);
     skinned_renderer.sample_pose(*pose);
 
     float speed = sqrtf(vel->x * vel->x + vel->y * vel->y);
 
-    // Adjust playback speed to match movement
     float ref_speed = gait->move_speed;
     if (speed > 0.1f && ref_speed > 0.01f) {
         float clip_speed = speed / ref_speed;
@@ -171,7 +164,6 @@ static void gait_sync(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         skinned_renderer.set_playback_speed(1.0f);
     }
 
-    // --- Foot placement ---
     float fwd_x = cosf(t->facing), fwd_y = sinf(t->facing);
     float vel_dx = speed > 0.001f ? vel->x / speed : fwd_x;
     float vel_dy = speed > 0.001f ? vel->y / speed : fwd_y;
@@ -358,7 +350,6 @@ static void gait_sync(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     }
 }
 
-// ---- 5. Additive layer: hip dynamics, lean, breathing, idle sway ----
 static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
                            flecs::entity player) {
     if (!player.is_alive()) return;
@@ -382,17 +373,12 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     float walk_blend = std::min(1.0f, speed / (gait->move_speed * 0.3f));
     float turn_urgency = std::min(1.0f, fabsf(anim->visual_facing_rate) / 10.0f);
 
-    // --- Foot IK: lower/raise hips so the procedural feet meet the terrain ---
-    // (glTF is Y-up; game Z maps to bone-local Y)
     if (legs && bm.hips >= 0 && bm.hips < n) {
         float avg_foot_z = (legs->foot[0].z + legs->foot[1].z) * 0.5f;
         float terrain_delta = avg_foot_z - t->z;
         pose->local_transforms[bm.hips].translation.y += terrain_delta * 0.5f;
     }
 
-    // --- Hip dynamics (additive rotations/translations on hips bone) ---
-
-    // Hip tilt from foot height difference
     if (legs && bm.hips >= 0 && bm.hips < n) {
         float foot_diff = legs->foot[0].z - legs->foot[1].z;
         float max_tilt = glm::radians(8.0f);
@@ -401,12 +387,11 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
             -max_tilt, max_tilt);
         anim->hip_tilt = smooth_damp(anim->hip_tilt, hip_tilt_target,
                                       &anim->hip_tilt_rate, 0.06f, dt);
-        // Additive Z-rotation on hips (lateral roll from foot height difference)
+
         glm::quat tilt_rot = glm::angleAxis(anim->hip_tilt, glm::vec3(0.f, 0.f, 1.f));
         additive_rotation(pose->local_transforms[bm.hips], tilt_rot, 1.0f);
     }
 
-    // Hip roll (Z-rotation in game space → Z-rotation in bone local Y-up)
     {
         float target_hip_roll = sinf(gait->phase) * 0.06f * walk_blend;
         anim->hip_roll = smooth_damp(anim->hip_roll, target_hip_roll,
@@ -417,7 +402,6 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         }
     }
 
-    // Hip bob (additive Y-translation in bone space)
     {
         float bob_blend = walk_blend * (1.0f - turn_urgency * 0.7f);
         float target_hip_bob = fabsf(sinf(gait->phase)) * 0.018f * bob_blend;
@@ -444,13 +428,12 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
 
         float hip_z_offset = anim->hip_bob - anim->hip_dip;
         if (bm.hips >= 0 && bm.hips < n) {
-            // In glTF Y-up space, game Z maps to bone Y
+
             additive_translation(pose->local_transforms[bm.hips],
                                  glm::vec3(0.f, hip_z_offset, 0.f), 1.0f);
         }
     }
 
-    // --- Acceleration lean (cascading chest/neck/head) ---
     {
         glm::vec3 cur_vel(vel->x, vel->y, 0.0f);
         glm::vec3 accel = (dt > 1e-6f) ? ((cur_vel - anim->prev_velocity) / dt)
@@ -487,16 +470,15 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         anim->head_lean_y = smooth_damp(anim->head_lean_y, anim->chest_lean_y * 0.5f,
                                          &anim->head_lean_y_rate, 0.12f, dt);
 
-        // Apply lean as additive rotations
         auto apply_lean_rot = [&](int bone_idx, float lx, float ly) {
             if (bone_idx < 0 || bone_idx >= n) return;
-            // Convert world-space lean to local pitch/roll
+
             float lean_mag = sqrtf(lx * lx + ly * ly);
             if (lean_mag < 1e-5f) return;
-            // Lean direction relative to facing
+
             float rel_fwd = lx * cosf(anim->visual_facing) + ly * sinf(anim->visual_facing);
             float rel_rght = -lx * sinf(anim->visual_facing) + ly * cosf(anim->visual_facing);
-            // In glTF Y-up: X-rot = pitch forward, Z-rot = roll lateral
+
             glm::quat lean_q = glm::angleAxis(rel_fwd, glm::vec3(1.f, 0.f, 0.f))
                              * glm::angleAxis(-rel_rght, glm::vec3(0.f, 0.f, 1.f));
             additive_rotation(pose->local_transforms[bone_idx], lean_q, 1.0f);
@@ -507,7 +489,6 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         apply_lean_rot(bm.head,  anim->head_lean_x,  anim->head_lean_y);
     }
 
-    // --- Chest facing lag ---
     {
         float lag_angle = anim->visual_facing - anim->chest_facing;
         while (lag_angle >  glm::pi<float>()) lag_angle -= glm::two_pi<float>();
@@ -520,7 +501,6 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         }
     }
 
-    // --- Breathing + idle sway ---
     {
         float idle_blend = 1.0f - std::min(1.0f, speed / 0.2f);
 
@@ -534,7 +514,7 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         anim->idle_sway_phase += dt * glm::two_pi<float>() * 0.15f;
         float idle_sway = sinf(anim->idle_sway_phase) * 0.01f * idle_blend;
         if (bm.hips >= 0 && bm.hips < n) {
-            // Sway as lateral rotation on hips
+
             glm::quat sway_q = glm::angleAxis(idle_sway, glm::vec3(0.f, 0.f, 1.f));
             additive_rotation(pose->local_transforms[bm.hips], sway_q, 1.0f);
         }
@@ -560,7 +540,6 @@ static void additive_layer(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     }
 }
 
-// ---- 6. Look-at: distribute gaze across head/neck/chest ----
 static void look_at(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
                     flecs::entity player) {
     if (!player.is_alive()) return;
@@ -578,8 +557,7 @@ static void look_at(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     if (!look->active && anim->look_yaw == 0.0f && anim->look_pitch == 0.0f)
         return;
 
-    // Compute target yaw/pitch relative to facing
-    glm::vec3 head_pos(t->x, t->y, t->z + 1.5f); // approximate head world pos
+    glm::vec3 head_pos(t->x, t->y, t->z + 1.5f);
     glm::vec3 to_target = look->position - head_pos;
     float horiz_dist = sqrtf(to_target.x * to_target.x + to_target.y * to_target.y);
 
@@ -604,7 +582,6 @@ static void look_at(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
     anim->look_pitch = smooth_damp(anim->look_pitch, target_pitch,
                                      &anim->look_pitch_rate, 0.08f, dt);
 
-    // Distribute: head 60%, neck 30%, chest 10%
     struct LookEntry { int bone; float yaw_frac; float pitch_frac; };
     LookEntry entries[] = {
         { bm.head,  0.6f, 0.6f },
@@ -615,14 +592,13 @@ static void look_at(flecs::world &ecs, SkinnedRenderer &skinned_renderer,
         if (e.bone < 0 || e.bone >= n) continue;
         float yaw   = anim->look_yaw   * e.yaw_frac;
         float pitch = anim->look_pitch  * e.pitch_frac;
-        // In glTF Y-up: yaw around Y, pitch around X
+
         glm::quat look_q = glm::angleAxis(yaw, glm::vec3(0.f, 1.f, 0.f))
                          * glm::angleAxis(pitch, glm::vec3(1.f, 0.f, 0.f));
         additive_rotation(pose->local_transforms[e.bone], look_q, 1.0f);
     }
 }
 
-// ---- 7. Bone palette: locals + root transform → GPU palette ----
 static void bone_palette(SkinnedRenderer &skinned_renderer, flecs::entity player) {
     if (!player.is_alive()) return;
 
@@ -631,14 +607,12 @@ static void bone_palette(SkinnedRenderer &skinned_renderer, flecs::entity player
     auto *anim = player.get<RigState>();
     if (!pose || !t || !anim || pose->local_transforms.empty()) return;
 
-    // Strip root motion
     auto locals = pose->local_transforms;
     const auto &skel = skinned_renderer.get_skeleton();
     if (!locals.empty() && !skel.bones.empty()) {
         locals[0].translation = glm::vec3(skel.bones[0].local_rest_transform[3]);
     }
 
-    // Build root world transform
     constexpr float kCharacterScale = 0.8f;
     constexpr float kIsoZScale = AnimationConfig::ISO_CHAR_HEIGHT_SCALE;
     constexpr float kFacingOffset = glm::half_pi<float>();

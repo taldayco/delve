@@ -3,7 +3,6 @@
 #include <cstring>
 #include <vector>
 
-
 struct NoiseCache {
   enum Slot { ELEVATION = 0, RIVER = 1, WORLEY = 2, SLOT_COUNT = 3 };
 
@@ -16,7 +15,6 @@ struct NoiseCache {
   };
 
   CacheEntry entries[SLOT_COUNT];
-
 
   template <typename T> static uint64_t hash_params(const T &params) {
     const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&params);

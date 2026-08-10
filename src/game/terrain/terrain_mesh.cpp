@@ -169,6 +169,7 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.inv_map_units    = 1.0f / Config::MAP_WIDTH_UNITS;
 
   color_to_float(Config::LAVA_COLOR, u.lava_color_r, u.lava_color_g, u.lava_color_b);
+  u.rc_intensity = 1.0f;
 
   u.star_light_r         = 0.55f;
   u.star_light_g         = 0.70f;
@@ -201,9 +202,7 @@ SceneUniforms compute_uniforms(const MapData &map_data,
   u.cam_world_z = cam_z;
 
   glm::vec3 depth_dir(view[0][2], view[1][2], view[2][2]);
-  // Eye direction for the orthographic iso view is the +(1,1,1) depth
-  // gradient: larger view_z = nearer the camera, so +depth_dir points
-  // surface -> eye.
+
   glm::vec3 vdir = glm::normalize(depth_dir);
   u.view_dir_x = vdir.x;
   u.view_dir_y = vdir.y;

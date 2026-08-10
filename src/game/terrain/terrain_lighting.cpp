@@ -4,8 +4,6 @@
 #include <algorithm>
 #include <cmath>
 
-// Rasterize the rendered heightfield: basalt ground with hex column tops
-// stamped over it, then scaled into exaggerated (visual) height space.
 static std::vector<float> rasterize_heights(const MapData &map, float hex_size,
                                             float height_scale) {
   const int w = map.width, h = map.height;
@@ -43,8 +41,6 @@ void sweep_horizon(const std::vector<float> &heights, int width, int height,
                    std::vector<float> &out_angles) {
   out_angles.assign((size_t)width * height, TERRAIN_HORIZON_NONE);
 
-  // Convex-hull stack of earlier samples along the current line:
-  // (distance along line in world units, exaggerated height).
   std::vector<float> hull_t, hull_h;
 
   auto run_line = [&](int sx, int sy) {
@@ -55,9 +51,6 @@ void sweep_horizon(const std::vector<float> &heights, int width, int height,
          x += step_dx, y += step_dy, t += step_world_units) {
       float hz = heights[y * width + x];
 
-      // Pop hull entries that fall on/below the chord from a deeper sample to
-      // the current point: they are occluded and can never be the horizon
-      // again for this or any later sample on the line.
       while (hull_t.size() >= 2) {
         size_t n = hull_t.size();
         float cross =
@@ -69,7 +62,6 @@ void sweep_horizon(const std::vector<float> &heights, int width, int height,
         hull_h.pop_back();
       }
 
-      // The remaining top of the hull is the horizon point for this sample.
       if (!hull_t.empty())
         out_angles[y * width + x] =
             std::atan2(hull_h.back() - hz, t - hull_t.back());
@@ -79,7 +71,6 @@ void sweep_horizon(const std::vector<float> &heights, int width, int height,
     }
   };
 
-  // A line starts at every pixel whose predecessor lies outside the map.
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       int px = x - step_dx, py = y - step_dy;
@@ -122,9 +113,7 @@ TerrainLightBake bake_terrain_lighting(const MapData &map,
       sky[i] += std::clamp(1.0f - std::sin(angles[i]), 0.0f, 1.0f);
 
     if (d[0] == 1 && d[1] == 1) {
-      // Sun sweep: light_dir points toward (-1,-1) horizontally, so occluders
-      // lie sunward of a pixel (its -x-y side) — exactly the earlier samples
-      // of the sweep that visits pixels in increasing x+y order.
+
       for (size_t i = 0; i < n; ++i) {
         float vis;
         if (sun_hi > sun_lo) {

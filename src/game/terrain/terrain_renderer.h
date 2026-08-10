@@ -22,8 +22,6 @@ public:
   void rebuild_dirty_pipelines(SDL_Window *window);
   void upload_light_bake(SDL_GPUDevice *device, const TerrainLightBake &bake);
 
-
-
   void draw(SDL_GPUCommandBuffer *cmd,
             SDL_GPUTexture *swapchain,
             uint32_t w, uint32_t h,
@@ -31,14 +29,18 @@ public:
             const std::vector<GpuPointLight> &lights,
             UploadManager &uploader);
 
+  void draw_capture(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
+                    const SceneUniforms &uniforms);
 
-
+  void set_rc_fluence(SDL_GPUTexture *tex, SDL_GPUSampler *smp) {
+    rc_fluence_tex = tex;
+    rc_fluence_smp = smp;
+  }
 
   void rebuild_clusters_if_needed(SDL_GPUCommandBuffer *cmd,
                                    uint32_t w, uint32_t h,
                                    float tile_px, uint32_t num_slices,
                                    float near_plane, float far_plane);
-
 
   SDL_GPURenderPass *begin_render_pass(SDL_GPUCommandBuffer *cmd,
                                        SDL_GPUTexture *swapchain,
@@ -52,6 +54,9 @@ public:
 
   SDL_GPUTexture *light_texture() const { return light_bake_tex ? light_bake_tex : light_fallback_tex; }
   SDL_GPUSampler *light_sampler() const { return light_bake_smp; }
+
+  SDL_GPUTexture *fluence_texture() const { return rc_fluence_tex ? rc_fluence_tex : fluence_fallback_tex; }
+  SDL_GPUSampler *fluence_sampler() const { return rc_fluence_smp ? rc_fluence_smp : light_bake_smp; }
 
   void prepare_frame_resources(SDL_GPUDevice *device);
 
@@ -86,7 +91,12 @@ private:
   SDL_GPUGraphicsPipeline *make_contour_pipeline(SDL_GPUTextureFormat swapchain_format);
   SDL_GPUGraphicsPipeline *make_instanced_pipeline(SDL_GPUTextureFormat swapchain_format);
 
-
+  enum class CaptureLayout { Basalt, Instanced, Lava };
+  SDL_GPUGraphicsPipeline *make_capture_pipeline(const char *vert_key,
+                                                 const char *frag_key,
+                                                 CaptureLayout layout,
+                                                 SDL_GPUTextureFormat color_format,
+                                                 SDL_GPUTextureFormat depth_format);
 
   void stage_cull_lights(SDL_GPUCommandBuffer *cmd,
                          const SceneUniforms &uniforms);
@@ -95,14 +105,12 @@ private:
   void stage_instanced_draw(SDL_GPURenderPass *pass, SDL_GPUCommandBuffer *cmd,
                              const SceneUniforms &uniforms);
 
-
   void release_registered_buffer(SDL_GPUDevice *device, SDL_GPUBuffer *&buf, const char *key);
   void release_buffers(SDL_GPUDevice *device);
   void release_cluster_buffers(SDL_GPUDevice *device);
   void upload_lights(SDL_GPUCommandBuffer *cmd,
                      UploadManager &uploader,
                      const std::vector<GpuPointLight> &lights);
-
 
   bool initialized = false;
   bool has_data    = false;
@@ -112,17 +120,18 @@ private:
   SDL_GPUTexture          *depth_texture         = nullptr;
   uint32_t                 depth_w = 0, depth_h  = 0;
 
-
   SDL_GPUGraphicsPipeline *terrain_pipeline            = nullptr;
   SDL_GPUGraphicsPipeline *lava_pipeline               = nullptr;
   SDL_GPUGraphicsPipeline *contour_pipeline            = nullptr;
   SDL_GPUGraphicsPipeline *instanced_terrain_pipeline  = nullptr;
   SDL_GPUGraphicsPipeline *pbr_terrain_pipeline        = nullptr;
 
+  SDL_GPUGraphicsPipeline *capture_terrain_pipeline    = nullptr;
+  SDL_GPUGraphicsPipeline *capture_instanced_pipeline  = nullptr;
+  SDL_GPUGraphicsPipeline *capture_lava_pipeline       = nullptr;
 
   SDL_GPUComputePipeline  *cluster_gen_pipeline     = nullptr;
   SDL_GPUComputePipeline  *light_culling_pipeline   = nullptr;
-
 
   SDL_GPUBuffer *basalt_vbo = nullptr;
   SDL_GPUBuffer *basalt_ibo = nullptr;
@@ -141,7 +150,6 @@ private:
   SDL_GPUBuffer *gltf_column_ibo         = nullptr;
   uint32_t       gltf_column_index_count = 0;
 
-
   SDL_GPUBuffer *point_light_ssbo   = nullptr;
   SDL_GPUBuffer *cluster_aabb_ssbo  = nullptr;
   SDL_GPUBuffer *light_grid_ssbo    = nullptr;
@@ -149,22 +157,22 @@ private:
   SDL_GPUBuffer *cull_counter_ssbo  = nullptr;
   SDL_GPUBuffer *dummy_ssbo         = nullptr;
 
-
-
   SDL_GPUTransferBuffer *counter_reset_transfer = nullptr;
 
   SDL_GPUTexture *light_bake_tex     = nullptr;
   SDL_GPUTexture *light_fallback_tex = nullptr;
   SDL_GPUSampler *light_bake_smp     = nullptr;
 
+  SDL_GPUTexture *rc_fluence_tex       = nullptr;
+  SDL_GPUSampler *rc_fluence_smp       = nullptr;
+  SDL_GPUTexture *fluence_fallback_tex = nullptr;
+
   AssetManager *asset_manager = nullptr;
 
   uint32_t cluster_grid_w = 0;
   uint32_t cluster_grid_y = 0;
 
-
   uint32_t current_light_count = 0;
-
 
   static constexpr uint32_t MAX_LIGHTS        = 1024;
   static constexpr uint32_t MAX_LIGHT_INDICES = 65536;

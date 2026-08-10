@@ -6,25 +6,37 @@ struct PointLight {
     vec4 colorIntensity;
 };
 
-// Baked terrain lighting: r = sun visibility, g = sky visibility (0..1).
 layout(set = 2, binding = 0) uniform sampler2D terrain_light_tex;
 
-layout(set = 2, binding = 1) readonly buffer LightBuffer {
+layout(set = 2, binding = 1) uniform sampler2D rc_fluence;
+
+layout(set = 2, binding = 2) readonly buffer LightBuffer {
     PointLight point_lights[];
 };
 
-layout(set = 2, binding = 2) readonly buffer LightGridBuffer {
+layout(set = 2, binding = 3) readonly buffer LightGridBuffer {
     uvec2 light_grid[];
 };
 
-layout(set = 2, binding = 3) readonly buffer IndexBuffer {
+layout(set = 2, binding = 4) readonly buffer IndexBuffer {
     uint global_light_indices[];
 };
 
-// Uses INV_MAP_UNITS from coord.glsl; every includer includes coord.glsl
-// before this file — keep that ordering.
 vec2 sample_terrain_light(vec2 world_xy) {
     return texture(terrain_light_tex, world_xy * INV_MAP_UNITS).rg;
+}
+
+vec3 sample_rc_fluence(vec3 normal, float world_z) {
+    vec2 tex_size = vec2(textureSize(rc_fluence, 0));
+    vec2 texel = gl_FragCoord.xy * 0.5;
+    float fade = 1.0;
+    if (normal.z < 0.5) {
+        float z = max(world_z, 0.0);
+        float halfres_px_per_iso_unit = tex_size.y * abs(projection[1][1]) * 0.5;
+        texel.y += 12.5 * z * halfres_px_per_iso_unit + 3.0;
+        fade = exp(-z * 1.2);
+    }
+    return texture(rc_fluence, texel / tex_size).rgb * fade;
 }
 
 float hex_dither(vec2 world_xy) {
@@ -43,8 +55,6 @@ float hex_dither(vec2 world_xy) {
     return (float(hash & 0xFFu) / 255.0 - 0.5) * 0.25;
 }
 
-// Iterate the lights affecting this fragment's cluster, with brute-force
-// fallback when the grid entry is empty. BODY sees `PointLight pl`.
 #define FOREACH_CLUSTER_LIGHT(BODY) {                                          \
     uint cluster_idx = cluster_index();                                        \
     uvec2 grid_entry = light_grid[cluster_idx];                                \
@@ -89,10 +99,6 @@ vec3 apply_sky_ambient(vec3 lit, vec3 albedo, vec3 normal, float sky_vis) {
                  * (0.5 + 0.5 * normal.z);
 }
 
-// TODO(V12): Linear depth slicing is suboptimal under isometric projection.
-// Fix: project world-space light positions to view-space XY and use 2D spatial
-// hashing instead of depth-based slicing. This would eliminate the brute-force
-// fallback path below. Deferred until light counts exceed ~128.
 vec3 clustered_point_lighting(vec3 frag_pos, vec3 normal, vec3 base_color) {
     vec3 result = vec3(0.0);
     FOREACH_CLUSTER_LIGHT({

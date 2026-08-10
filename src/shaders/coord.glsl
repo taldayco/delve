@@ -20,6 +20,7 @@ layout(set = 1, binding = 0) uniform SceneUniforms {
 #define NEAR_PLANE        depth_params.x
 #define FAR_PLANE         depth_params.y
 #define LIGHT_COUNT       uint(depth_params.z)
+#define RC_INTENSITY      lava_color.w
 
 #ifdef COORD_FRAGMENT_STAGE
 

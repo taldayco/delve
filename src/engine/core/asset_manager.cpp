@@ -119,8 +119,6 @@ void AssetManager::check_for_updates() {
         }
         asset.last_mtime = mtime;
 
-        // Compute pipelines are rebuilt from the file directly; only graphics
-        // shaders keep a live SDL_GPUShader in the cache.
         if (!asset.is_compute)
             asset.shader = create_shader_internal(asset);
 

@@ -11,8 +11,6 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 
-// ---- Component defaults --------------------------------------------------
-
 DELVE_TEST(default_gait_parameters_valid) {
   ProceduralGait g;
   EXPECT_GT(g.stride_len, 0.0f);
@@ -38,8 +36,6 @@ DELVE_TEST(leg_state_defaults_not_stepping) {
   EXPECT_EQ(legs.turn_step_queued, -1);
   return true;
 }
-
-// ---- smooth_damp (the shipped implementation) ----------------------------
 
 DELVE_TEST(smooth_damp_convergence) {
   float current = 0.0f, target = 1.0f, rate = 0.0f;
@@ -74,7 +70,7 @@ DELVE_TEST(smooth_damp_angle_convergence) {
 }
 
 DELVE_TEST(smooth_damp_angle_wraps_around) {
-  // -170° to +170° should go the short way (through 180°), i.e. decrease.
+
   float current  = glm::radians(-170.0f);
   float target   = glm::radians(170.0f);
   float velocity = 0.0f;
@@ -84,8 +80,6 @@ DELVE_TEST(smooth_damp_angle_wraps_around) {
   EXPECT_LT(after_one, current);
   return true;
 }
-
-// ---- Gait math (shared with GaitSyncSystem) ------------------------------
 
 DELVE_TEST(gait_foot_arc_endpoints_and_peak) {
   glm::vec3 prev{0, 0, 0}, target{1, 0, 0};
@@ -159,8 +153,6 @@ DELVE_TEST(gait_trigger_distance_scales_with_speed_factor) {
   return true;
 }
 
-// ---- Terrain sampling (map_util) -----------------------------------------
-
 static MapData make_slope_map(int w, int h, float slope) {
   MapData map;
   map.width = w;
@@ -229,8 +221,6 @@ DELVE_TEST(foot_z_clears_terrain_on_slope) {
   return true;
 }
 
-// ---- additive_rotation (used by AdditiveLayerSystem) ---------------------
-
 DELVE_TEST(additive_rotation_preserves_axis_on_identity_base) {
   BoneLocalTransform xf;
   glm::quat roll = glm::angleAxis(0.3f, glm::vec3(0.f, 0.f, 1.f));
@@ -249,8 +239,6 @@ DELVE_TEST(additive_rotation_zero_weight_is_identity) {
   EXPECT_NEAR(glm::dot(xf.rotation, base), 1.0f, 1e-5f);
   return true;
 }
-
-// ---- AnimationMixer keyframe sampling ------------------------------------
 
 static GltfAnimationClip make_test_clip() {
   GltfAnimationClip clip;
@@ -300,8 +288,6 @@ DELVE_TEST(mixer_untracked_bone_keeps_existing_value) {
   EXPECT_NEAR(out[1].translation.x, 7.0f, 1e-5f);
   return true;
 }
-
-// ---- BoneMap name matching -----------------------------------------------
 
 DELVE_TEST(bone_map_matches_mixamo_style_names) {
   GltfSkeleton skel;

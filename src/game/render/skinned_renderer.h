@@ -28,12 +28,13 @@ public:
               SDL_GPUBuffer *light_grid_ssbo,
               SDL_GPUBuffer *light_indices_ssbo,
               SDL_GPUTexture *light_tex,
-              SDL_GPUSampler *light_smp);
+              SDL_GPUSampler *light_smp,
+              SDL_GPUTexture *fluence_tex,
+              SDL_GPUSampler *fluence_smp);
 
     bool is_initialized() const { return initialized_; }
     bool has_character()  const { return char_loaded_; }
 
-    // Hybrid animation interface
     void select_clip(const std::string &name, float crossfade_duration = 0.25f);
     void update_mixer(float dt);
     void sample_pose(SkinnedPose &out) const;

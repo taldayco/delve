@@ -205,8 +205,6 @@ void TopoGame::on_pre_frame_game(GpuContext &gpu, flecs::world &ecs) {
   if (ready_mesh_pending) {
     terrain_renderer.upload_mesh(gpu.device, *ready_mesh_pending);
 
-    // The bake stays in async_terrain until its adopted mesh is uploaded
-    // (adoption site can't carry it — see on_render_game).
     std::shared_ptr<TerrainLightBake> ready_light_bake;
     {
       std::lock_guard<std::mutex> lk(async_terrain.pending_mtx);
@@ -322,6 +320,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     skinned_renderer.init(gpu.device, gpu.game_window, &asset_manager,
                           terrain_renderer.get_depth_format());
 
+    rc.init(gpu.device, SHADER_DIR);
   }
 
   if (skinned_renderer.is_initialized() && !skinned_char_loaded) {
@@ -454,28 +453,24 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
       GpuPointLight pl;
       pl.pos_x     = cx;
       pl.pos_y     = cy;
-      pl.pos_z     = lava.height + 0.3f;   // hug the lava surface so walls catch a base-up gradient
+      pl.pos_z     = lava.height + 0.3f;
       pl.radius    = radius;
       pl.color_r   = 1.0f;
       pl.color_g   = 0.35f;
       pl.color_b   = 0.05f;
-      pl.intensity = 3.0f;
+      pl.intensity = 3.0f * lava_point_scale;
       point_lights.push_back(pl);
     }
   }
 
-  SDL_GPURenderPass *bg_pass = terrain_renderer.begin_render_pass(
-      frame.cmd, frame.swapchain, frame.swapchain_w, frame.swapchain_h);
-  if (!bg_pass) return;
+  bool scene_ready = terrain_renderer.has_mesh() && ts;
 
-  background_renderer.draw(frame.cmd, bg_pass, time, camera.world_x, camera.world_y);
-  SDL_EndGPURenderPass(bg_pass);
-
-  if (terrain_renderer.has_mesh() && ts) {
+  SceneUniforms uniforms = {};
+  if (scene_ready) {
     const auto *md = ecs.get<MapData>();
     static const MapData empty_map_data;
 
-    SceneUniforms uniforms = compute_uniforms(
+    uniforms = compute_uniforms(
         md ? *md : empty_map_data,
         cam_mats.view, cam_mats.projection,
         terrain_renderer.cluster_tiles_x(), terrain_renderer.cluster_tiles_y(),
@@ -487,7 +482,29 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
     uniforms.exposure             = light_exposure;
     uniforms.star_light_intensity = sky_intensity;
     uniforms.ambient              = sun_ambient;
+    uniforms.rc_intensity         = rc_enabled ? rc_intensity : 0.0f;
+  }
 
+  rc.resize(frame.swapchain_w, frame.swapchain_h);
+  if (rc_enabled && rc.ready()) {
+    SDL_GPURenderPass *cap = rc.begin_capture(frame.cmd);
+    if (cap) {
+      terrain_renderer.draw_capture(cap, frame.cmd, uniforms);
+      rc.end_capture(cap);
+      rc.dispatch(frame.cmd);
+    }
+  }
+  terrain_renderer.set_rc_fluence(rc.ready() ? rc.fluence_texture() : nullptr,
+                                  rc.linear_sampler());
+
+  SDL_GPURenderPass *bg_pass = terrain_renderer.begin_render_pass(
+      frame.cmd, frame.swapchain, frame.swapchain_w, frame.swapchain_h);
+  if (!bg_pass) return;
+
+  background_renderer.draw(frame.cmd, bg_pass, time, camera.world_x, camera.world_y);
+  SDL_EndGPURenderPass(bg_pass);
+
+  if (scene_ready) {
     terrain_renderer.draw(frame.cmd, frame.swapchain,
                           frame.swapchain_w, frame.swapchain_h,
                           uniforms, point_lights,
@@ -509,7 +526,9 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
                                 terrain_renderer.get_light_grid_ssbo(),
                                 terrain_renderer.get_global_index_ssbo(),
                                 terrain_renderer.light_texture(),
-                                terrain_renderer.light_sampler());
+                                terrain_renderer.light_sampler(),
+                                terrain_renderer.fluence_texture(),
+                                terrain_renderer.fluence_sampler());
           SDL_EndGPURenderPass(actor_pass);
         }
       }
@@ -522,6 +541,7 @@ void TopoGame::on_render_game(GpuContext &gpu, FrameContext &frame, flecs::world
 void TopoGame::on_cleanup(flecs::world &ecs) {
   task_system.shutdown();
   instanced_terrain.cleanup(gpu_ctx.device);
+  rc.cleanup(gpu_ctx.device);
   terrain_renderer.cleanup(gpu_ctx.device);
   background_renderer.cleanup();
   skinned_renderer.cleanup();
@@ -688,6 +708,21 @@ void TopoGame::render_ui(flecs::world &ecs, bool game_window_open) {
       }
     }
     ImGui::EndDisabled();
+
+    ImGui::Checkbox("Lava GI (Radiance Cascades)", &rc_enabled);
+    ImGui::SliderFloat("Lava GI Intensity", &rc_intensity,     0.0f, 4.0f);
+    ImGui::SliderFloat("Lava Point Lights", &lava_point_scale, 0.0f, 1.0f);
+    const char *rc_debug_names[] = { "Off", "Fluence", "Capture", "SDF" };
+    ImGui::Combo("RC Debug View", &rc_debug_view, rc_debug_names, IM_ARRAYSIZE(rc_debug_names));
+    if (rc_debug_view != 0 && rc.ready()) {
+      SDL_GPUTexture *dbg_tex =
+          rc_debug_view == 1 ? rc.fluence_texture() :
+          rc_debug_view == 2 ? rc.capture_texture() :
+                               rc.sdf_texture();
+
+      if (dbg_tex)
+        ImGui::Image((ImTextureID)(uintptr_t)dbg_tex, ImVec2(320, 200));
+    }
   }
 
   ImGui::Separator();

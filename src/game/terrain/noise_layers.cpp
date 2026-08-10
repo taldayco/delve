@@ -4,8 +4,6 @@
 #include <cmath>
 #include <vector>
 
-
-
 static void seed_offset(int seed, float &ox, float &oy) {
   unsigned int h = static_cast<unsigned int>(seed);
   h ^= h >> 13;
@@ -17,8 +15,6 @@ static void seed_offset(int seed, float &ox, float &oy) {
   h ^= h >> 15;
   oy = static_cast<float>(h % 10000) + 1000.0f;
 }
-
-
 
 static float biased_smoothstep(float t, float bias) {
   float smooth = t * t * (3.0f - 2.0f * t);
@@ -88,7 +84,6 @@ void generate_elevation_layer(std::vector<float> &out, int width, int height,
     frequency *= params.lacunarity;
   }
 
-
   for (int x = 0; x < width; ++x) {
     out[x] = out[width + x];
     out[(height - 1) * width + x] = out[(height - 2) * width + x];
@@ -98,11 +93,9 @@ void generate_elevation_layer(std::vector<float> &out, int width, int height,
     out[y * width + (width - 1)] = out[y * width + (width - 2)];
   }
 
-
   for (int i = 0; i < n; ++i) {
     out[i] = (out[i] / max_value + 1.0f) * 0.5f;
   }
-
 
   for (int i = 0; i < n; ++i) {
     out[i] = biased_smoothstep(out[i], params.scurve_bias);
@@ -135,7 +128,6 @@ void generate_river_mask(std::vector<float> &out, int width, int height,
     }
   }
 
-
   float range = max_val - min_val;
   if (range > 1e-6f) {
     for (int i = 0; i < n; ++i) {
@@ -153,7 +145,6 @@ void generate_worley_layer(std::vector<float> &out_value,
   out_edge.resize(n);
   out_cell_value.resize(n);
 
-
   FastNoiseLite warp(params.seed + 31337);
   warp.SetDomainWarpType(FastNoiseLite::DomainWarpType_OpenSimplex2);
   warp.SetDomainWarpAmp(params.warp_amp);
@@ -163,7 +154,6 @@ void generate_worley_layer(std::vector<float> &out_value,
   warp.SetFractalLacunarity(2.0f);
   warp.SetFractalGain(0.5f);
 
-
   FastNoiseLite noise_dist(params.seed);
   noise_dist.SetNoiseType(FastNoiseLite::NoiseType_Cellular);
   noise_dist.SetCellularDistanceFunction(
@@ -172,7 +162,6 @@ void generate_worley_layer(std::vector<float> &out_value,
   noise_dist.SetFrequency(params.frequency);
   noise_dist.SetCellularJitter(params.jitter);
 
-
   FastNoiseLite noise_cell(params.seed);
   noise_cell.SetNoiseType(FastNoiseLite::NoiseType_Cellular);
   noise_cell.SetCellularDistanceFunction(
@@ -180,7 +169,6 @@ void generate_worley_layer(std::vector<float> &out_value,
   noise_cell.SetCellularReturnType(FastNoiseLite::CellularReturnType_CellValue);
   noise_cell.SetFrequency(params.frequency);
   noise_cell.SetCellularJitter(params.jitter);
-
 
   FastNoiseLite noise_edge(params.seed);
   noise_edge.SetNoiseType(FastNoiseLite::NoiseType_Cellular);
@@ -219,7 +207,6 @@ void generate_worley_layer(std::vector<float> &out_value,
       max_c = std::max(max_c, c);
     }
   }
-
 
   float range_d = max_d - min_d;
   float range_e = max_e - min_e;

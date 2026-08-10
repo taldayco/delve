@@ -289,6 +289,60 @@ SDL_GPUTexture *gpu_upload_texture_rg8(SDL_GPUDevice *device, const uint8_t *rg,
   return texture;
 }
 
+SDL_GPUTexture *gpu_upload_texture_rgba8(SDL_GPUDevice *device, const uint8_t *rgba,
+                                          uint32_t w, uint32_t h) {
+  SDL_GPUTextureCreateInfo ti = {};
+  ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+  ti.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+  ti.width                = w;
+  ti.height               = h;
+  ti.layer_count_or_depth = 1;
+  ti.num_levels           = 1;
+  ti.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+  SDL_GPUTexture *texture = SDL_CreateGPUTexture(device, &ti);
+  if (!texture) {
+    SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                 "gpu_upload_texture_rgba8: Failed to create texture (%ux%u): %s",
+                 w, h, SDL_GetError());
+    return nullptr;
+  }
+
+  uint32_t size = w * h * 4;
+  SDL_GPUTransferBufferCreateInfo tbi = {};
+  tbi.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+  tbi.size  = size;
+  SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(device, &tbi);
+  if (!transfer) { SDL_ReleaseGPUTexture(device, texture); return nullptr; }
+
+  void *mapped = SDL_MapGPUTransferBuffer(device, transfer, false);
+  if (!mapped) {
+    SDL_ReleaseGPUTransferBuffer(device, transfer);
+    SDL_ReleaseGPUTexture(device, texture);
+    return nullptr;
+  }
+  SDL_memcpy(mapped, rgba, size);
+  SDL_UnmapGPUTransferBuffer(device, transfer);
+
+  SDL_GPUCommandBuffer *cmd  = SDL_AcquireGPUCommandBuffer(device);
+  SDL_GPUCopyPass      *copy = SDL_BeginGPUCopyPass(cmd);
+  SDL_GPUTextureTransferInfo src = {};
+  src.transfer_buffer = transfer;
+  src.offset          = 0;
+  src.pixels_per_row  = w;
+  src.rows_per_layer  = h;
+  SDL_GPUTextureRegion dst = {};
+  dst.texture = texture;
+  dst.w       = w;
+  dst.h       = h;
+  dst.d       = 1;
+  SDL_UploadToGPUTexture(copy, &src, &dst, false);
+  SDL_EndGPUCopyPass(copy);
+  SDL_SubmitGPUCommandBuffer(cmd);
+  SDL_WaitForGPUIdle(device);
+  SDL_ReleaseGPUTransferBuffer(device, transfer);
+  return texture;
+}
+
 SDL_GPUSampler *gpu_create_linear_clamp_sampler(SDL_GPUDevice *device) {
   SDL_GPUSamplerCreateInfo si = {};
   si.min_filter     = SDL_GPU_FILTER_LINEAR;

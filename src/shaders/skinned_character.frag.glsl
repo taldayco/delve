@@ -8,7 +8,7 @@
 layout(location = 0) in vec3 frag_world_pos;
 layout(location = 1) in vec3 frag_normal;
 layout(location = 2) in vec2 frag_texcoord;
-layout(location = 3) in float frag_sheen; // unused since sky-ambient bake; kept so the vertex/fragment interface stays matched
+layout(location = 3) in float frag_sheen;
 
 layout(location = 0) out vec4 out_color;
 
@@ -20,6 +20,7 @@ void main() {
     vec2 tl = sample_terrain_light(frag_world_pos.xy);
     vec3 lit = apply_directional(base_color, N, tl.r);
     lit += clustered_point_lighting(frag_world_pos, N, base_color);
+    lit += base_color * sample_rc_fluence(N, frag_world_pos.z) * RC_INTENSITY;
 
     vec3 final_color = apply_sky_ambient(lit, base_color, N, tl.g);
     out_color = vec4(encode_output_exp(final_color, EXPOSURE), 1.0);

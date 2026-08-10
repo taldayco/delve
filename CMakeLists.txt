@@ -5,7 +5,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Optimization flags
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -march=native -DNDEBUG")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
 
@@ -13,7 +12,6 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Dependencies
 option(DELVE_HEADLESS_ONLY "Build only headless targets (no SDL/GPU)" OFF)
 
 if(NOT DELVE_HEADLESS_ONLY)
@@ -39,7 +37,6 @@ FetchContent_MakeAvailable(flecs json glm)
 
 if(NOT DELVE_HEADLESS_ONLY)
 
-# ImGui (git submodule)
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 if(NOT EXISTS ${IMGUI_DIR}/imgui.cpp)
     message(FATAL_ERROR "imgui submodule missing — run: git submodule update --init")
@@ -55,7 +52,6 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${IMGUI_DIR} ${IMGUI_DIR}/backends)
 target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
-# ---- Shader compilation ----
 find_program(GLSLC glslc REQUIRED)
 
 set(SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/shaders)
@@ -76,14 +72,20 @@ set(GRAPHICS_SHADER_SOURCES
     ${SHADER_DIR}/pbr_static.frag.glsl
     ${SHADER_DIR}/skinned_character.vert.glsl
     ${SHADER_DIR}/skinned_character.frag.glsl
+    ${SHADER_DIR}/rc_capture_occluder.frag.glsl
+    ${SHADER_DIR}/rc_capture_emissive.frag.glsl
 )
 
 set(COMPUTE_SHADER_SOURCES
     ${SHADER_DIR}/generate_clusters.comp.glsl
     ${SHADER_DIR}/light_culling.comp.glsl
+    ${SHADER_DIR}/jfa_seed.comp.glsl
+    ${SHADER_DIR}/jfa_step.comp.glsl
+    ${SHADER_DIR}/sdf_resolve.comp.glsl
+    ${SHADER_DIR}/rc_cascade.comp.glsl
+    ${SHADER_DIR}/rc_resolve.comp.glsl
 )
 
-# Shared include files — any change here forces recompilation of all shaders
 set(SHADER_INCLUDES
     ${SHADER_DIR}/coord.glsl
     ${SHADER_DIR}/lighting_common.glsl
@@ -93,7 +95,6 @@ set(SHADER_INCLUDES
 
 set(SHADER_OUTPUTS)
 
-# Graphics shaders (vert/frag)
 foreach(SHADER ${GRAPHICS_SHADER_SOURCES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
     set(SPV_FILE ${SHADER_OUT_DIR}/${SHADER_NAME}.spv)
@@ -113,7 +114,6 @@ foreach(SHADER ${GRAPHICS_SHADER_SOURCES})
     list(APPEND SHADER_OUTPUTS ${SPV_FILE})
 endforeach()
 
-# Compute shaders
 foreach(SHADER ${COMPUTE_SHADER_SOURCES})
     get_filename_component(SHADER_NAME ${SHADER} NAME)
     set(SPV_FILE ${SHADER_OUT_DIR}/${SHADER_NAME}.spv)
@@ -128,7 +128,6 @@ endforeach()
 
 add_custom_target(shaders DEPENDS ${SHADER_OUTPUTS})
 
-# ---- topo_engine (static library) ----
 add_library(topo_engine STATIC
     src/engine/app.cpp
     src/engine/core/asset_manager.cpp
@@ -138,6 +137,7 @@ add_library(topo_engine STATIC
     src/engine/camera/camera.cpp
     src/engine/ui/imgui_ui.cpp
     src/engine/render/background.cpp
+    src/engine/render/radiance_cascades.cpp
     src/engine/core/cgltf_impl.cpp
     src/engine/core/stb_image_impl.cpp
     src/engine/core/gltf_loader.cpp
@@ -156,7 +156,6 @@ target_link_libraries(topo_engine PUBLIC
     glm::glm
 )
 
-# ---- topogen (executable) ----
 add_executable(topogen
     src/game/main.cpp
     src/game/topo_game.cpp
@@ -201,9 +200,8 @@ target_link_libraries(topogen PRIVATE
 
 add_dependencies(topogen shaders)
 
-endif() # NOT DELVE_HEADLESS_ONLY
+endif()
 
-# ---- Headless terrain pipeline sources (shared by test + metrics targets) ----
 set(TERRAIN_PIPELINE_SOURCES
     src/game/terrain/noise_layers.cpp
     src/game/terrain/noise_composer.cpp
@@ -216,7 +214,6 @@ set(TERRAIN_PIPELINE_SOURCES
     src/game/terrain/map_util.cpp
 )
 
-# ---- delve_tests (headless test runner) ----
 add_executable(delve_tests EXCLUDE_FROM_ALL
     src/test/test_main.cpp
     src/test/tests/test_noise.cpp
@@ -238,7 +235,7 @@ add_executable(delve_tests EXCLUDE_FROM_ALL
 )
 
 target_include_directories(delve_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/test/sdl_override  # Must be FIRST to intercept <SDL3/SDL.h>
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/test/sdl_override
     ${CMAKE_CURRENT_SOURCE_DIR}/src/test
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game
     ${CMAKE_CURRENT_SOURCE_DIR}/src/engine
@@ -254,4 +251,3 @@ target_link_libraries(delve_tests PRIVATE
     glm::glm
     Threads::Threads
 )
-

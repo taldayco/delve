@@ -18,7 +18,6 @@ BonePalette compute_bone_palette(const GltfSkeleton &skel,
                                   const std::vector<BoneLocalTransform> &local_transforms,
                                   const glm::mat4 &root_transform = glm::mat4(1.f));
 
-// Decompose a bone rest matrix into translation/rotation/scale.
 BoneLocalTransform rest_pose_local(const glm::mat4 &m);
 
 class AnimationMixer {
@@ -33,8 +32,6 @@ public:
 
     void set_playback_speed(float speed) { playback_speed_ = speed; }
 
-    // Overwrite the animated channels of `out` with `clip` sampled at `time`.
-    // Bones without channels keep whatever `out` already holds (e.g. rest pose).
     static void sample_clip(const GltfAnimationClip *clip, float time,
                             std::vector<BoneLocalTransform> &out);
 

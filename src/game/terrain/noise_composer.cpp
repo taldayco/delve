@@ -5,8 +5,6 @@
 #include <cmath>
 #include <vector>
 
-
-
 static void cleanup_small_regions(std::vector<float> &heightmap, int width,
                                   int height, int min_region_size) {
   int n = width * height;
@@ -90,12 +88,10 @@ void compose_layers(MapData &data, const ElevationParams &elev,
   SDL_Log("Composing layers (%dx%d)...", w, h);
   auto start = SDL_GetTicks();
 
-
   RiverParams river_scaled = river;
   river_scaled.map_scale = elev.map_scale;
   WorleyParams worley_scaled = worley;
   worley_scaled.map_scale = elev.map_scale;
-
 
   uint64_t elev_hash = cache ? NoiseCache::hash_params(elev) : 0;
   uint64_t river_hash = cache ? NoiseCache::hash_params(river_scaled) : 0;
@@ -130,16 +126,13 @@ void compose_layers(MapData &data, const ElevationParams &elev,
     SDL_Log("  Worley: cache hit");
   }
 
-
   data.final_elevation = data.elevation;
-
 
   for (int i = 0; i < n; ++i) {
     data.basalt_height[i] =
         std::floor(data.final_elevation[i] * comp.terrace_levels) /
         comp.terrace_levels;
   }
-
 
   cleanup_small_regions(data.basalt_height, w, h, comp.min_region_size);
 

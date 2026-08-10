@@ -12,6 +12,7 @@
 #include "input/input.h"
 #include "camera/camera.h"
 #include "render/background.h"
+#include "render/radiance_cascades.h"
 #include "render/skinned_renderer.h"
 #include <glm/glm.hpp>
 #include <vector>
@@ -31,6 +32,11 @@ public:
   bool                player_spawned = false;
   SkinnedRenderer     skinned_renderer;
   bool                skinned_char_loaded = false;
+  RadianceCascades    rc;
+  bool                rc_enabled = true;
+  float               rc_intensity = 2.2f;
+  float               lava_point_scale = 0.3f;
+  int                 rc_debug_view = 0;
 
   void on_init(GpuContext &gpu, flecs::world &ecs) override;
   void on_event(const SDL_Event &event, flecs::world &ecs) override;
@@ -52,7 +58,6 @@ private:
 
   float regen_cooldown = 0.0f;
 
-  // Lighting look knobs (ImGui "Lighting" panel)
   TerrainLightParams light_params;
   float light_exposure = 1.6f;
   float sky_intensity  = 0.75f;

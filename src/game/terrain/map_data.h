@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <vector>
 
-
 constexpr int16_t TERRAIN_EMPTY  =  0;
 constexpr int16_t TERRAIN_BASALT = -1;
 constexpr int16_t TERRAIN_LAVA   = -2;
@@ -15,18 +14,15 @@ struct MapData {
   int width = 0;
   int height = 0;
 
-
   std::vector<float> elevation;
   std::vector<float> river_mask;
   std::vector<float> worley;
   std::vector<float> worley_edge;
   std::vector<float> worley_cell_value;
 
-
   std::vector<float> final_elevation;
   std::vector<uint8_t> liquid_mask;
   std::vector<float> basalt_height;
-
 
   std::vector<HexColumn> columns;
   std::vector<int16_t> terrain_map;

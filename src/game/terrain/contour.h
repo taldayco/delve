@@ -13,4 +13,3 @@ void extract_contours(std::span<const float> heightmap, int width, int height,
                       std::vector<int> &out_band_map);
 
 void simplify_contours(std::vector<Line> &lines, float epsilon);
-

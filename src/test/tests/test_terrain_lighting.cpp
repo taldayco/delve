@@ -24,8 +24,6 @@ static uint8_t sky_at(const TerrainLightBake &b, int x, int y) {
   return b.rg[(size_t)(y * b.width + x) * 2 + 1];
 }
 
-// ---- flat field -----------------------------------------------------------
-
 DELVE_TEST(terrain_light_flat_field_fully_lit) {
   auto map = make_ground_map(64, 64, 0.3f);
   auto bake = bake_terrain_lighting(map);
@@ -41,8 +39,6 @@ DELVE_TEST(terrain_light_flat_field_fully_lit) {
   return true;
 }
 
-// ---- wall: shadow orientation + analytic shadow length --------------------
-
 DELVE_TEST(terrain_light_wall_shadows_toward_plus_xy) {
   const int W = 192, Hm = 192;
   const float wall_h = 0.9f;
@@ -55,26 +51,21 @@ DELVE_TEST(terrain_light_wall_shadows_toward_plus_xy) {
   auto bake = bake_terrain_lighting(map, P);
 
   const float elev = P.sun_elevation_deg * TL_PI / 180.0f;
-  const float h_vis = wall_h * P.height_scale;   // exaggerated wall height
-  const float L = h_vis / std::tan(elev);        // analytic shadow length, world units
+  const float h_vis = wall_h * P.height_scale;
+  const float L = h_vis / std::tan(elev);
   auto diag_px = [&](float t_world) {
     return (int)std::round(t_world * P.pixels_per_unit / std::sqrt(2.0f));
   };
 
-  // Sunward (-x-y) side of the wall: fully lit.
   EXPECT_EQ((int)sun_at(bake, 10, 96), 255);
 
-  // Deep inside the shadow, 0.5 * L behind the wall on the +x+y side.
   int k_mid = diag_px(0.5f * L);
   EXPECT_LT((int)sun_at(bake, 22 + k_mid, 96 + k_mid), 30);
 
-  // Beyond 1.5 * L the shadow has ended.
   int k_out = diag_px(1.5f * L);
   EXPECT_GT((int)sun_at(bake, 22 + k_out, 96 + k_out), 220);
   return true;
 }
-
-// ---- hex column stamp feeds the bake --------------------------------------
 
 DELVE_TEST(terrain_light_column_stamp_casts_shadow) {
   const int W = 192, Hm = 192;
@@ -87,13 +78,10 @@ DELVE_TEST(terrain_light_column_stamp_casts_shadow) {
 
   auto bake = bake_terrain_lighting(map);
 
-  // hex_to_pixel(8, 4, 8) -> center (96, ~110.8).
-  EXPECT_LT((int)sun_at(bake, 116, 131), 30);  // +x+y side: shadowed
-  EXPECT_EQ((int)sun_at(bake, 76, 91), 255);   // -x-y side: lit
+  EXPECT_LT((int)sun_at(bake, 116, 131), 30);
+  EXPECT_EQ((int)sun_at(bake, 76, 91), 255);
   return true;
 }
-
-// ---- pit: sky visibility --------------------------------------------------
 
 DELVE_TEST(terrain_light_pit_floor_darker_sky) {
   auto map = make_ground_map(64, 64, 0.5f);
@@ -102,12 +90,10 @@ DELVE_TEST(terrain_light_pit_floor_darker_sky) {
       map.basalt_height[y * 64 + x] = 0.1f;
 
   auto bake = bake_terrain_lighting(map);
-  EXPECT_LT((int)sky_at(bake, 32, 32), 240);  // pit floor sees less sky
-  EXPECT_GE((int)sky_at(bake, 8, 8), 250);    // open flat ground ~fully open
+  EXPECT_LT((int)sky_at(bake, 32, 32), 240);
+  EXPECT_GE((int)sky_at(bake, 8, 8), 250);
   return true;
 }
-
-// ---- sweep vs brute force -------------------------------------------------
 
 static void brute_horizon(const std::vector<float> &H, int w, int h,
                           int dx, int dy, float step,
@@ -150,8 +136,6 @@ DELVE_TEST(terrain_light_sweep_matches_bruteforce) {
   }
   return true;
 }
-
-// ---- determinism ----------------------------------------------------------
 
 DELVE_TEST(terrain_light_bake_deterministic) {
   auto map = make_ground_map(96, 96, 0.2f);

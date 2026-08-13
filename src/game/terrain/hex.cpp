@@ -75,7 +75,7 @@ void compute_visible_edges(std::vector<HexColumn> &columns) {
         col.edge_drops[i]    = col.height;
       } else {
         float diff = col.height - it->second->height;
-        if (diff > 0.01f) {
+        if (diff > HEX_MIN_WALL_DROP) {
           col.visible_edges[i] = true;
           col.edge_drops[i]    = diff;
         }

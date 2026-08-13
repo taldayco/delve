@@ -29,6 +29,31 @@ DELVE_TEST(hex_to_pixel_origin) {
   return true;
 }
 
+DELVE_TEST(hex_visible_edge_for_subtle_height_drop) {
+  std::vector<HexColumn> cols(2);
+  cols[0].q = 0; cols[0].r = 0; cols[0].height = 0.5f;
+  cols[1].q = 1; cols[1].r = 0; cols[1].height = 0.495f;
+
+  compute_visible_edges(cols);
+
+  EXPECT_TRUE(cols[0].visible_edges[0]);
+  EXPECT_NEAR(cols[0].edge_drops[0], 0.005f, 1e-6f);
+  EXPECT_FALSE(cols[1].visible_edges[3]);
+  return true;
+}
+
+DELVE_TEST(hex_no_visible_edge_for_flush_neighbors) {
+  std::vector<HexColumn> cols(2);
+  cols[0].q = 0; cols[0].r = 0; cols[0].height = 0.5f;
+  cols[1].q = 1; cols[1].r = 0; cols[1].height = 0.5f;
+
+  compute_visible_edges(cols);
+
+  EXPECT_FALSE(cols[0].visible_edges[0]);
+  EXPECT_FALSE(cols[1].visible_edges[3]);
+  return true;
+}
+
 DELVE_TEST(hex_corners_count_six) {
   Vec2 corners[6];
   get_hex_corners(0, 0, HEX, corners);

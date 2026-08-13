@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <vector>
 
+inline constexpr float HEX_MIN_WALL_DROP = 1e-4f;
+
 struct HexColumn {
   int q, r;
   float height;

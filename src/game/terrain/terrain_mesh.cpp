@@ -37,7 +37,7 @@ static void add_side_face(const Vec2 &corner0, const Vec2 &corner1,
                           float top_height, float bottom_height,
                           float cr, float cg, float cb, float sheen,
                           TerrainMesh::RenderingLayer &layer) {
-  if (top_height - bottom_height < 0.01f)
+  if (top_height - bottom_height < HEX_MIN_WALL_DROP)
     return;
 
   float wx0 = corner0.x / Config::HEX_SIZE;

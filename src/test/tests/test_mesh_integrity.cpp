@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstddef>
+#include <unordered_map>
 
 static constexpr int MW = 256;
 static constexpr int MH = 256;
@@ -194,6 +195,33 @@ DELVE_TEST(scene_uniforms_field_offsets) {
     EXPECT_EQ(offsetof(SceneUniforms, near_plane),       (size_t)224);
     EXPECT_EQ(offsetof(SceneUniforms, cam_world_x),      (size_t)240);
     EXPECT_EQ(offsetof(SceneUniforms, view_dir_x),       (size_t)256);
+    return true;
+}
+
+DELVE_TEST(mesh_every_height_drop_has_a_wall) {
+    constexpr float MAX_UNWALLED_DROP = 0.001f;
+    EXPECT_LT(HEX_MIN_WALL_DROP, MAX_UNWALLED_DROP);
+
+    auto md = make_map();
+    std::unordered_map<HexCoord, const HexColumn *, HexHash> lookup;
+    for (const auto &c : md.columns) lookup[{c.q, c.r}] = &c;
+
+    const int neighbors[6][2] = {{1,0},{0,1},{-1,1},{-1,0},{0,-1},{1,-1}};
+    int unwalled = 0;
+    for (const auto &c : md.columns) {
+        for (int i = 0; i < 6; ++i) {
+            auto it = lookup.find({c.q + neighbors[i][0], c.r + neighbors[i][1]});
+            if (it == lookup.end()) continue;
+            float drop = c.height - it->second->height;
+            if (drop > MAX_UNWALLED_DROP && !c.visible_edges[i]) {
+                if (unwalled == 0)
+                    fprintf(stderr, "  FAIL: unwalled drop %.6f at hex (%d,%d) edge %d\n",
+                            (double)drop, c.q, c.r, i);
+                ++unwalled;
+            }
+        }
+    }
+    EXPECT_EQ(unwalled, 0);
     return true;
 }
 

@@ -18,13 +18,13 @@ void main() {
 
     vec3 V = normalize(view_dir_ws.xyz);
 
-    float dither = hex_dither(frag_world_pos.xy);
+    float dither = hex_dither(frag_world_pos.xy - N.xy * 0.05);
     vec3 albedo = to_linear(clamp(frag_color * (1.0 + dither), 0.0, 1.0));
 
     float roughness = mix(0.9, 0.3, frag_sheen);
     float metallic  = frag_sheen * 0.1;
 
-    vec2 tl = sample_terrain_light(frag_world_pos.xy);
+    vec2 tl = sample_terrain_light(frag_world_pos.xy, frag_world_pos.z);
 
     vec3 L_dir = normalize(light_dir.xyz);
     vec3 dir_radiance = light_col.rgb;

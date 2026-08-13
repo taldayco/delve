@@ -4,13 +4,13 @@
 #include <unordered_map>
 
 void hex_to_pixel(int q, int r, float hex_size, float &out_x, float &out_y) {
-  const float sqrt3 = 1.732f;
+  const float sqrt3 = 1.7320508f;
   out_x = hex_size * 1.5f * q;
   out_y = hex_size * sqrt3 * (r + q * 0.5f);
 }
 
 HexCoord pixel_to_hex(float x, float y, float hex_size) {
-  const float sqrt3 = 1.732f;
+  const float sqrt3 = 1.7320508f;
   float q = (2.0f / 3.0f * x) / hex_size;
   float r = (-1.0f / 3.0f * x + sqrt3 / 3.0f * y) / hex_size;
 

@@ -2,6 +2,7 @@
 #include "terrain/map_data.h"
 #include "terrain/terrain_lighting.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -17,11 +18,54 @@ static MapData make_ground_map(int w, int h, float ground) {
 }
 
 static uint8_t sun_at(const TerrainLightBake &b, int x, int y) {
-  return b.rg[(size_t)(y * b.width + x) * 2 + 0];
+  return b.rgba[(size_t)(y * b.width + x) * 4 + 0];
 }
 
 static uint8_t sky_at(const TerrainLightBake &b, int x, int y) {
-  return b.rg[(size_t)(y * b.width + x) * 2 + 1];
+  return b.rgba[(size_t)(y * b.width + x) * 4 + 1];
+}
+
+static float height_at(const TerrainLightBake &b, int x, int y) {
+  return b.rgba[(size_t)(y * b.width + x) * 4 + 2] / 255.0f *
+         TERRAIN_LIGHT_HEIGHT_RANGE;
+}
+
+struct TLSample {
+  float sun, sky;
+};
+
+static TLSample resolve_at(const TerrainLightBake &b, float px, float py,
+                           float world_z, bool height_aware) {
+  const float tol = 0.02f;
+  float fx = std::floor(px), fy = std::floor(py);
+  float tx = px - fx, ty = py - fy;
+
+  float acc_sun = 0.0f, acc_sky = 0.0f;
+  float bil_sun = 0.0f, bil_sky = 0.0f;
+  float wsum = 0.0f;
+
+  for (int i = 0; i < 4; ++i) {
+    int ox = i & 1, oy = i >> 1;
+    int x = std::max(0, std::min((int)fx + ox, b.width - 1));
+    int y = std::max(0, std::min((int)fy + oy, b.height - 1));
+
+    float sun = sun_at(b, x, y) / 255.0f;
+    float sky = sky_at(b, x, y) / 255.0f;
+    float bw = (ox == 0 ? 1.0f - tx : tx) * (oy == 0 ? 1.0f - ty : ty);
+    float hw = height_aware
+                   ? std::exp(-std::abs(height_at(b, x, y) - world_z) / tol)
+                   : 1.0f;
+
+    acc_sun += sun * bw * hw;
+    acc_sky += sky * bw * hw;
+    bil_sun += sun * bw;
+    bil_sky += sky * bw;
+    wsum += bw * hw;
+  }
+
+  if (wsum > 1e-4f)
+    return {acc_sun / wsum, acc_sky / wsum};
+  return {bil_sun, bil_sky};
 }
 
 DELVE_TEST(terrain_light_flat_field_fully_lit) {
@@ -29,7 +73,7 @@ DELVE_TEST(terrain_light_flat_field_fully_lit) {
   auto bake = bake_terrain_lighting(map);
   EXPECT_EQ(bake.width, 64);
   EXPECT_EQ(bake.height, 64);
-  EXPECT_EQ(bake.rg.size(), (size_t)(64 * 64 * 2));
+  EXPECT_EQ(bake.rgba.size(), (size_t)(64 * 64 * 4));
   for (int y = 4; y < 60; ++y) {
     for (int x = 4; x < 60; ++x) {
       EXPECT_EQ((int)sun_at(bake, x, y), 255);
@@ -80,6 +124,59 @@ DELVE_TEST(terrain_light_column_stamp_casts_shadow) {
 
   EXPECT_LT((int)sun_at(bake, 116, 131), 30);
   EXPECT_EQ((int)sun_at(bake, 76, 91), 255);
+  return true;
+}
+
+DELVE_TEST(terrain_light_height_channel_matches_column) {
+  const int W = 192, Hm = 192;
+  auto map = make_ground_map(W, Hm, 0.0f);
+  HexColumn col{};
+  col.q = 8;
+  col.r = 4;
+  col.height = 0.9f;
+  map.columns.push_back(col);
+
+  auto bake = bake_terrain_lighting(map);
+
+  float cx, cy;
+  hex_to_pixel(col.q, col.r, TerrainLightParams{}.pixels_per_unit, cx, cy);
+
+  const float quant = TERRAIN_LIGHT_HEIGHT_RANGE / 255.0f;
+  EXPECT_NEAR(height_at(bake, (int)cx, (int)cy), col.height, quant);
+  EXPECT_NEAR(height_at(bake, 20, 20), 0.0f, quant);
+  return true;
+}
+
+DELVE_TEST(terrain_light_height_aware_resolve_blocks_cliff_leak) {
+  const int W = 192, Hm = 192;
+  auto map = make_ground_map(W, Hm, 0.0f);
+  HexColumn col{};
+  col.q = 8;
+  col.r = 4;
+  col.height = 0.9f;
+  map.columns.push_back(col);
+
+  auto bake = bake_terrain_lighting(map);
+
+  int checked = 0;
+  for (int y = 1; y < Hm - 1 && checked == 0; ++y) {
+    for (int x = 1; x < W - 2; ++x) {
+      if (height_at(bake, x, y) < 0.5f || height_at(bake, x + 1, y) > 0.1f)
+        continue;
+
+      TLSample plain = resolve_at(bake, (float)x + 0.5f, (float)y, 0.0f, false);
+      TLSample aware = resolve_at(bake, (float)x + 0.5f, (float)y, 0.0f, true);
+      TLSample ground = resolve_at(bake, (float)(x + 1), (float)y, 0.0f, true);
+
+      EXPECT_GT(plain.sky, aware.sky + 0.05f);
+      EXPECT_NEAR(aware.sky, ground.sky, 1e-3f);
+      EXPECT_NEAR(aware.sun, ground.sun, 1e-3f);
+      checked = 1;
+      break;
+    }
+  }
+
+  EXPECT_EQ(checked, 1);
   return true;
 }
 
@@ -154,6 +251,6 @@ DELVE_TEST(terrain_light_bake_deterministic) {
   auto b = bake_terrain_lighting(map);
   EXPECT_EQ(a.width, b.width);
   EXPECT_EQ(a.height, b.height);
-  EXPECT_TRUE(a.rg == b.rg);
+  EXPECT_TRUE(a.rgba == b.rgba);
   return true;
 }

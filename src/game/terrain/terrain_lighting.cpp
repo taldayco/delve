@@ -87,7 +87,7 @@ TerrainLightBake bake_terrain_lighting(const MapData &map,
   bake.height = map.height;
   const int w = map.width, h = map.height;
   const size_t n = (size_t)w * h;
-  bake.rg.assign(n * 2, 255);
+  bake.rgba.assign(n * 4, 255);
   if (n == 0)
     return bake;
 
@@ -122,14 +122,19 @@ TerrainLightBake bake_terrain_lighting(const MapData &map,
         } else {
           vis = angles[i] < sun_lo ? 1.0f : 0.0f;
         }
-        bake.rg[i * 2 + 0] = (uint8_t)std::lround(vis * 255.0f);
+        bake.rgba[i * 4 + 0] = (uint8_t)std::lround(vis * 255.0f);
       }
     }
   }
 
+  const float inv_height_enc =
+      1.0f / (params.height_scale * TERRAIN_LIGHT_HEIGHT_RANGE);
+
   for (size_t i = 0; i < n; ++i) {
     float sky_vis = std::clamp(sky[i] * (1.0f / 8.0f), 0.0f, 1.0f);
-    bake.rg[i * 2 + 1] = (uint8_t)std::lround(sky_vis * 255.0f);
+    bake.rgba[i * 4 + 1] = (uint8_t)std::lround(sky_vis * 255.0f);
+    bake.rgba[i * 4 + 2] = (uint8_t)std::lround(
+        std::clamp(H[i] * inv_height_enc, 0.0f, 1.0f) * 255.0f);
   }
   return bake;
 }

@@ -70,8 +70,8 @@ void TerrainRenderer::init(SDL_GPUDevice *device, SDL_Window *window, AssetManag
       SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ |
       SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
 
-  const uint8_t fully_lit_rg[2] = { 0xFF, 0xFF };
-  light_fallback_tex = gpu_upload_texture_rg8(device, fully_lit_rg, 1, 1);
+  const uint8_t fully_lit_rgba[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+  light_fallback_tex = gpu_upload_texture_rgba8(device, fully_lit_rgba, 1, 1);
   light_bake_smp     = gpu_create_linear_clamp_sampler(device);
 
   const uint8_t black_rgba[4] = { 0x00, 0x00, 0x00, 0xFF };
@@ -624,13 +624,13 @@ void TerrainRenderer::upload_gltf_column_mesh(SDL_GPUDevice *device,
 }
 
 void TerrainRenderer::upload_light_bake(SDL_GPUDevice *device, const TerrainLightBake &bake) {
-  if (bake.width <= 0 || bake.height <= 0 || bake.rg.empty()) return;
+  if (bake.width <= 0 || bake.height <= 0 || bake.rgba.empty()) return;
 
   SDL_WaitForGPUIdle(device);
   if (light_bake_tex) { SDL_ReleaseGPUTexture(device, light_bake_tex); light_bake_tex = nullptr; }
 
-  light_bake_tex = gpu_upload_texture_rg8(device, bake.rg.data(),
-                                          (uint32_t)bake.width, (uint32_t)bake.height);
+  light_bake_tex = gpu_upload_texture_rgba8(device, bake.rgba.data(),
+                                            (uint32_t)bake.width, (uint32_t)bake.height);
 
   SDL_Log("TerrainRenderer: Light bake uploaded (%dx%d)", bake.width, bake.height);
 }

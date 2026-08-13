@@ -22,8 +22,29 @@ layout(set = 2, binding = 4) readonly buffer IndexBuffer {
     uint global_light_indices[];
 };
 
-vec2 sample_terrain_light(vec2 world_xy) {
-    return texture(terrain_light_tex, world_xy * INV_MAP_UNITS).rg;
+const float TL_HEIGHT_RANGE = 1.25;
+const float TL_HEIGHT_TOL   = 0.02;
+
+vec2 sample_terrain_light(vec2 world_xy, float world_z) {
+    vec2 ts = vec2(textureSize(terrain_light_tex, 0));
+    vec2 p  = world_xy * INV_MAP_UNITS * ts;
+    vec2 b  = floor(p);
+    vec2 f  = p - b;
+
+    vec2  acc   = vec2(0.0);
+    vec2  bilin = vec2(0.0);
+    float wsum  = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        ivec2 o = ivec2(i & 1, i >> 1);
+        vec4  t = texelFetch(terrain_light_tex,
+                             clamp(ivec2(b) + o, ivec2(0), ivec2(ts) - 1), 0);
+        float bw = (o.x == 0 ? 1.0 - f.x : f.x) * (o.y == 0 ? 1.0 - f.y : f.y);
+        float hw = exp(-abs(t.b * TL_HEIGHT_RANGE - world_z) / TL_HEIGHT_TOL);
+        acc   += t.rg * (bw * hw);
+        bilin += t.rg * bw;
+        wsum  += bw * hw;
+    }
+    return wsum > 1e-4 ? acc / wsum : bilin;
 }
 
 vec3 sample_rc_fluence(vec3 normal, float world_z) {
@@ -41,8 +62,8 @@ vec3 sample_rc_fluence(vec3 normal, float world_z) {
 
 float hex_dither(vec2 world_xy) {
     float sqrt3 = 1.7320508;
-    float q = world_xy.x / sqrt3;
-    float r = world_xy.y - q * 0.5;
+    float q = world_xy.x * (2.0 / 3.0);
+    float r = -world_xy.x / 3.0 + world_xy.y / sqrt3;
     int iq = int(round(q));
     int ir = int(round(r));
     int is_val = int(round(-q - r));

@@ -13,10 +13,10 @@ layout(location = 3) in vec3  frag_normal;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    float dither   = hex_dither(frag_world_pos.xy);
+    float dither   = hex_dither(frag_world_pos.xy - frag_normal.xy * 0.05);
     vec3  dithered = to_linear(clamp(frag_color * (1.0 + dither), 0.0, 1.0));
 
-    vec2 tl = sample_terrain_light(frag_world_pos.xy);
+    vec2 tl = sample_terrain_light(frag_world_pos.xy, frag_world_pos.z);
     vec3 lit = apply_directional(dithered, frag_normal, tl.r);
     lit += clustered_point_lighting(frag_world_pos, frag_normal, dithered);
     lit += dithered * sample_rc_fluence(frag_normal, frag_world_pos.z) * RC_INTENSITY;

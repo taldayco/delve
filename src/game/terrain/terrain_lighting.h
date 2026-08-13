@@ -6,9 +6,11 @@ struct MapData;
 
 inline constexpr float TERRAIN_HORIZON_NONE = -1.5707963f;
 
+inline constexpr float TERRAIN_LIGHT_HEIGHT_RANGE = 1.25f;
+
 struct TerrainLightBake {
   int width = 0, height = 0;
-  std::vector<uint8_t> rg;
+  std::vector<uint8_t> rgba;
 };
 
 struct TerrainLightParams {

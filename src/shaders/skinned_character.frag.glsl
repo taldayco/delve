@@ -17,7 +17,7 @@ void main() {
     vec3 base_color = to_linear(clamp(vec3(0.6, 0.7, 0.8) * (1.0 + dither), 0.0, 1.0));
 
     vec3 N = normalize(frag_normal);
-    vec2 tl = sample_terrain_light(frag_world_pos.xy);
+    vec2 tl = sample_terrain_light(frag_world_pos.xy, frag_world_pos.z);
     vec3 lit = apply_directional(base_color, N, tl.r);
     lit += clustered_point_lighting(frag_world_pos, N, base_color);
     lit += base_color * sample_rc_fluence(N, frag_world_pos.z) * RC_INTENSITY;
